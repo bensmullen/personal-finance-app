@@ -1,0 +1,71 @@
+import { compileCashFlow, type RetirementTerminationBinding } from "../../src/application/compiler/cashFlow.js";
+import { addPersonalObject, createEmptyPersonalDraft } from "../../src/application/personalMvp.js";
+import type { RunContext } from "../../src/simulation/run.js";
+import type { VerticalSlice2Input } from "../../src/simulation/verticalSlice2.js";
+
+export function compileModeledIncomeFixture(context: RunContext, months: number, fixture: {
+  readonly householdId: string;
+  readonly personId: string;
+  readonly accountId: string;
+  readonly accountType: "cash" | "checking" | "savings";
+  readonly retirementBindings?: readonly RetirementTerminationBinding[];
+  readonly incomes: readonly {
+    readonly id: string;
+    readonly type: "salary" | "pension";
+    readonly amount: string;
+    readonly startDate: string;
+    readonly endDate?: string;
+    readonly growth?: {
+      readonly primitiveId: string;
+      readonly assumptionId: string;
+      readonly value: string;
+      readonly unit: "effective annual rate" | "monthly periodic rate";
+    };
+  }[];
+}): VerticalSlice2Input {
+  let model = createEmptyPersonalDraft("87200000-0000-4000-8000-000000000001");
+  model = addPersonalObject(model, "Household", fixture.householdId, {
+    name: "Synthetic household", household_type: "individual", formation_date: "1900-01-01",
+    members: [fixture.personId], primary_jurisdiction: "US-NY",
+  });
+  model = addPersonalObject(model, "Person", fixture.personId, {
+    first_name: "Synthetic", last_name: "Member", date_of_birth: "1980-01-01",
+    household_id: fixture.householdId, residence_jurisdiction: "US-NY",
+  });
+  model = addPersonalObject(model, "Account", fixture.accountId, {
+    name: "Synthetic bank account", account_type: fixture.accountType, owner_id: fixture.personId,
+    opening_date: "1900-01-01", opening_balance: "0",
+  });
+  for (const income of fixture.incomes) {
+    if (income.growth !== undefined) {
+      const { primitiveId, assumptionId, value, unit } = income.growth;
+      model = addPersonalObject(model, "Assumption", assumptionId, {
+        name: "Synthetic salary growth", category: "salary_growth", value, unit, source: "user", scenario_id: context.scenarioId,
+      });
+      model = addPersonalObject(model, "PrimitiveInstance", primitiveId, {
+        primitive_id: "P08", input_bindings: { rate: assumptionId }, scenario_id: context.scenarioId, enabled: true,
+      });
+    }
+    model = addPersonalObject(model, "Income", income.id, {
+      owner_id: fixture.personId, income_type: income.type, source: "Synthetic income original",
+      amount: income.amount, frequency: "monthly", start_date: income.startDate, gross_or_net: "gross",
+      ...(income.endDate === undefined ? {} : { end_date: income.endDate }),
+      ...(income.growth === undefined ? {} : { growth_model_id: income.growth.primitiveId }),
+    });
+  }
+  const simulationStart = context.simulationStart.slice(0, 10);
+  const simulationEnd = context.simulationEnd.slice(0, 10);
+  model = addPersonalObject(model, "Scenario", context.scenarioId, {
+    name: "Synthetic forecast", start_date: simulationStart, end_date: simulationEnd,
+    timestep: "monthly", enabled: true, stochastic: false, simulation_count: 1,
+    assumption_ids: fixture.incomes.flatMap(income => income.growth === undefined ? [] : [income.growth.assumptionId]), event_ids: [],
+  });
+  const result = compileCashFlow(model, {
+    runContext: context, scenarioId: context.scenarioId, baseCurrency: "USD", asOf: context.asOf.slice(0, 10),
+    simulationStart, simulationEnd, months, executionAccountId: fixture.accountId,
+    sameInstantCashFlowOrder: "income_before_expense",
+    ...(fixture.retirementBindings === undefined ? {} : { retirementBindings: fixture.retirementBindings }),
+  });
+  if (result.status !== "compiled") throw new Error(JSON.stringify(result.diagnostics));
+  return result.value.input;
+}

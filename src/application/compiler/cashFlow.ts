@@ -15,7 +15,7 @@ import {
   type AuthoritativeState,
 } from "../../state/index.js";
 import { utcMonthlyHorizonMonths, type Instant } from "../../time/index.js";
-import { Currency, Rate, money, rateConvention } from "../../values/index.js";
+import { Currency, Rate, money, rateConvention, ratePeriod } from "../../values/index.js";
 import type { VerticalSlice2Input } from "../../simulation/verticalSlice2.js";
 import { assertRunContext, canonicalSerialize, type RunContext } from "../../simulation/run.js";
 import { applyVerticalSlice2Scenario, resolveScenario, type ResolvedScenario } from "../../simulation/scenario.js";
@@ -524,10 +524,11 @@ export const resolveGrowth = (
       "Assumption",
       assumptionId,
     );
-  if (assumption.unit !== "effective annual rate")
+  const monthlyIncomeRate = streamType === "Income" && assumption.unit === "monthly periodic rate";
+  if (assumption.unit !== "effective annual rate" && !monthlyIncomeRate)
     return unsupportedResult(
       "RATE_UNIT_UNSUPPORTED",
-      `Assumption ${assumptionId} must use unit "effective annual rate".`,
+      `Assumption ${assumptionId} must use unit "effective annual rate"${streamType === "Income" ? ' or "monthly periodic rate"' : ""}.`,
       "Assumption",
       assumptionId,
       "unit",
@@ -545,7 +546,7 @@ export const resolveGrowth = (
   try {
     const rate = Rate.fromDecimal(
       assumption.value,
-      rateConvention.effectiveAnnual(),
+      monthlyIncomeRate ? rateConvention.periodic(ratePeriod("1", "calendar_month")) : rateConvention.effectiveAnnual(),
     );
     assertGeometricGrowthRate(rate);
     if (primitiveScenarioMismatch)

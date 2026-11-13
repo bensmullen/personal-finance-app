@@ -1,5 +1,5 @@
 import { Currency, DecimalAmount, Money, Percentage, Quantity, Rate, Ratio, RoundingPolicy, Unit, type RateConvention, type RoundingMode } from "../../values/index.js";
-import { exportHouseholdReplayCheckpointRoots, registerHouseholdReplayCheckpoints, householdReplayCheckpointSelection, type HouseholdReplayCheckpoint, type HouseholdForecastSummaryResult, type ExecutableHouseholdProjection } from "../householdExecution.js";
+import { exportHouseholdReplayCheckpointRoots, registerHouseholdReplayCheckpoints, householdReplayCheckpointSelection, householdReplayTerminalRoot, type HouseholdReplayCheckpoint, type HouseholdForecastSummaryResult, type ExecutableHouseholdProjection } from "../householdExecution.js";
 import { assertD2PostedTransactionHistoryPreserved, assertD2SettlementReceiptHistoryPreserved, createAuthoritativeState,
   authoritativeCheckpointDelta, restoreAuthoritativeCheckpointDelta, requalifyD2SettlementReceiptHistory,
   assertSsaMedicarePaymentHistoryPreserved,
@@ -132,14 +132,26 @@ const decode = (wire: Wire, references = new Map<number, unknown>()): unknown =>
 };
 
 interface CheckpointDelta extends Omit<HouseholdReplayCheckpoint, "state">, AuthoritativeCheckpointDelta {}
+const encodeStateDelta = (state: AuthoritativeState, before: AuthoritativeState,
+  observe?: (visited: number, changed: number) => void, observeEquality?: () => void): AuthoritativeCheckpointDelta =>
+  authoritativeCheckpointDelta(state, before, (a, b) => {
+    observeEquality?.();
+    return JSON.stringify(encode(a)) === JSON.stringify(encode(b));
+  }, observe);
+
+const assertSourceHistoryPreserved = (before: AuthoritativeState, after: AuthoritativeState): void => {
+  assertD2PostedTransactionHistoryPreserved(before, after);
+  assertD2SettlementReceiptHistoryPreserved(before, after);
+  assertRetirementDistributionHistoryPreserved(before, after);
+  assertSsaMedicarePaymentHistoryPreserved(before, after);
+};
+
 /** Sparse state changes, never transaction history or repeated identity prefixes. */
 const checkpointDeltas = (checkpoints: readonly HouseholdReplayCheckpoint[], observe?: (visited: number, changed: number) => void,
   observeEquality?: () => void): readonly CheckpointDelta[] => {
   let before = createAuthoritativeState();
   return checkpoints.map(({ state, ...checkpoint }) => {
-    const delta = authoritativeCheckpointDelta(state, before, (a, b) => {
-      observeEquality?.(); return JSON.stringify(encode(a)) === JSON.stringify(encode(b));
-    }, observe);
+    const delta = encodeStateDelta(state, before, observe, observeEquality);
     before = state;
     return { ...checkpoint, ...delta };
   });
@@ -152,10 +164,7 @@ const restoreCheckpointDeltas = (deltas: readonly CheckpointDelta[], opening: Au
   const checkpoints = deltas.map(({ records, identities, ...checkpoint }) => {
     if (!records || !identities) throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: malformed checkpoint");
     before = restoreAuthoritativeCheckpointDelta(before, { records, identities }, observe);
-    assertD2PostedTransactionHistoryPreserved(receiptHistory, before);
-    assertD2SettlementReceiptHistoryPreserved(receiptHistory, before);
-    assertRetirementDistributionHistoryPreserved(receiptHistory, before);
-    assertSsaMedicarePaymentHistoryPreserved(receiptHistory, before);
+    assertSourceHistoryPreserved(receiptHistory, before);
     receiptHistory = before;
     return { ...checkpoint, state: before };
   });
@@ -229,9 +238,12 @@ export const createPortableHouseholdReplayArtifact = (forecast: HouseholdForecas
   const work = (nodes: number, rows: number) => { visited += nodes; changed += rows; };
   const roots = exportHouseholdReplayCheckpointRoots(forecast, work, () => { materialized++; });
   const checkpoints = checkpointDeltas(roots, work, () => { comparisons++; });
+  const terminal = householdReplayTerminalRoot(forecast);
+  const terminalDelta = encodeStateDelta(terminal,
+    roots.at(-1)?.state ?? forecast.replay.kernel.executable.reconciledOpeningState, work, () => { comparisons++; });
   const encoded = JSON.stringify(encode({ executable, runContext: forecast.replay.runContext,
     runMetadata: forecast.runMetadata, periods: forecast.periods,
-    checkpoints, ...(modeledPayroll === undefined ? {} : { modeledPayroll }) }, graph));
+    checkpoints, terminalDelta, ...(modeledPayroll === undefined ? {} : { modeledPayroll }) }, graph));
   // Change detection, like the run fingerprint; this is not authentication.
   const integrity = createInputFingerprint({ runContext: forecast.replay.runContext, openingState: encoded });
   const artifact = Object.freeze({ version: "household-replay/v3" as const, encoded, integrity });
@@ -243,7 +255,7 @@ export const createPortableHouseholdReplayArtifact = (forecast: HouseholdForecas
   // Ordinary exported artifacts continue to restore the serialized snapshot.
   if (retainPrivateBasis) restoredArtifacts.set(artifact, {
     version: artifact.version, encoded, integrity, forecast, modeledPayroll,
-    sourceHistoryState: forecast.state,
+    sourceHistoryState: terminal,
   });
   try { observe?.({ checkpointCount: checkpoints.length, checkpointIndexNodesVisited: visited, checkpointRecordChanges: changed,
     checkpointEqualityComparisons: comparisons, encodedValues: graph.encodedValues, encodedBytes: new TextEncoder().encode(encoded).byteLength,
@@ -275,6 +287,7 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
   const decodeStarted = safeNow(observer);
   const restored = decode(wire) as {
     executable: Omit<ExecutableHouseholdProjection, "participants"> & { readonly participants?: readonly PortableHouseholdParticipant[] }; runContext: RunContext; runMetadata: RunMetadata; periods: readonly HouseholdForecastSummaryPeriod[]; checkpoints?: readonly CheckpointDelta[]; modeledPayroll?: ModeledPayrollReplayBasis;
+    terminalDelta?: AuthoritativeCheckpointDelta;
   };
   try { observer?.phase?.("decoded"); } catch { /* Observation is optional. */ }
   const decodeDuration = elapsed(decodeStarted, safeNow(observer));
@@ -306,13 +319,21 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
   const forecast = Object.freeze({ runMetadata: restored.runMetadata, periods: restored.periods,
     replay: Object.freeze({ kernel, runContext: restored.runContext }) });
   if (supplied.version === "household-replay/v3") {
-    const checkpoints = measure("checkpointRestoreValidationMs", () => restoreCheckpointDeltas(restored.checkpoints!, admittedExecutable.reconciledOpeningState, (nodes, rows) => {
+    const observeChanges = (nodes: number, rows: number) => {
       timings.checkpointIndexNodesVisited = (timings.checkpointIndexNodesVisited ?? 0) + nodes;
       timings.checkpointRecordChanges = (timings.checkpointRecordChanges ?? 0) + rows;
-    }));
-    // Append-only admission proves that this union contains every inherited
-    // and new proof. Independently requalify it once before registration.
-    sourceHistoryState = checkpoints.at(-1)?.state ?? sourceHistoryState;
+    };
+    const checkpoints = measure("checkpointRestoreValidationMs", () =>
+      restoreCheckpointDeltas(restored.checkpoints!, admittedExecutable.reconciledOpeningState, observeChanges));
+    const terminalDelta = restored.terminalDelta;
+    if (terminalDelta === undefined)
+      throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: terminal source history missing");
+    sourceHistoryState = measure("checkpointRestoreValidationMs", () => {
+      const boundary = checkpoints.at(-1)?.state ?? sourceHistoryState;
+      const terminal = restoreAuthoritativeCheckpointDelta(boundary, terminalDelta, observeChanges);
+      assertSourceHistoryPreserved(boundary, terminal);
+      return terminal;
+    });
     qualify(sourceHistoryState);
     measure("checkpointRestoreValidationMs", () => registerHouseholdReplayCheckpoints(forecast, checkpoints, counts => {
       timings.checkpointDiagnosticKeysComputed = counts.diagnosticKeysComputed;

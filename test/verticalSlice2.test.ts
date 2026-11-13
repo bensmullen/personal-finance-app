@@ -4,9 +4,10 @@ import { domainId, generatedOccurrenceKey, type GeneratedOccurrenceKey } from ".
 import { createAuthoritativeState, createIndexedExecutionState } from "../src/state/index.js";
 import { canonicalSerialize, createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import { instant, utcMonthlyPeriods } from "../src/time/index.js";
-import { Money, Rate, USD, money, rateConvention, ratePeriod } from "../src/values/index.js";
-import { runVerticalSlice2, type VerticalSlice2Input } from "../src/verticalSlice2.js";
+import { Money, Rate, RateBasis, USD, money, rateConvention, ratePeriod } from "../src/values/index.js";
+import { runVerticalSlice2 as executeVerticalSlice2, type VerticalSlice2Input } from "../src/verticalSlice2.js";
 import { executePreparedVerticalSlice2Occurrence, prepareVerticalSlice2Period } from "../src/simulation/verticalSlice2.js";
+import { compileModeledIncomeFixture } from "./fixtures/modeledIncome.js";
 
 const ids = {
   household: domainId("household", "10000000-0000-4000-8000-000000000001"),
@@ -103,6 +104,39 @@ const opening = (cash = "0", generatedOccurrenceKeys: readonly GeneratedOccurren
   identities: { generatedOccurrenceKeys },
 });
 
+const issueIncome = (input: VerticalSlice2Input, runContext: ReturnType<typeof context>, months: number): VerticalSlice2Input => {
+  const stream = input.incomes[0];
+  if (!stream || !stream.baseMonthlyAmount.isPositive() ||
+      stream.end !== undefined && stream.end <= stream.start) return input;
+  const convention = stream.growthRate.convention;
+  const unit = convention.basis === RateBasis.EffectiveAnnual ? "effective annual rate" :
+    convention.basis === RateBasis.Periodic && canonicalSerialize(convention.period) === canonicalSerialize(ratePeriod("1", "calendar_month"))
+      ? "monthly periodic rate" : undefined;
+  if (unit === undefined) return input;
+  const firstPayment = stream.start > stream.recurrence.anchor ? stream.start : stream.recurrence.anchor;
+  const termination = input.events.find(event => event.id === stream.terminationEventId && event.kind === "termination");
+  const authored = compileModeledIncomeFixture(runContext, months, {
+    householdId: ids.household, personId: ids.person, accountId: ids.cash, accountType: "checking",
+    ...(termination === undefined ? {} : { retirementBindings: [{
+      incomeId: stream.id, terminationEventId: termination.id, baselineDate: termination.effectiveAt.slice(0, 10),
+    }] }),
+    incomes: [{
+      id: stream.id, type: "salary", amount: stream.baseMonthlyAmount.amount.toString(), startDate: firstPayment.slice(0, 10),
+      ...(stream.end === undefined ? {} : { endDate: new Date(Date.parse(stream.end) - 86_400_000).toISOString().slice(0, 10) }),
+      growth: { primitiveId: stream.primitiveIds.growth, assumptionId: "20000000-0000-4000-8000-000000000012",
+        value: stream.growthRate.value.toString(), unit },
+    }],
+  });
+  return {
+    ...input,
+    incomes: authored.incomes,
+    events: [...input.events.filter(event => event.targetId !== stream.id), ...authored.events],
+  };
+};
+
+const runVerticalSlice2 = (request: Parameters<typeof executeVerticalSlice2>[0]) =>
+  executeVerticalSlice2({ ...request, input: issueIncome(request.input, request.runContext, request.months ?? 360) });
+
 const futureStreamInput = (kind: "income" | "expense", streamStart: string, streamEnd?: string): VerticalSlice2Input => {
   const base = input();
   const future = instant(streamStart);
@@ -149,7 +183,7 @@ describe("Vertical Slice 2 growing household cash flow", () => {
       const occurrences = extended.periods.flatMap(period => [...period.incomeOccurrences, ...period.expenseOccurrences]);
       const expectedKey = generatedOccurrenceKey({
         scenarioId: context(7).scenarioId,
-        primitiveInstanceId: primitive(kind === "income" ? 2 : 5),
+        primitiveInstanceId: kind === "income" ? issueIncome(model, context(7), 7).incomes[0]!.primitiveIds.recurrence : primitive(5),
         scheduledAt: future,
         semanticEffectType: kind === "income" ? "income-recognition" : "expense-recognition",
         economicTargetId: kind === "income" ? ids.salary : ids.rent,
@@ -207,10 +241,10 @@ describe("Vertical Slice 2 growing household cash flow", () => {
     const terminated = input();
     const terminatedIncome = { ...terminated.incomes[0]!, terminationEventId: ids.clubStop, primitiveIds: { ...terminated.incomes[0]!.primitiveIds, termination: primitive(11) } };
     const terminatedInput = { ...terminated, incomes: [terminatedIncome], expenses: [], events: [{ id: ids.clubStop, targetId: ids.salary, kind: "termination" as const, effectiveAt: anchor }] };
-    const preparedTerminated = prepareVerticalSlice2Period(context(1), terminatedInput, utcMonthlyPeriods(start, 1)[0]!, opening(), {});
+    const preparedTerminated = prepareVerticalSlice2Period(context(1), issueIncome(terminatedInput, context(1), 1), utcMonthlyPeriods(start, 1)[0]!, opening(), {});
     expect(preparedTerminated.occurrences.some((item) => item.streamId === ids.salary)).toBe(false);
 
-    const prepared = prepareVerticalSlice2Period(context(1), input(), utcMonthlyPeriods(start, 1)[0]!, opening(), {});
+    const prepared = prepareVerticalSlice2Period(context(1), issueIncome(input(), context(1), 1), utcMonthlyPeriods(start, 1)[0]!, opening(), {});
     const income = prepared.occurrences.find((item) => item.streamId === ids.salary)!;
     const rent = prepared.occurrences.find((item) => item.streamId === ids.rent)!;
     expect(rent.descriptor.dependsOn).toContain(income.descriptor.id);
@@ -229,12 +263,13 @@ describe("Vertical Slice 2 growing household cash flow", () => {
   it("executes prepared occurrences through the standalone VS2 mechanics", () => {
     const period = utcMonthlyPeriods(start, 1)[0]!;
     const standalone = runVerticalSlice2({ runContext: context(1), openingState: opening(), input: input(), months: 1 });
-    const prepared = prepareVerticalSlice2Period(context(1), input(), period, opening(), {});
+    const issued = issueIncome(input(), context(1), 1);
+    const prepared = prepareVerticalSlice2Period(context(1), issued, period, opening(), {});
     let state = prepared.state;
     let primitiveState = prepared.primitiveState;
     const ordered = [...prepared.occurrences].sort((left, right) => left.descriptor.dependsOn.length - right.descriptor.dependsOn.length || left.descriptor.id.localeCompare(right.descriptor.id));
     for (const occurrence of ordered) {
-      const executed = executePreparedVerticalSlice2Occurrence(prepared, occurrence, state, primitiveState, input(), context(1));
+      const executed = executePreparedVerticalSlice2Occurrence(prepared, occurrence, state, primitiveState, issued, context(1));
       state = executed.state;
       primitiveState = executed.primitiveState;
     }

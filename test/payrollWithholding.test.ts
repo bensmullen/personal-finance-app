@@ -250,6 +250,13 @@ describe("durable Income authoring and compilation", () => {
         expect.objectContaining({ type: "income", posting: "credit", amount: money("1000") }),
       ],
     });
+    const referenceNoElection = runReferenceVerticalSlice2({ ...unelected.value, months: 1, runContext });
+    expect(referenceNoElection.status, JSON.stringify(referenceNoElection.diagnostics)).toBe("completed");
+    expect(referenceNoElection.periods[0]!.transactions).toEqual(noElection.periods[0]!.transactions);
+    expect(referenceNoElection.periods[0]!.incomeOccurrences).toEqual(noElection.periods[0]!.incomeOccurrences);
+    expect(referenceNoElection.periods[0]!.recognitions).toEqual(noElection.periods[0]!.recognitions);
+    expect(referenceNoElection.periods[0]!.payrollWithholding).toBeUndefined();
+    expect(canonicalSerialize(referenceNoElection.state)).toBe(canonicalSerialize(noElection.state));
     expect(() => authorPayrollWithholding(model, plan({ incomeId, ownerId: otherMember, employerId: "synthetic-job-B" }))).toThrow("salary's person owner");
     expect(() => authorPayrollWithholding({ ...model, objects: { ...model.objects, Account: [...model.objects.Account!, ...model.objects.Account!] } },
       electionPlan)).toThrow("unique USD");
