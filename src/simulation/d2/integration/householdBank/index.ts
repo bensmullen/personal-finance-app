@@ -91,13 +91,16 @@ function read(publisherId: string, sourceId: string, context: HouseholdBankEvent
   need(h.originals.every(o => kinds.includes(o.kind)));
   const account = selected[0]!, household = selected[1]!, member = selected[2]!, permission = selected[3]!;
   need(account.kind === "account" && account.bankAccountId === context.bankAccountId &&
-    account.owner.kind === "household" && account.owner.id === context.householdId && (account.accountKind === "checking" || account.accountKind === "savings"));
+    (account.owner.kind === "household" && account.owner.id === context.householdId ||
+      account.owner.kind === "person" && account.owner.id === context.personId && context.direction === "credit") &&
+    (account.accountKind === "checking" || account.accountKind === "savings"));
   need(household.kind === "household" && household.householdId === context.householdId);
   need(member.kind === "membership" && member.householdId === context.householdId && member.personId === context.personId);
   need(permission.kind === "permission" && permission.householdId === context.householdId && permission.personId === context.personId &&
     permission.bankAccountId === context.bankAccountId && permission.direction === context.direction);
   return Object.freeze({ version: "household-bank-route/v1", accountKind: account.accountKind, publisherId, sourceId, revisionId: permission.revisionId,
-    digest: `sha256:${sha256(canonical(selected))}` });
+    digest: `sha256:${sha256(canonical(selected))}`,
+    ...(account.owner.kind === "person" ? { personOwnerId: context.personId } : {}) });
 }
 
 /** Composition root registers independently controlled original publishers.

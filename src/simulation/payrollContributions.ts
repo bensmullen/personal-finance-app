@@ -109,7 +109,10 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
   const elections = (input.withholding ?? []).filter(item => item.start <= input.at && (item.end === undefined || input.at < item.end));
   const creditUnit = Unit.of("usd_tax_credit");
   const bank = candidate.accounts[input.depositAccountId];
-  if (elections.length && (!input.ownerId || !input.occurrenceId || !bank || bank.ownerId !== (input.householdWage?.context.householdId ?? (input.modeledPayroll === undefined ? input.ownerId : bank.ownerId)) || !["cash", "checking", "savings"].includes(bank.kind) || input.gross.currency.code !== "USD")) return invalid("Withholding requires a source-owned USD receiving bank and occurrence identity");
+  if (elections.length && (!input.ownerId || !input.occurrenceId || !bank ||
+    (input.householdWage === undefined && input.modeledPayroll === undefined && bank.ownerId !== input.ownerId) ||
+    !["cash", "checking", "savings"].includes(bank.kind) || input.gross.currency.code !== "USD"))
+    return invalid("Withholding requires a source-owned USD receiving bank and occurrence identity");
   if (new Set(elections.map(item => item.jurisdiction)).size !== elections.length) return invalid("Conflicting active withholding elections");
   const creditAccountId = input.taxCreditAccountId ?? input.depositAccountId;
   if (elections.length && (!candidate.accounts[creditAccountId] || input.taxCreditAccountId === undefined && Object.values(candidate.accounts).filter(account => ["cash", "checking", "savings"].includes(account.kind)).length > 1)) return invalid("Multiple receiving banks require the shared tax credit account binding");
@@ -151,7 +154,11 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
   ].map(createAccountingLeg) });
   if (input.householdWage !== undefined) {
     const { source, context, period } = input.householdWage;
-    if (context.personId !== input.ownerId || context.bankAccountId !== input.depositAccountId || context.eventAt !== input.at || context.eventId !== input.id || !input.occurrenceId)
+    const run = input.runContext;
+    if (run === undefined || run.runId !== context.runId || run.asOf !== context.asOf || run.dataCutoff !== context.dataCutoff ||
+        period.start < run.simulationStart || period.end > run.simulationEnd ||
+        input.householdId !== context.householdId || context.personId !== input.ownerId ||
+        context.bankAccountId !== input.depositAccountId || context.eventAt !== input.at || context.eventId !== input.id || !input.occurrenceId)
       return invalid("Household wage context differs from the actual paycheck");
     const evidence = qualifyHouseholdWage(source, context, { stream: input.householdWage.stream, incomeId: input.incomeId, occurrenceId: input.occurrenceId, period, gross: input.gross, transaction });
     applyHouseholdDomainTransactionAtomically(candidate, transaction, evidence);

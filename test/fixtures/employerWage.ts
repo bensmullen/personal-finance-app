@@ -11,7 +11,9 @@ import type { RecurringIncomeStream } from "../../src/simulation/verticalSlice2.
 import { instant, utcCalendarMonthDifference, utcMonthlyPeriods, type Period } from "../../src/time/index.js";
 import { money, Quantity, Rate, rateConvention, Unit } from "../../src/values/index.js";
 
-export type EmployerWageSourceMode = "available" | "missing" | "withdrawn" | "changed" | "duplicate" | "late" | "bank_owner" | "bank_permission";
+export type EmployerWageSourceMode = "available" | "missing" | "withdrawn" | "changed" | "duplicate" | "late" |
+  "bank_owner" | "bank_other_person" | "bank_missing" | "bank_permission";
+type FixedWithholding = PayrollWithholdingElection & { readonly calculation: { readonly kind: "fixed"; readonly amount: ReturnType<typeof money> } };
 
 /** An employer contract and BANK roster authored separately from the R3 kernel. */
 export function employerWage(context: RunContext, terms: {
@@ -22,9 +24,12 @@ export function employerWage(context: RunContext, terms: {
   readonly employerId: string;
   readonly firstPayday: string;
   readonly gross: string;
-  readonly withholding?: PayrollWithholdingElection & { readonly calculation: { readonly kind: "fixed"; readonly amount: ReturnType<typeof money> } };
+  readonly bankOwner?: "person";
+  readonly withholding?: FixedWithholding;
+  readonly elections?: readonly FixedWithholding[];
 }) {
   const { householdId, personId, incomeId, bankAccountId, employerId, withholding } = terms;
+  const elections = terms.elections ?? (withholding === undefined ? [] : [withholding]);
   const start = instant(`${terms.firstPayday}T00:00:00.000Z`);
   const gross = money(terms.gross);
   const archiveId = `fixture:employer:${sha256(canonicalSerialize({ context, terms }))}`;
@@ -45,7 +50,7 @@ export function employerWage(context: RunContext, terms: {
       growth: primitiveId("employer-growth"),
       recurrence: primitiveId("employer-recurrence"),
     },
-    ...(withholding === undefined ? {} : { payrollWithholding: [withholding] }),
+    ...(elections.length === 0 ? {} : { payrollWithholding: elections }),
   };
   const publication = {
     sourceId, revisionId, publishedAt: context.dataCutoff, knownAt: context.dataCutoff,
@@ -60,22 +65,21 @@ export function employerWage(context: RunContext, terms: {
     });
     const id = accountingTransactionId(`tx:recognition:income:${incomeId}:${date}`);
     const year = date.slice(0, 4);
-    const election = withholding !== undefined && withholding.start <= date &&
-      (withholding.end === undefined || date < withholding.end) ? withholding : undefined;
-    const traceRefs = withholding === undefined
+    const active = elections.filter(e => e.start <= date && (e.end === undefined || date < e.end));
+    const traceRefs = elections.length === 0
       ? freezeTraceRefs(["base", "salary-growth-assumption", `growth:${month}`, "recurrence"]
         .map(label => calculationTraceRef(calculationTraceId(`vs2:income:${incomeId}:${label}`))))!
       : [calculationTraceRef(calculationTraceId(`payroll:${id}:gross:${incomeId}`), []),
-        ...(election === undefined ? [] : [calculationTraceRef(calculationTraceId(
+        ...active.map(election => calculationTraceRef(calculationTraceId(
           `payroll:withholding:${election.id}:income:${incomeId}:owner:${personId}:employer:${employerId}:occurrence:${occurrenceId}:year:${year}:jurisdiction:${election.jurisdiction}:provenance:${election.provenance}`,
-        ))])];
-    const withheld = election?.calculation.amount ?? money("0");
+        )))];
+    const withheld = active.reduce((sum, election) => sum.plus(election.calculation.amount), money("0"));
     const net = gross.minus(withheld);
-    const legTraces = withholding === undefined ? { traceRefs } : {};
-    const transaction = createAccountingTransaction({ id, date, type: withholding === undefined ? "income" : "payroll_income", traceRefs, legs: [
-      ...(election !== undefined && withheld.isPositive() ? [createAccountingLeg({ type: "asset", posting: "debit",
-        entityId: taxBalanceIds(election.jurisdiction, year).creditPositionId, amount: withheld,
-        quantity: Quantity.parse(withheld.amount.toString(), Unit.of("usd_tax_credit")) })] : []),
+    const legTraces = elections.length === 0 ? { traceRefs } : {};
+    const transaction = createAccountingTransaction({ id, date, type: elections.length === 0 ? "income" : "payroll_income", traceRefs, legs: [
+      ...active.filter(e => e.calculation.amount.isPositive()).map(election => createAccountingLeg({ type: "asset", posting: "debit",
+        entityId: taxBalanceIds(election.jurisdiction, year).creditPositionId, amount: election.calculation.amount,
+        quantity: Quantity.parse(election.calculation.amount.amount.toString(), Unit.of("usd_tax_credit")) })),
       ...(net.isPositive() ? [createAccountingLeg({ type: "cash", posting: "debit",
         accountId: stream.depositAccountId, cashFlowClass: "operating", amount: net, ...legTraces })] : []),
       createAccountingLeg({ type: "income", posting: "credit", amount: gross, ...legTraces }),
@@ -105,17 +109,22 @@ export function employerWage(context: RunContext, terms: {
       originals: source.mode === "duplicate" ? [current, current] : [current] };
   } });
   const bankOriginals: readonly HouseholdBankOriginal[] = [
-    { ...publication, kind: "account", sourceId: "deed", bankAccountId, owner: { kind: "household", id: householdId }, accountKind: "checking" },
+    { ...publication, kind: "account", sourceId: "deed", bankAccountId,
+      owner: terms.bankOwner === "person" ? { kind: "person", id: personId } : { kind: "household", id: householdId },
+      accountKind: "checking" },
     { ...publication, kind: "household", sourceId: "roster", householdId },
     { ...publication, kind: "membership", sourceId: "member", householdId, personId },
     { ...publication, kind: "permission", sourceId: "payroll-deposit", householdId, personId, bankAccountId, direction: "credit" },
   ];
   registerHouseholdBankOriginalProvider({ publisherId: bankId, readOriginals: query => {
     reads.bank++;
-    if (!matchesRun(query.context) || query.sourceId !== "receiving-account") return undefined;
+    if (!matchesRun(query.context) || query.sourceId !== "receiving-account" || source.mode === "bank_missing") return undefined;
     const originals = bankOriginals.map(fact => {
       if (fact.kind === "account" && source.mode === "bank_owner")
-        return { ...fact, owner: { kind: "person" as const, id: personId } };
+        return { ...fact, owner: terms.bankOwner === "person"
+          ? { kind: "household" as const, id: householdId } : { kind: "person" as const, id: personId } };
+      if (fact.kind === "account" && source.mode === "bank_other_person")
+        return { ...fact, owner: { kind: "person" as const, id: "different-bank-owner" } };
       if (fact.kind === "permission" && source.mode === "bank_permission")
         return { ...fact, status: "revoked" as const };
       return fact;

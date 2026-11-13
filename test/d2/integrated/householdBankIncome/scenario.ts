@@ -57,20 +57,37 @@ export const input = (incomes = [stream()]): VerticalSlice2Input => ({ household
   cashAccountId: ids.bank, expensePayableLiabilityId: ids.payable, baseCurrency: USD, incomes, expenses: [], events: [] });
 export const opening = (owner: DomainId<string> = ids.household) => createAuthoritativeState({ accounts: { [ids.bank]: {
   id: ids.bank, ownerId: owner, kind: "checking", cash: money("100") } }, liabilities: { [ids.payable]: { id: ids.payable, balance: money("0") } } });
-export const control = { reads: 0, missing: false, withdrawAt: 0, rebound: false, payroll: false, revision: "", missingMonth: "" };
-export const reset = () => Object.assign(control, { reads: 0, missing: false, withdrawAt: 0, rebound: false, payroll: false, revision: "", missingMonth: "" });
+export const control = { reads: 0, missing: false, withdrawAt: 0, rebound: false, payroll: false, revision: "", missingMonth: "", personBank: false, bankRevision: "" };
+export const reset = () => Object.assign(control, {
+  reads: 0, missing: false, withdrawAt: 0, rebound: false, payroll: false, revision: "", missingMonth: "",
+  personBank: false, bankRevision: "",
+});
 export function install() {
   registerHouseholdBankOriginalProvider({ publisherId: "wage-bank", readOriginals: query => {
     const c = query.context;
     if (query.sourceId !== "shared-bank" || ![ids.alice, ids.bob].includes(c.personId)) return undefined;
     const base = { revisionId: "original/1", publishedAt: cutoff, knownAt: cutoff, effectiveFrom: cutoff,
       effectiveUntil: instant("2028-02-01T00:00:00.000Z"), status: "active" as const };
-    return { version: "household-bank-original-inventory/v1", publisherId: "wage-bank", query, checkedAt: c.asOf,
-      completeThrough: c.dataCutoff, completeness: "complete", originals: [
-        { ...base, kind: "account", sourceId: "deed", bankAccountId: ids.bank, owner: { kind: "household", id: control.rebound ? "different-household" : ids.household }, accountKind: "checking" },
+    const originals = [
+        { ...base, kind: "account", sourceId: "deed", bankAccountId: ids.bank, accountKind: "checking",
+          owner: control.personBank ? { kind: "person", id: ids.alice }
+            : { kind: "household", id: control.rebound ? "different-household" : ids.household } },
         { ...base, kind: "household", sourceId: "household", householdId: ids.household },
         { ...base, kind: "membership", sourceId: `member:${c.personId}`, householdId: ids.household, personId: c.personId },
-        { ...base, kind: "permission", sourceId: `permission:${c.personId}`, householdId: ids.household, personId: c.personId, bankAccountId: ids.bank, direction: "credit" }] };
+        { ...base, kind: "permission", sourceId: `permission:${c.personId}`, householdId: ids.household,
+          personId: c.personId, bankAccountId: ids.bank, direction: "credit",
+          publishedAt: instant("2025-11-30T00:00:00.000Z") },
+    ] as const;
+    const permission = originals[3];
+    const inventory = control.bankRevision === "revoked" ? [...originals, {
+      ...permission, revisionId: "revoked/2", status: "revoked" as const,
+      publishedAt: cutoff,
+    }] : control.bankRevision === "missing" ? originals.slice(0, 3)
+      : control.bankRevision === "late" ? [...originals.slice(0, 3), { ...permission, knownAt: start }]
+      : control.bankRevision === "ambiguous" ? [...originals, { ...permission, revisionId: "other/2" }]
+      : control.bankRevision === "duplicate" ? [...originals, permission] : originals;
+    return { version: "household-bank-original-inventory/v1", publisherId: "wage-bank", query,
+      checkedAt: c.asOf, completeThrough: c.dataCutoff, completeness: "complete", originals: inventory };
   } });
   registerHouseholdWageOriginalProvider({ publisherId: "employer-archive", readOriginals: query => {
     control.reads++;

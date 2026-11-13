@@ -715,8 +715,8 @@ const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): Ver
             }, bank, request.modeledSourceEvents ?? request.input.events);
             if (wage === undefined && stream.modeledPayroll === undefined)
               invalidInput("INCOME_REQUIRES_QUALIFIED_ORIGINAL", `incomes.${stream.id}`);
-            if (wage !== undefined && (stream.ownerId === request.input.householdId || bank?.ownerId !== request.input.householdId))
-              invalidInput("Household wages require a Person recipient and household BANK", `incomes.${stream.id}.householdWageSource`);
+            if (wage !== undefined && stream.ownerId === request.input.householdId)
+              invalidInput("Household wages require a Person recipient", `incomes.${stream.id}.householdWageSource`);
             const householdWage = wage === undefined ? undefined : { source: wage, stream: wageStreamOriginal(original), period: targetPeriod, context: {
               runId: request.runContext.runId, asOf: request.runContext.asOf, dataCutoff: request.runContext.dataCutoff,
               householdId: request.input.householdId, personId: domainId("person", stream.ownerId),

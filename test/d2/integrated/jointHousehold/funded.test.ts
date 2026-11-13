@@ -4,7 +4,7 @@ import { ValidationError } from "../../../../src/diagnostics/index.js";
 import { createAuthoritativeState, cloneAuthoritativeState } from "../../../../src/state/index.js";
 import { civilDate, instant } from "../../../../src/time/index.js";
 import { Money, money, USD } from "../../../../src/values/index.js";
-import { applyHouseholdExecutionOverlay, runHouseholdKernel, type HouseholdKernelParticipant } from "../../../../src/simulation/householdExecution.js";
+import { applyHouseholdExecutionOverlay, replayHouseholdForecastWindow, runHouseholdKernel, type HouseholdKernelParticipant } from "../../../../src/simulation/householdExecution.js";
 import { attachFundedRetirementCashSchedule, attachRetirementCash } from "../../../../src/simulation/d2/integration/retirementCash/index.js";
 import { qualifyRetirementRawSource } from "../../../../src/simulation/d2/integration/retirementCash/source.js";
 import { evaluateFsa } from "../../../../src/simulation/d2/health/fsa/index.js";
@@ -17,7 +17,8 @@ import { conditional529 } from "./funded529Scenario.js";
 beforeEach(resetSources);
 const amount = (m: Money) => m.amount.toString();
 const archiveIds = ["card-charge-january", "card-payment-february", "fsa-cash:s8-medical-source:original",
-  "fsa-cash:s8-medical-source:deposit", "withdraw:s8-3:first", "withdraw:s8-3:second"].sort();
+  "fsa-cash:s8-medical-source:deposit", "withdraw:s8-3:first", "withdraw:s8-3:second",
+  ...["2026-01-05", "2026-02-05"].map(day => `tx:recognition:income:${ids.wage}:${day}T00:00:00.000Z`)].sort();
 
 describe("#149 S8-3 funded account-scoped RMD in the real joint household", () => {
   it.each([false, true])("reconciles literal financial oracles and exact canonical postings (reversed=%s)", reversed => {
@@ -270,7 +271,8 @@ describe("#149 S8-3 funded account-scoped RMD in the real joint household", () =
   });
 
   it("preserves funded January when a late February failure rolls back all February participants", () => {
-    const jan = fundedHousehold({ months: 1 }).run(), s = fundedHousehold();
+    const s = fundedHousehold(), summary = runHouseholdKernel({ kernel: s.kernel, runContext: s.context });
+    const jan = replayHouseholdForecastWindow(summary, summary.periods[0]!.period);
     expect(jan.periods).toHaveLength(1);
     const failure: HouseholdKernelParticipant = { id: "s8-3:late-failure", version: "1", economicInputs: {},
       prepare: (_context, period) => ({ id: "s8-3:late-failure", operations: period.start !== instant("2026-02-01T00:00:00.000Z") ? [] : [{

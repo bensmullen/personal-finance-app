@@ -521,7 +521,7 @@ describe("payroll credits, tax accrual and net final settlement", () => {
     const terminal = detail.periods.at(-1)!.period;
     expect(replayHouseholdForecastWindow(restored, terminal)).toEqual(replayHouseholdForecastWindow(summary, terminal));
     const source = fixture.original!.source;
-    for (const mode of ["missing", "withdrawn", "changed", "duplicate", "late", "bank_owner", "bank_permission"] as const) {
+    for (const mode of ["missing", "withdrawn", "changed", "duplicate", "late", "bank_owner", "bank_other_person", "bank_missing", "bank_permission"] as const) {
       source.mode = mode;
       try {
         const rejected = runHouseholdKernel(fixture);

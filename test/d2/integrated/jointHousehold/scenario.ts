@@ -12,7 +12,7 @@ import { proposePremiums, type PremiumCoverage, type PremiumRequest, type Premiu
 import { attachAftertaxPremiums, type AftertaxPremiumInput, type ConfirmedPremium } from "../../../../src/simulation/d2/integration/aftertaxPremiums/index.js";
 import type { FixedAmortizingLoan } from "../../../../src/simulation/verticalSlice4.js";
 import { catalogSchema } from "../../../fixtures/d2/schema.js";
-import { compileModeledIncomeFixture } from "../../../fixtures/modeledIncome.js";
+import { employerWage } from "../../../fixtures/employerWage.js";
 
 export const catalog = catalogSchema.parse(JSON.parse(readFileSync(new URL("../../../fixtures/d2/catalog.json", import.meta.url), "utf8")));
 export const anchor = (id: string) => catalog.cases.find(c => c.id === id)!;
@@ -74,14 +74,14 @@ export function scenario({ cash = "2000", months = 1, namespace = 1, wageDay = "
   const context = createRunContext({ runId: runId(uuid(10)), scenarioId: ids.scenario,
     asOf: instant(`${asOf}T00:00:00.000Z`), dataCutoff: instant(`${asOf}T00:00:00.000Z`),
     simulationStart: start, simulationEnd: end, baseCurrency: USD });
-  const wages = compileModeledIncomeFixture(context, months, {
-    householdId: ids.household, personId: ids.member, accountId: ids.bank, accountType: "checking",
-    incomes: [{ id: ids.wage, type: "salary", amount: "1000", startDate: payday.slice(0, 10) }],
+  const wages = employerWage(context, {
+    householdId: ids.household, personId: ids.member, bankAccountId: ids.bank, incomeId: ids.wage,
+    bankOwner: "person", employerId: "synthetic-employer", gross: "1000", firstPayday: payday.slice(0, 10),
   });
   const base = compileHouseholdKernel({
     cashFlowInput: { householdId: ids.household, ownerId: ids.member, cashAccountId: ids.bank,
       expensePayableLiabilityId: ids.payable, baseCurrency: USD, sameInstantCashFlowOrder: "income_before_expense", expenses: [], events: [],
-      incomes: wages.incomes },
+      incomes: [wages.income] },
     liabilityInput: { householdId: ids.household, ownerId: ids.member, baseCurrency: USD, loans: [loan] },
     reconciledOpeningState: opening, reconciledPrimitiveState: createPrimitiveRuntimeStateStore(),
     scenarioIdentity: ids.scenario, executionMonths: months, scenarioBindings: { source: "#149 S8-1" },

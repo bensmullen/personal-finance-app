@@ -726,8 +726,8 @@ function executeCashFlowPeriodCandidate(
             }, state.accounts[stream.depositAccountId], request.modeledSourceEvents ?? request.input.events);
             if (wageSource === undefined && stream.modeledPayroll === undefined)
               invalidInput("INCOME_REQUIRES_QUALIFIED_ORIGINAL", `incomes.${stream.id}`);
-            if (wageSource !== undefined && (stream.ownerId === request.input.householdId || state.accounts[stream.depositAccountId]?.ownerId !== request.input.householdId))
-              invalidInput("Household wages require a Person recipient and household BANK", `incomes.${stream.id}.householdWageSource`);
+            if (wageSource !== undefined && stream.ownerId === request.input.householdId)
+              invalidInput("Household wages require a Person recipient", `incomes.${stream.id}.householdWageSource`);
             const householdWage = wageSource === undefined ? undefined : { source: wageSource, stream: wageStreamOriginal(request.modeledSourceIncome ?? stream), period: targetPeriod, context: {
               runId: request.runContext.runId, asOf: request.runContext.asOf, dataCutoff: request.runContext.dataCutoff,
               householdId: request.input.householdId, personId: domainId("person", stream.ownerId), bankAccountId: stream.depositAccountId,

@@ -12,6 +12,8 @@ import type { RecognizedTaxEconomics, TaxCapabilityDiagnostic } from "../tax/con
 import type { RunContext, RunMetadata } from "../run.js";
 import type { HouseholdForecastSummaryPeriod } from "./forecastSummary.js";
 import { compileHouseholdKernel } from "./compiledHousehold.js";
+import { householdExecutionMetrics } from "./metrics.js";
+import type { Instant } from "../../time/index.js";
 import { portableHouseholdParticipant, restoreHouseholdParticipant, type PortableHouseholdParticipant } from "./participantCodec.js";
 // Composition boundary: domain codecs register factories; replay dispatch stays generic.
 import "../tax/replayCodec.js";
@@ -146,6 +148,28 @@ const assertSourceHistoryPreserved = (before: AuthoritativeState, after: Authori
   assertSsaMedicarePaymentHistoryPreserved(before, after);
 };
 
+const assertSourceFrontier = (records: AuthoritativeCheckpointDelta["records"], context: RunContext, end: Instant,
+  opening?: AuthoritativeState): void => {
+  const mismatch = (): never => { throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: invalid committed source frontier"); };
+  const rows = <K extends "d2PostedTransactions" | "d2SettlementReceipts" | "ssaMedicarePayments" | "retirementDistributionAllocations">(key: K) =>
+    Object.entries(records[key]?.set ?? {}).filter(([id]) => !Object.hasOwn(opening?.[key] ?? {}, id))
+      .map(([, row]) => row) as NonNullable<AuthoritativeState[K]>[keyof NonNullable<AuthoritativeState[K]>][];
+  for (const proof of rows("d2PostedTransactions")) {
+    if (proof.transaction.date >= end) mismatch();
+    if (proof.registration.kind === "household_domain") {
+      const event = proof.registration.evidence.context;
+      if (event.runId !== context.runId || event.asOf !== context.asOf || event.dataCutoff !== context.dataCutoff ||
+          event.eventAt < context.simulationStart) mismatch();
+    }
+  }
+  for (const receipt of rows("d2SettlementReceipts"))
+    if (receipt.originalTransaction.date >= end || receipt.paymentTransaction.date >= end) mismatch();
+  for (const payment of rows("ssaMedicarePayments"))
+    if (payment.transaction.date >= end) mismatch();
+  for (const distribution of rows("retirementDistributionAllocations"))
+    if (distribution.effectiveAt >= end) mismatch();
+};
+
 /** Sparse state changes, never transaction history or repeated identity prefixes. */
 const checkpointDeltas = (checkpoints: readonly HouseholdReplayCheckpoint[], observe?: (visited: number, changed: number) => void,
   observeEquality?: () => void): readonly CheckpointDelta[] => {
@@ -157,7 +181,7 @@ const checkpointDeltas = (checkpoints: readonly HouseholdReplayCheckpoint[], obs
   });
 };
 const restoreCheckpointDeltas = (deltas: readonly CheckpointDelta[], opening: AuthoritativeState,
-  observe?: (visited: number, changed: number) => void): readonly HouseholdReplayCheckpoint[] => {
+  context: RunContext, observe?: (visited: number, changed: number) => void): readonly HouseholdReplayCheckpoint[] => {
   if (!Array.isArray(deltas)) throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: checkpoint data missing");
   let before = createAuthoritativeState();
   let receiptHistory = opening;
@@ -165,6 +189,9 @@ const restoreCheckpointDeltas = (deltas: readonly CheckpointDelta[], opening: Au
     if (!records || !identities) throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: malformed checkpoint");
     before = restoreAuthoritativeCheckpointDelta(before, { records, identities }, observe);
     assertSourceHistoryPreserved(receiptHistory, before);
+    // The first delta is relative to an empty state and includes opening
+    // history. Check the frontier of newly committed records only.
+    assertSourceFrontier(records, context, checkpoint.at, opening);
     receiptHistory = before;
     return { ...checkpoint, state: before };
   });
@@ -324,7 +351,7 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
       timings.checkpointRecordChanges = (timings.checkpointRecordChanges ?? 0) + rows;
     };
     const checkpoints = measure("checkpointRestoreValidationMs", () =>
-      restoreCheckpointDeltas(restored.checkpoints!, admittedExecutable.reconciledOpeningState, observeChanges));
+      restoreCheckpointDeltas(restored.checkpoints!, admittedExecutable.reconciledOpeningState, restored.runContext, observeChanges));
     const terminalDelta = restored.terminalDelta;
     if (terminalDelta === undefined)
       throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: terminal source history missing");
@@ -332,6 +359,15 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
       const boundary = checkpoints.at(-1)?.state ?? sourceHistoryState;
       const terminal = restoreAuthoritativeCheckpointDelta(boundary, terminalDelta, observeChanges);
       assertSourceHistoryPreserved(boundary, terminal);
+      const closing = restored.periods.at(-1);
+      assertSourceFrontier(terminalDelta.records, restored.runContext, closing?.period.end ?? restored.runContext.simulationStart);
+      if (closing !== undefined) {
+        const metrics = householdExecutionMetrics(terminal, restored.runContext.baseCurrency, admittedExecutable);
+        if (!metrics.cash.equals(closing.cash) || !metrics.investmentValue.equals(closing.investmentValue) ||
+            !metrics.totalAssets.equals(closing.assets) || !metrics.totalLiabilities.equals(closing.liabilities) ||
+            !metrics.netWorth.equals(closing.netWorth))
+          throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: terminal state differs from committed summary");
+      }
       return terminal;
     });
     qualify(sourceHistoryState);

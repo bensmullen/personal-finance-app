@@ -175,6 +175,8 @@ export interface HouseholdBankRoutePin {
   readonly sourceId: string;
   readonly revisionId: string;
   readonly digest: string;
+  /** Present only on original-backed wage credits to the recipient's BANK. */
+  readonly personOwnerId?: DomainId<"person">;
 }
 export type HouseholdEconomicFamily = "wage" | "payroll_health" | "ssa" | "pension" | "retirement"
   | "fsa" | "card" | "heloc" | "medicare" | "health_premium" | "education" | "fixed_income";
@@ -1862,7 +1864,8 @@ const compactHouseholdEvidence = (e: HouseholdDomainPostingEvidence): HouseholdD
     dataCutoff: e.context.dataCutoff, householdId: e.context.householdId, personId: e.context.personId,
     bankAccountId: e.context.bankAccountId, direction: e.context.direction },
   route: { version: e.route.version, accountKind: e.route.accountKind, publisherId: e.route.publisherId,
-    sourceId: e.route.sourceId, revisionId: e.route.revisionId, digest: e.route.digest },
+    sourceId: e.route.sourceId, revisionId: e.route.revisionId, digest: e.route.digest,
+    ...(e.route.personOwnerId === undefined ? {} : { personOwnerId: e.route.personOwnerId }) },
   originals: e.originals.map(w => ({ original: { version: w.original.version, family: w.original.family,
     publisherId: w.original.publisherId, sourceId: w.original.sourceId, revisionId: w.original.revisionId, digest: w.original.digest },
     source: { kind: w.source.kind, id: w.source.id } as HouseholdEconomicParty,
@@ -1876,6 +1879,8 @@ const qualifyHouseholdPosting = (transaction: AccountingTransaction, evidence: H
   if (evidence.version !== "household-domain-posting/v1" || route.version !== "household-bank-route/v1" ||
       ![c.runId, c.eventId, c.householdId, c.personId, c.bankAccountId, route.publisherId, route.sourceId, route.revisionId, route.digest].every(householdToken) ||
       c.dataCutoff > c.asOf || transaction.date !== c.eventAt || !["credit", "debit"].includes(c.direction) ||
+      route.personOwnerId !== undefined && (route.personOwnerId !== c.personId || c.direction !== "credit" ||
+        !originals.some(w => w.original.family === "wage")) ||
       !householdBankRouteAuthority?.qualify(route, c)) d2Invalid("Household BANK route original unavailable or changed");
   if (originals.length < 1 || originals.length > 8 || new Set(originals.map(o => o.original.family)).size !== originals.length)
     d2Invalid("Household posting requires distinct economic ORIGINAL families");
@@ -1904,7 +1909,9 @@ const qualifyHouseholdOriginals = (transaction: AccountingTransaction, c: Househ
 const nativeFamily = (r: D2PostingRegistration): NativeHouseholdPostingAttachment["family"] | undefined =>
   r.kind === "ssa_medicare_payment" ? "ssa" : r.kind === "retirement_cash_distribution" ? "retirement"
     : r.kind === "fsa_paid_reimbursement" ? "fsa" : r.kind === "card_interest_payment" ? "card" : undefined;
-const householdRoute = (r: D2PostingRegistration): boolean => r.kind === "household_domain" || r.nativeHousehold !== undefined;
+const householdBankOwner = (r: D2PostingRegistration): boolean =>
+  r.kind === "household_domain" ? r.evidence.route.personOwnerId === undefined : r.nativeHousehold !== undefined;
+const postingBankOwnerId = (r: D2PostingRegistration): string => householdBankOwner(r) ? r.householdId : r.personId;
 const bankRouteKind = (r: D2PostingRegistration): string | undefined =>
   r.kind === "household_domain" ? r.evidence.route.accountKind : r.nativeHousehold?.route?.accountKind;
 const qualifyNativePosting = (tx: AccountingTransaction, a: NativeHouseholdPostingAttachment,
@@ -1935,7 +1942,7 @@ const qualifyNativePosting = (tx: AccountingTransaction, a: NativeHouseholdPosti
   } else {
     const route = a.route;
     const zeroNetSsa = family === "ssa" && tx.legs.every(l => l.type !== "cash");
-    if (!route || route.version !== "household-bank-route/v1" || !["checking", "savings"].includes(route.accountKind) ||
+    if (!route || route.version !== "household-bank-route/v1" || route.personOwnerId !== undefined || !["checking", "savings"].includes(route.accountKind) ||
         ![route.publisherId, route.sourceId, route.revisionId, route.digest].every(householdToken) ||
         !householdBankRouteAuthority?.qualify(route, c) || !zeroNetSsa && (cash.length !== 1 ||
         cash[0]!.posting !== (direction === "credit" ? "debit" : "credit") || !cash[0]!.amount.isPositive()))
@@ -2020,7 +2027,7 @@ const validateD2Posting = (state: AuthoritativeState, key: string, proof: D2Post
   instant(tx.date); assertBalanced(tx);
   const bank = state.accounts[r.bankAccountId];
   if (!bank) return d2Invalid("Posting proof BANK/owner missing");
-  if (bank.ownerId !== (householdRoute(r) ? r.householdId : r.personId) || !["checking", "savings"].includes(bank.kind)) d2Invalid("Posting proof BANK/owner missing");
+  if (bank.ownerId !== postingBankOwnerId(r) || !["checking", "savings"].includes(bank.kind)) d2Invalid("Posting proof BANK/owner missing");
   if (r.nativeHousehold) {
     if (bank.id !== r.bankAccountId || (bankRouteKind(r) !== undefined && bank.kind !== bankRouteKind(r))) d2Invalid("Native BANK identity/kind changed");
     qualifyNativeRegistration(tx, r);
@@ -2105,7 +2112,7 @@ export const validateD2PostedTransactions = (state: AuthoritativeState): void =>
     // before accepting its first roots; warm appends use the writer's final
     // source check instead of scanning previously committed events.
     if (previous === undefined || nativeCheckpointImports.has(state)) {
-      if (previous === undefined && proof.registration.kind === "household_domain") qualifyHouseholdPosting(proof.transaction, proof.registration.evidence);
+      if (proof.registration.kind === "household_domain") qualifyHouseholdPosting(proof.transaction, proof.registration.evidence);
       if (proof.registration.nativeHousehold) {
         if (proof.registration.kind === "retirement_cash_distribution" &&
             qualifyRetirement(proof.registration.distribution, proof.registration.nativeHousehold.context).status !== "qualified")
@@ -2140,13 +2147,14 @@ export const validateD2PostedTransactions = (state: AuthoritativeState): void =>
       if (sources.has(`${sourceKey}:${r.role}`)) d2Invalid("Original source or settlement posting reused");
       sources.set(sourceKey, r); sources.set(`${sourceKey}:${r.role}`, r);
     }
-    if (priorBank !== undefined && (householdRoute(priorBank) !== householdRoute(r) ||
-        (!householdRoute(r) && priorBank.personId !== r.personId) || priorBank.householdId !== r.householdId ||
+    if (priorBank !== undefined && (householdBankOwner(priorBank) !== householdBankOwner(r) ||
+        postingBankOwnerId(priorBank) !== postingBankOwnerId(r) || priorBank.householdId !== r.householdId ||
         (bankRouteKind(r) !== undefined && bankRouteKind(priorBank) !== undefined && bankRouteKind(priorBank) !== bankRouteKind(r)) ||
         !priorBank.currency.equals(proof.transaction.legs[0]!.amount.currency)))
       d2Invalid("Archived BANK owner/household rebound");
-    // A NONBANK issuer journal cannot erase an already authenticated BANK kind.
-    if (!priorBank || r.nativeHousehold?.cashRole !== "nonbank")
+    // Preserve an authenticated account kind across postings with no BANK pin.
+    if (!priorBank || bankRouteKind(r) !== undefined ||
+        (bankRouteKind(priorBank) === undefined && r.nativeHousehold?.cashRole !== "nonbank"))
       bindings.set(bankKey, { ...r, currency: proof.transaction.legs[0]!.amount.currency });
     if (r.kind === "card_interest_payment" || r.kind === "heloc_phase_service") {
       const liabilityId = r.kind === "card_interest_payment" ? r.liabilityId : r.service.liabilityId;
@@ -2183,9 +2191,9 @@ export const validateD2PostedTransactions = (state: AuthoritativeState): void =>
   const changedKeys = (record: object): Iterable<string> => indexedRecords.get(record)?.dirty ?? Object.keys(record);
   for (const key of changedKeys(state.accounts)) {
     const r = bindings.get(`bank:${key}`), bank = state.accounts[key];
-    if (r !== undefined && (!bank || bank.ownerId !== (householdRoute(r) ? r.householdId : r.personId) ||
+    if (r !== undefined && (!bank || bank.ownerId !== postingBankOwnerId(r) ||
         !["checking", "savings"].includes(bank.kind) || (bankRouteKind(r) !== undefined && bank.kind !== bankRouteKind(r)) ||
-        (householdRoute(r) && bank.id !== r.bankAccountId) ||
+        ((householdBankOwner(r) || bankRouteKind(r) !== undefined) && bank.id !== r.bankAccountId) ||
         !bank.cash.currency.equals(r.currency))) d2Invalid("Archived BANK reference changed");
   }
   for (const key of changedKeys(state.liabilities)) {

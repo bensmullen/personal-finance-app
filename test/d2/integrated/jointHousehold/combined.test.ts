@@ -4,7 +4,7 @@ import { ValidationError } from "../../../../src/diagnostics/index.js";
 import { cloneAuthoritativeState } from "../../../../src/state/index.js";
 import { civilDate, instant } from "../../../../src/time/index.js";
 import { money, Money, USD } from "../../../../src/values/index.js";
-import { applyHouseholdExecutionOverlay, runHouseholdKernel, type HouseholdKernelParticipant } from "../../../../src/simulation/householdExecution.js";
+import { applyHouseholdExecutionOverlay, replayHouseholdForecastWindow, runHouseholdKernel, type HouseholdKernelParticipant } from "../../../../src/simulation/householdExecution.js";
 import { canonicalSerialize } from "../../../../src/simulation/run.js";
 import { evaluateFsa } from "../../../../src/simulation/d2/health/fsa/index.js";
 import { type FsaCashSource } from "../../../../src/simulation/d2/integration/fsaCash/index.js";
@@ -17,7 +17,8 @@ beforeEach(resetPublishers);
 const amount = (m: Money) => m.amount.toString();
 const run = (s: ReturnType<typeof combinedScenario>, kernel = s.kernel) => runHouseholdKernel({ kernel, runContext: s.context, resultTier: "detail" });
 const archiveIds = ["card-charge-january", "card-payment-february", "fsa-cash:s8-medical-source:original",
-  "fsa-cash:s8-medical-source:deposit", "s8-retirement-posted"].sort();
+  "fsa-cash:s8-medical-source:deposit", "s8-retirement-posted",
+  ...["2026-01-05", "2026-02-05"].map(day => `tx:recognition:income:${ids.wage}:${day}T00:00:00.000Z`)].sort();
 const bankRows = (transactions: readonly AccountingTransaction[]) => transactions.flatMap(tx => tx.legs
   .filter(l => l.type === "cash" && l.accountId === ids.bank)
   .map(l => [tx.date, tx.type, l.posting, amount(l.amount)]))
@@ -188,14 +189,16 @@ describe("#149 S8-2 canonical cross-domain truth table", () => {
       expect(out.periods).toEqual([]); expect(out.state).toEqual(s.opening);
     } else {
       expect(out.periods).toHaveLength(1); expect(amount(out.state.accounts[ids.bank]!.cash)).toBe("1700");
-      expect(Object.keys(out.state.d2PostedTransactions!).sort()).toEqual(["card-charge-january", "fsa-cash:s8-medical-source:original", "s8-retirement-posted"]);
+      expect(Object.keys(out.state.d2PostedTransactions!).sort()).toEqual(["card-charge-january", "fsa-cash:s8-medical-source:original",
+        "s8-retirement-posted", `tx:recognition:income:${ids.wage}:2026-01-05T00:00:00.000Z`]);
       expect(out.state.d2SettlementReceipts).toBeUndefined();
     }
     expect(out.diagnostics.some(d => d.severity === "error")).toBe(true);
   });
 
   it("rolls back every February posting after a late failure, preserving the full earlier committed period", () => {
-    const s = combinedScenario(), jan = combinedScenario({ months: 1 }).run();
+    const s = combinedScenario(), summary = runHouseholdKernel({ kernel: s.kernel, runContext: s.context });
+    const jan = replayHouseholdForecastWindow(summary, summary.periods[0]!.period);
     const failure: HouseholdKernelParticipant = { id: "s8-late-failure", version: "1", economicInputs: {},
       prepare: (_context, period) => ({ id: "s8-late-failure", operations: period.start !== instant("2026-02-01T00:00:00.000Z") ? [] : [{
         descriptor: { id: "s8-fail-after-both-payments", domain: "synthetic", sequencingInstant: at("2026-02-28"), dependsOn: [], resourceAccesses: [], traceRefs: [] },

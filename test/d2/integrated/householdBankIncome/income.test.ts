@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { executeVerticalSlice2PeriodCandidate } from "../../../../src/simulation/verticalSlice2.js";
 import { executeVerticalSlice2PeriodCandidate as executeReferenceCashFlow } from "../../../../src/simulation/r3/referenceVerticalSlice2.js";
 import { payrollContributionCandidate } from "../../../../src/simulation/payrollContributions.js";
+import { qualifyHouseholdBankRoute } from "../../../../src/simulation/d2/integration/householdBank/index.js";
 import { compileHouseholdKernel, replayHouseholdForecastWindow, runHouseholdKernel } from "../../../../src/simulation/householdExecution.js";
 import { createPrimitiveRuntimeStateStore } from "../../../../src/simulation/period.js";
 import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../../../../src/simulation/r3/replayArtifact.js";
@@ -113,6 +114,44 @@ describe("source-owned household wage posting", () => {
     const result = execute([stream(1), stream(0)]);
     expect(result.state.accounts[ids.bank]!.cash.equals(money("350.74"))).toBe(true);
     expect(Object.values(result.state.d2PostedTransactions!).map(p => p.registration.personId).sort()).toEqual([ids.alice, ids.bob].sort());
+  });
+  it.each([false, true])("posts a member-owned BANK credit with matching reference evidence, elected=%s", payroll => {
+    control.payroll = payroll;
+    control.personBank = true;
+    const state = opening(ids.alice), runContext = context();
+    const request = { runContext, openingState: state, input: input() };
+    const period = utcMonthlyPeriods(start, 1)[0]!;
+    const actual = executeVerticalSlice2PeriodCandidate(request, period, state, {});
+    const reference = executeReferenceCashFlow(request, period, state, {});
+    expect(actual.period.transactions).toEqual(reference.period.transactions);
+    expect(actual.period.recognitions).toEqual(reference.period.recognitions);
+    expect(actual.period.payrollWithholding).toEqual(reference.period.payrollWithholding);
+    expect(actual.state).toEqual(reference.state);
+    expect(actual.state.accounts[ids.bank]!.cash).toEqual(money(payroll ? "215.37" : "225.37"));
+    const proof = Object.values(actual.state.d2PostedTransactions!)[0]!;
+    expect(proof.transaction).toEqual(document().transaction);
+    if (proof.registration.kind !== "household_domain") throw new Error("Expected a wage proof");
+    const { evidence } = proof.registration;
+    expect(evidence.route.personOwnerId).toBe(ids.alice);
+    expect(() => qualifyHouseholdBankRoute(evidence.route.publisherId, evidence.route.sourceId,
+      { ...evidence.context, direction: "debit" })).toThrow();
+    expect(() => executeVerticalSlice2PeriodCandidate({ ...request, input: input([stream(1)]) }, period, state, {})).toThrow();
+    expect(state.accounts[ids.bank]!.cash).toEqual(money("100"));
+    expect(state.d2PostedTransactions).toBeUndefined();
+  });
+  it.each(["revoked", "missing", "late", "ambiguous", "duplicate"])("rejects %s member BANK permission on posting and replay", revision => {
+    control.personBank = true;
+    const state = opening(ids.alice), runContext = context();
+    const request = { runContext, openingState: state, input: input() };
+    const period = utcMonthlyPeriods(start, 1)[0]!;
+    const posted = executeVerticalSlice2PeriodCandidate(request, period, state, {}).state;
+    const snapshot = canonicalSerialize(posted);
+    control.bankRevision = revision;
+    expect(() => executeVerticalSlice2PeriodCandidate(request, period, state, {})).toThrow();
+    expect(() => requalifyD2SettlementReceiptHistory(posted, runContext)).toThrow();
+    expect(() => createAuthoritativeState(posted)).toThrow();
+    expect(canonicalSerialize(posted)).toBe(snapshot);
+    expect(state.d2PostedTransactions).toBeUndefined();
   });
   describe.each([false, true])("rejected household income with elections=%s", payroll => {
   it.each(["unbound", "wrong-source", "missing", "race", "owner", "gross", "occurrence", "withdrawn", "late", "mismatch", "duplicate"])("rejects %s without changing opening state", kind => {
