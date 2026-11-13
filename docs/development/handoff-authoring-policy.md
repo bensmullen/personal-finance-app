@@ -219,6 +219,16 @@ relevant workflow invocations. Inspect direct imports, aliases and exported
 barrels; a symbol search is a starting point, not dynamic-call proof.
 Specifically resolve:
 
+- **Information sufficiency / indistinguishable inputs:** if the same unsigned
+  runtime record can represent an allowed non-salary flow *and* a forbidden
+  unauthenticated salary, no runtime label, omitted election, owner ID or
+  untrusted fingerprint can reliably distinguish them. Require a separately
+  issuer-qualified canonical economic original for both accepted and rejected
+  cases, or record the missing product/source decision before Codex starts.
+  Explicitly test adversarial reclassification, while preserving valid pension
+  and other canonical income behavior. Do not create a test-only signer or
+  replicate a large domain policy engine in an independent reference: define
+  the shared-primitive parity boundary and independently checked invariants.
 - **Pre-issuer acceptance gates** shared by authored-model decoding, election
   authoring, tax compilation, forecast readiness and execution. Follow each
   canonical owner/member/account validation predicate and its reverse callers,
