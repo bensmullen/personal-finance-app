@@ -1,5 +1,5 @@
 import type { RecurringIncomeStream, VerticalSlice2Input } from "../../../verticalSlice2.js";
-import type { AccountState } from "../../../../state/index.js";
+import type { AccountState, AuthoritativeState } from "../../../../state/index.js";
 import { assertRunContext, canonicalSerialize, runId, type RunContext } from "../../../run.js";
 import { sha256 } from "../../../../rules/tax/t1b/contentIdentity.js";
 import { evaluatePrimitive, primitiveEvaluationContext } from "../../../../primitives/index.js";
@@ -84,6 +84,21 @@ export interface ModeledPayrollOccurrence {
   readonly occurrenceId: string;
   readonly gross: import("../../../../values/index.js").Money;
 }
+
+/** Validate the original before a salary activation can stage P27 runtime. */
+export function assertModeledSalaryActivation(input: VerticalSlice2Input,
+  state: AuthoritativeState, context: RunContext): void {
+  for (const event of input.events) {
+    if (event.kind !== "activation") continue;
+    const stream = input.incomes.find(income => income.id === event.targetId);
+    if (stream === undefined) continue;
+    const source = qualifyModeledPayroll(stream, input.householdId, state.accounts[stream.depositAccountId], context);
+    if (source.nonSalaryType !== undefined || stream.activationEventId !== event.id ||
+        canonicalSerialize(source.events ?? []) !== canonicalSerialize(input.events.filter(item => item.targetId === stream.id)))
+      reject();
+  }
+}
+
 // Tokens are local to one evaluated occurrence. References survive snapshots;
 // VS2 must qualify them again before evaluating and admitting another paycheck.
 const occurrences = new WeakSet<object>();

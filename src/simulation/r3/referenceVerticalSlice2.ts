@@ -75,7 +75,7 @@ import {
 } from "./referencePeriod.js";
 import type { HouseholdWorkDescriptor } from "../intraperiodScheduler.js";
 import { qualifyHouseholdWage, wageStreamOriginal } from "../d2/integration/householdWages/index.js";
-import { modeledPayrollOccurrence } from "../d2/integration/householdWages/modeledPayroll.js";
+import { assertModeledSalaryActivation, modeledPayrollOccurrence } from "../d2/integration/householdWages/modeledPayroll.js";
 import { payrollContributionCandidate } from "../payrollContributions.js";
 import { taxBalanceIds } from "../tax/participant.js";
 import type { PayrollWithholdingEvidence } from "../tax/contracts.js";
@@ -273,7 +273,7 @@ const validateInput = (request: VerticalSlice2RunInput, periods: readonly Period
   const streams = [...input.incomes, ...input.expenses];
   for (const stream of streams) {
     if (!stream.baseMonthlyAmount.currency.equals(input.baseCurrency) || stream.baseMonthlyAmount.isNegative()) invalidInput(`Stream ${stream.id} amount is invalid`, `streams.${stream.id}.baseMonthlyAmount`);
-    if (stream.start >= (stream.end ?? runContext.simulationEnd) || stream.recurrence.kind !== "utc_monthly" || stream.recurrence.invalidDayPolicy !== "skip") invalidInput(`Stream ${stream.id} temporal configuration is invalid`, `streams.${stream.id}`);
+    if ((stream.end !== undefined && stream.start >= stream.end) || stream.recurrence.kind !== "utc_monthly" || stream.recurrence.invalidDayPolicy !== "skip") invalidInput(`Stream ${stream.id} temporal configuration is invalid`, `streams.${stream.id}`);
     for (const [reference, expectedKind, primitiveId] of [
       [stream.activationEventId, "activation", stream.primitiveIds.activation],
       [stream.terminationEventId, "termination", stream.primitiveIds.termination],
@@ -536,6 +536,7 @@ export const prepareVerticalSlice2Period = (
 ): PreparedVerticalSlice2Period => {
   const request: VerticalSlice2RunInput = { runContext, openingState: currentState, input, months: 1, primitiveState: currentPrimitiveState };
   validateInput(request, [period], true);
+  assertModeledSalaryActivation(input, currentState, runContext);
   const eventResult = runPeriod({ period, runContext, openingState: currentState, primitiveState: currentPrimitiveState, work: eventWork(request, period) });
   const eventOutputs = new Map(eventResult.primitiveOutputs.map((output) => [output.workId, output.output]));
   const occurrences: PreparedVerticalSlice2Occurrence[] = [];
@@ -626,6 +627,7 @@ const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): Ver
 
   for (const targetPeriod of periods) {
     try {
+      assertModeledSalaryActivation(request.input, committedState, request.runContext);
       const eventResult = runPeriod({
         period: targetPeriod,
         runContext: request.runContext,

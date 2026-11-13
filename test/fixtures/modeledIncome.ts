@@ -15,6 +15,7 @@ export function compileModeledIncomeFixture(context: RunContext, months: number,
     readonly amount: string;
     readonly startDate: string;
     readonly endDate?: string;
+    readonly jobChangeEventId?: string;
     readonly growth?: {
       readonly primitiveId: string;
       readonly assumptionId: string;
@@ -37,19 +38,28 @@ export function compileModeledIncomeFixture(context: RunContext, months: number,
     opening_date: "1900-01-01", opening_balance: "0",
   });
   for (const income of fixture.incomes) {
+    if (income.jobChangeEventId !== undefined) {
+      model = { ...model, objects: { ...model.objects, Event: [...(model.objects.Event ?? []), {
+        event_id: income.jobChangeEventId, name: "Synthetic job change", event_type: "job_change",
+        trigger_type: "scheduled", start_date: income.startDate, scenario_id: context.scenarioId,
+        effect_ids: [], dependencies: [], precedence: 0, enabled: true,
+      }] } };
+    }
     if (income.growth !== undefined) {
       const { primitiveId, assumptionId, value, unit } = income.growth;
       model = addPersonalObject(model, "Assumption", assumptionId, {
         name: "Synthetic salary growth", category: "salary_growth", value, unit, source: "user", scenario_id: context.scenarioId,
       });
-      model = addPersonalObject(model, "PrimitiveInstance", primitiveId, {
-        primitive_id: "P08", input_bindings: { rate: assumptionId }, scenario_id: context.scenarioId, enabled: true,
-      });
+      model = { ...model, objects: { ...model.objects, PrimitiveInstance: [...(model.objects.PrimitiveInstance ?? []), {
+        primitive_instance_id: primitiveId, primitive_id: "P08", input_bindings: { rate: assumptionId },
+        parameters: {}, scenario_id: context.scenarioId, enabled: true,
+      }] } };
     }
     model = addPersonalObject(model, "Income", income.id, {
       owner_id: fixture.personId, income_type: income.type, source: "Synthetic income original",
       amount: income.amount, frequency: "monthly", start_date: income.startDate, gross_or_net: "gross",
       ...(income.endDate === undefined ? {} : { end_date: income.endDate }),
+      ...(income.jobChangeEventId === undefined ? {} : { related_event_id: income.jobChangeEventId }),
       ...(income.growth === undefined ? {} : { growth_model_id: income.growth.primitiveId }),
     });
   }
@@ -58,7 +68,8 @@ export function compileModeledIncomeFixture(context: RunContext, months: number,
   model = addPersonalObject(model, "Scenario", context.scenarioId, {
     name: "Synthetic forecast", start_date: simulationStart, end_date: simulationEnd,
     timestep: "monthly", enabled: true, stochastic: false, simulation_count: 1,
-    assumption_ids: fixture.incomes.flatMap(income => income.growth === undefined ? [] : [income.growth.assumptionId]), event_ids: [],
+    assumption_ids: fixture.incomes.flatMap(income => income.growth === undefined ? [] : [income.growth.assumptionId]),
+    event_ids: fixture.incomes.flatMap(income => income.jobChangeEventId === undefined ? [] : [income.jobChangeEventId]),
   });
   const result = compileCashFlow(model, {
     runContext: context, scenarioId: context.scenarioId, baseCurrency: "USD", asOf: context.asOf.slice(0, 10),
