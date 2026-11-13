@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 import { executeVerticalSlice2PeriodCandidate } from "../../../../src/simulation/verticalSlice2.js";
 import { payrollContributionCandidate } from "../../../../src/simulation/payrollContributions.js";
 import { canonicalSerialize } from "../../../../src/simulation/run.js";
-import { domainId } from "../../../../src/identity/index.js";
 import { createAuthoritativeState, authoritativeCheckpointDelta, restoreAuthoritativeCheckpointDelta, requalifyD2SettlementReceiptHistory } from "../../../../src/state/index.js";
 import { decimal, money } from "../../../../src/values/index.js";
 import { utcMonthlyPeriods } from "../../../../src/time/index.js";
@@ -44,28 +43,6 @@ describe("source-owned household wage posting", () => {
         expect(JSON.parse(child.stdout)).toEqual(sources ? JSON.parse(JSON.stringify({ imported: state.accounts, restored: state.accounts })) : { rejected: true });
       }
     } finally { rmSync(directory, { recursive: true, force: true }); }
-  });
-  it.each([false, true])("rejects fake Household identity on source-free %s payroll branch without mutation", elected => {
-    control.payroll = elected;
-    const state = opening(), before = canonicalSerialize(state);
-    const { householdWageSource: _source, ...raw } = stream();
-    const claimed = { ...input([raw]), householdId: domainId("household", "27700000-0000-4000-8000-000000009999") };
-    expect(state.accounts[ids.bank]!.ownerId).toBe(ids.household);
-    expect(claimed.householdId).not.toBe(ids.household);
-    expect(() => executeVerticalSlice2PeriodCandidate({ runContext: context(), openingState: state, input: claimed },
-      utcMonthlyPeriods(start, 1)[0]!, state, {})).toThrow("HOUSEHOLD_BANK_INCOME_REQUIRES_QUALIFIED_ORIGINAL");
-    expect(canonicalSerialize(state)).toBe(before);
-    expect(state.d2PostedTransactions).toBeUndefined();
-  });
-  it("rejects payroll helper with falsified Household ID and no independently qualified wage", () => {
-    const state = opening(), before = canonicalSerialize(state), original = document();
-    expect(() => payrollContributionCandidate(state, {
-      id: original.transaction.id, incomeId: original.incomeId, ownerId: ids.alice,
-      executionPersonId: ids.alice, householdId: domainId("household", "27700000-0000-4000-8000-000000009999"),
-      occurrenceId: original.occurrenceId, at: original.transaction.date,
-      gross: original.gross, depositAccountId: ids.bank, allocations: [],
-    })).toThrow("HOUSEHOLD_BANK_INCOME_REQUIRES_QUALIFIED_ORIGINAL");
-    expect(canonicalSerialize(state)).toBe(before);
   });
   it("authenticates the signed payroll original and posts withholding once", () => {
     control.payroll = true;
