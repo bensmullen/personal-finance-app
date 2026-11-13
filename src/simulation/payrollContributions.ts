@@ -36,8 +36,6 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
   readonly id: string; readonly incomeId: string; readonly at: Instant; readonly gross: Money; readonly depositAccountId: AccountId;
   readonly allocations: readonly PayrollContributionAllocation[];
   readonly householdId?: string;
-  /** Authored D1 execution Person, used only for the legacy shared Person-bank route. */
-  readonly executionPersonId?: string;
   readonly ownerId?: string;
   readonly occurrenceId?: string;
   readonly withholding?: readonly PayrollWithholdingElection[];
@@ -51,16 +49,16 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
     assertModeledPayrollOccurrence(input.modeledPayroll, opening.accounts[input.depositAccountId], input);
     if (input.healthPremium !== undefined || input.householdWage !== undefined) return invalid("HOUSEHOLD_PAYROLL_HEALTH_REQUIRES_S4");
   }
-  // Person-to-Person D1 family HSA may use the original execution Person's
-  // receiving bank. Neither an arbitrary caller-selected householdId nor an
-  // unrelated third-party account can grant unqualified payroll posting.
+  // Person-to-Person salary deposits remain supported for existing D1 family HSA.
+  // Only Household-owned BANK income requires independently qualified D2 wage
+  // or a compiler-issued modeled payroll witness.
   const householdId = input.householdId ?? input.householdWage?.context.householdId ??
     input.modeledPayroll?.householdId;
   const receivingOwner = opening.accounts[input.depositAccountId]?.ownerId;
-  const legacyPersonBank = receivingOwner !== undefined &&
-    (receivingOwner === input.ownerId || receivingOwner === input.executionPersonId);
   if (input.householdWage === undefined && input.modeledPayroll === undefined && input.ownerId !== undefined &&
-    (receivingOwner === householdId || !legacyPersonBank))
+    // Direct callers with no authenticated Household context must not infer
+    // whether a mismatched bank belongs to another Person or the Household.
+    (householdId === undefined ? receivingOwner !== input.ownerId : receivingOwner === householdId))
     return invalid(input.healthPremium === undefined ? "HOUSEHOLD_BANK_INCOME_REQUIRES_QUALIFIED_ORIGINAL" : "HOUSEHOLD_PAYROLL_HEALTH_REQUIRES_S4");
   if (input.householdWage !== undefined && (input.healthPremium !== undefined ||
     opening.d2PostedTransactions?.[accountingTransactionId(input.id)]?.registration.kind === "payroll_health_deduction")) return invalid("HOUSEHOLD_PAYROLL_HEALTH_REQUIRES_S4");
