@@ -78,7 +78,113 @@ const baseInput = (): VerticalSlice3Input => ({
   ],
 });
 
+const zeroReturnHolding = (
+  unitPrice = "0.004",
+  units = "1000",
+  openingValue = "4.00",
+  quoteRounding = priceRounding,
+) => {
+  const position = {
+    id: ids.position,
+    accountId: ids.brokerage,
+    quantity: Quantity.parse(units, SHARE),
+    price: money(unitPrice),
+    carryingValue: money(openingValue),
+  };
+  const openingState = createAuthoritativeState({
+    accounts: {
+      [ids.brokerage]: { id: ids.brokerage, ownerId: ids.owner, kind: "brokerage", cash: money("0") },
+    },
+    positions: { [ids.position]: position },
+  });
+  const input: VerticalSlice3Input = {
+    householdId: ids.household,
+    ownerId: ids.owner,
+    baseCurrency: USD,
+    valuationAccountingPolicy: "economic_only",
+    ruleCatalog: [],
+    transfers: [],
+    purchases: [],
+    fees: [],
+    returns: [{
+      targetPositionId: ids.position,
+      accountId: ids.brokerage,
+      rate: monthlyRate("0"),
+      returnBasis,
+      timing: "end_of_period_on_opening_quantity",
+      priceRounding: quoteRounding,
+      primitiveIds: { compounding: primitive(4), markToMarket: primitive(5) },
+    }],
+  };
+  return { input, openingState, runContext: context(), months: 1 };
+};
+
 describe("Vertical Slice 3 savings and investments", () => {
+  it("executes the owned sub-cent zero-return holding through P23 and P26 without posting a journal", () => {
+    const fixture = zeroReturnHolding();
+    const month = utcMonthlyPeriods(start, 1)[0]!;
+    const before = createAuthoritativeState(fixture.openingState);
+    const openingPosition = before.positions[ids.position]!;
+    expect(openingPosition.price.times(openingPosition.quantity.amount).equals(money("4.00"))).toBe(true);
+
+    const prepared = prepareVerticalSlice3Period(fixture.runContext, fixture.input, month, fixture.openingState);
+    expect(prepared.operations).toHaveLength(1);
+    const valuation = prepared.operations[0];
+    if (valuation?.kind !== "valuation") throw new Error("Expected one prepared valuation");
+    expect(valuation.returnConfiguration.targetPositionId).toBe(ids.position);
+    expect(valuation.descriptor.primitiveInstanceId).toBe(primitive(5));
+    expect(valuation.closingPrice.equals(prepared.closingPrices[ids.position]!)).toBe(true);
+
+    const result = runVerticalSlice3(fixture);
+    expect(result.status).toBe("completed");
+    expect(result.reachedThrough).toBe(month.end);
+    expect(result.periods).toHaveLength(1);
+    const period = result.periods[0]!;
+    expect(period.period).toEqual(month);
+    const closingPosition = result.state.positions[ids.position]!;
+    expect(closingPosition.price.equals(valuation.closingPrice)).toBe(true);
+    expect(closingPosition.quantity.equals(openingPosition.quantity)).toBe(true);
+    expect(closingPosition.carryingValue.equals(money("4.00"))).toBe(true);
+    expect(period.portfolioValue.equals(valuation.marketValue)).toBe(true);
+    expect(period.unrealizedGain.equals(period.portfolioValue.minus(money("4.00")))).toBe(true);
+    expect(period.effects).toHaveLength(1);
+    expect(period.effects[0]).toMatchObject({
+      kind: "valuation",
+      sourceOccurrenceKey: valuation.descriptor.occurrenceIdentity,
+    });
+    expect(period.effects[0]!.amount?.equals(period.unrealizedGain)).toBe(true);
+    expect(period.transactions).toEqual([]);
+    expect(result.state.identities.postedTransactionIds).toEqual([]);
+    expect(result.state.accounts[ids.brokerage]!.cash.equals(money("0.00"))).toBe(true);
+    expect(fixture.openingState.positions[ids.position]!.price.equals(money("0.004"))).toBe(true);
+    expect(fixture.openingState.positions[ids.position]!.quantity.equals(Quantity.parse("1000", SHARE))).toBe(true);
+    expect(fixture.openingState.positions[ids.position]!.carryingValue.equals(money("4.00"))).toBe(true);
+    expect(fixture.openingState.accounts[ids.brokerage]!.cash.equals(money("0.00"))).toBe(true);
+    expect(fixture.openingState.identities).toEqual(before.identities);
+  });
+
+  // Temporary audit witness for #309. Convert to a passing regression in the repair.
+  it.fails("preserves the $4.00 market value of 1,000 units at $0.004 with zero return", () => {
+    const result = runVerticalSlice3(zeroReturnHolding());
+    expect(result.periods[0]!.portfolioValue.toJSON()).toEqual(money("4.00").toJSON());
+  });
+
+  it.each([
+    { unitPrice: "0.01", units: "1000", value: "10.00", quoteRounding: priceRounding },
+    { unitPrice: "0.004", units: "0", value: "0.00", quoteRounding: priceRounding },
+    { unitPrice: "5.00", units: "2", value: "10.00", quoteRounding: priceRounding },
+    { unitPrice: "0.004", units: "1000", value: "4.00", quoteRounding: new RoundingPolicy(3, "half_up") },
+  ])("values $units units at \$$unitPrice at zero return ($quoteRounding.scale quote decimals)", ({ unitPrice, units, value, quoteRounding }) => {
+    const fixture = zeroReturnHolding(unitPrice, units, value, quoteRounding);
+    const result = runVerticalSlice3(fixture);
+    expect(result.status).toBe("completed");
+    expect(result.periods).toHaveLength(1);
+    const period = result.periods[0]!;
+    expect(period.portfolioValue.equals(money(value))).toBe(true);
+    expect(period.unrealizedGain.equals(money("0.00"))).toBe(true);
+    expect(period.transactions).toEqual([]);
+  });
+
   it("prepares eligible operation mechanics and executes them against one candidate like standalone VS3", () => {
     const input = baseInput();
     const prepared = prepareVerticalSlice3Period(context(), input, utcMonthlyPeriods(start, 1)[0]!, opening());
