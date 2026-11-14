@@ -122,7 +122,7 @@
     },
     "FINANCIAL_AUDIT_REPRO": {
       "stage": "Phase 1 confirmed financial-defect reproduction and PM-approved bounded repairs",
-      "blocking_transition": "Independently close reproduction review, carry approved #309 and #310 financial engine repairs to ordinary passing regression tests and selected exact-head CI, and retain #308's NIIT finding pending separate PM tax repair authorization. This is an investigation/repair queue, not a new automatic D2/U1/R5 closeout gate. Temporary it.fails tests must not merge unchanged.",
+      "blocking_transition": "Complete and independently audit three confirmed financial defect repairs on original issues #308 (approved 2026-11-14), #309 and #310 with exact-head CI, supported original sources, normal passing regression tests (no merged temporary it.fails), and financial replay/negative semantics as applicable. Non-D2-blocking audit/repair queue; #149 and #120 remain separate mandatory combined acceptance gates.",
       "required_issue_numbers": [
         308,
         309,
@@ -865,7 +865,7 @@
         "PFA-TAX-003",
         "PFA-TAX-004"
       ],
-      "scope": "Confirmed 2024 NIIT MAGI $380 vs independently expected $1,026 after $20k net capital loss, with passing control years and exact-head CI in PR #312. Production tax repair NOT approved in this two-repair wave; original #308 remains owner pending PM tax decision and removal of temporary it.fails."
+      "scope": "PM-approved bounded federal 2024 NIIT MAGI/eligible net capital loss cap repair under original issue #308 and draft PR #312. Independently reproduced $380 observed versus $1,026 correct on 2024 $190k salary/$40k taxable interest/-$20k realized net capital loss. Preserve source-qualified annual tax recognition/payments, correct NIIT MAGI/NII from statutory allowable loss while leaving ordinary income/payroll/tax components untouched; convert temporary it.fails to passing tests, preserve #314 wage-source fixtures."
     },
     {
       "issue_number": 309,
