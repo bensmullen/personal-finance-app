@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { assertBalanced } from "../src/accounting/index.js";
 import { compileHouseholdTax, validateResidenceTaxPeriods, validateWorkTaxAllocations, resolveTaxEligibility } from "../src/application/compiler/tax.js";
 import { runHouseholdKernel, runCompiledHouseholdProjection, replayHouseholdForecastWindow, type HouseholdForecastSummaryResult, type CompiledHouseholdProjectionRunResult } from "../src/simulation/householdExecution.js";
@@ -13,19 +13,216 @@ import { replaceCurrentPlanHorizon } from "../src/application/forecastSetup.js";
 import { createHouseholdTaxParticipant, emptyTaxIncome, taxCreditPositionIds, type HouseholdTaxInput, type CompiledTaxIncome } from "../src/simulation/tax.js";
 import { alphaStateTaxCatalog, alphaLocalTaxCatalog, resolveTaxCoreRule, fullYearResidentEligibilityKey, recognizeTaxLegalBases, recognizedGrossTaxableBaseEligibilityKey, applyTaxCoreRule } from "../src/rules/index.js";
 import { instant, utcMonthlyPeriods } from "../src/time/index.js";
-import { money, Ratio, USD } from "../src/values/index.js";
+import { money, quantity, Ratio, SHARE, USD } from "../src/values/index.js";
 import { CURRENT_RUN_VERSIONS } from "../src/model/version.js";
 import { ValidationError } from "../src/diagnostics/index.js";
 import { domainId } from "../src/identity/index.js";
 import { taxHouseholdFixture } from "./fixtures/t1aTaxHouseholds.js";
 import { taxRule, syntheticPayroll } from "./fixtures/t1aTaxRules.js";
-import { federal2026TaxCatalog } from "../src/rules/tax/lawCatalog.js";
+import { federal2024TaxCatalog, federal2026TaxCatalog } from "../src/rules/tax/lawCatalog.js";
 import type { PayrollWithholdingElection } from "../src/simulation/tax/contracts.js";
 import { taxCatalogFingerprint } from "../src/rules/tax/catalog.js";
-import { taxDiagnostic, taxOutputCapabilities } from "../src/simulation/tax/contracts.js";
+import { taxBalanceIds, taxDiagnostic, taxOutputCapabilities, type RecognizedTaxEconomics } from "../src/simulation/tax/contracts.js";
+import { TaxEconomicLedger } from "../src/simulation/tax/economics.js";
 import { mergeOutputCapabilities } from "../src/simulation/r3/capabilities.js";
 import { healthTaxFixture } from "./d2/health/premiums/payrollPort/taxScenario.js";
 import { originals as healthOriginals } from "./d2/health/premiums/payrollPort/scenario.js";
+import { createDomainMechanicsParticipant, executeDomainOperation, type DomainMechanicsInput } from "../src/simulation/domainMechanics.js";
+import { createAuthoritativeState } from "../src/state/index.js";
+
+describe("TB-1 household NIIT on a 2024 realized capital loss", () => {
+  const federal = federal2024TaxCatalog.find(rule => rule.filingStatus === "single")!;
+  const state = "US:FL";
+  const start = "2024-01-01", end = "2025-01-01";
+  const basis = { "0": "25000", "-1000": "26000", "-20000": "45000" } as const;
+  type Loss = keyof typeof basis;
+
+  const fixture = (loss: Loss, enabled: boolean) => {
+    const seed = taxHouseholdFixture({ months: 12, amount: "190000" });
+    const cashFlow = seed.compiled.cashFlowInput!;
+    const wage = cashFlow.incomes[0]!;
+    const householdId = String(seed.input.ownerId);
+    const residence = { state_jurisdiction: state, effective_date: start, expiration_date: end };
+    const work = { ...residence, allocation: "1" };
+    const eligibility = ["federal_base_deduction_only", fullYearResidentEligibilityKey(state)]
+      .map(key => ({ key, value: true, effective_date: start, expiration_date: end }));
+    const employerId = "synthetic-2024-employer";
+    const { niit: _niit, ...withoutNiit } = federal;
+    // The 2024 catalog has no Florida entry. Keep state liability at zero
+    // while exercising the verified 2024 federal brackets and payroll rules.
+    const florida = taxRule(81, {
+      jurisdiction: state,
+      applicability: [{ fact: "eligibility", key: fullYearResidentEligibilityKey(state), equals: true }],
+      income: { ...federal.income!, ordinaryBrackets: [{ lower: money("0"), rate: Ratio.parse("0") }] },
+    });
+    const admitted = compileHouseholdTax({
+      modelId: domainId("model", "88000000-0000-4000-8000-000000000308"),
+      modelFormatVersion: CURRENT_RUN_VERSIONS.modelFormatVersion,
+      financialSpecificationVersion: CURRENT_RUN_VERSIONS.financialSpecificationVersion,
+      objects: {
+        Household: [{ household_id: householdId, members: [wage.ownerId], filing_status: "single", tax_eligibility_periods: eligibility }],
+        Person: [{ person_id: wage.ownerId, household_id: householdId, residence_jurisdiction_periods: [residence] }],
+        Income: [{ income_id: wage.id, owner_id: wage.ownerId, source: employerId, income_type: "salary",
+          tax_character: "ordinary", gross_or_net: "gross", frequency: "monthly", start_date: start, end_date: "2024-02-01",
+          work_service_jurisdiction_allocations: [work] }],
+      },
+    }, { asOf: start, simulationStart: start, simulationEnd: end, catalog: [enabled ? federal : withoutNiit, florida] });
+    if (admitted.status !== "compiled") throw new Error(JSON.stringify(admitted.diagnostics));
+
+    const wrapper = domainId("account", "88000000-0000-4000-8000-000000000309");
+    const holding = domainId("position", "88000000-0000-4000-8000-000000000310");
+    const saleId = "88000000-0000-4000-8000-000000000311";
+    const interestId = "88000000-0000-4000-8000-000000000312";
+    const saleTrace = `compiler:canonical:Event:${saleId}`;
+    const interestTrace = `compiler:canonical:Event:${interestId}`;
+    const taxFacts = { residenceJurisdictions: [state], workJurisdictions: [], eligibility: resolveTaxEligibility(eligibility, start) };
+    const domains: DomainMechanicsInput = {
+      currency: "USD",
+      holdings: [{ id: holding, accountId: wrapper, kind: "equity",
+        lots: [{ id: "opening-lot", acquired: "2022-01-01", quantity: "1", basis: basis[loss] }] }],
+      operations: [
+        { id: saleId, at: "2024-02-10T00:00:00.000Z", order: 1, kind: "sale", holdingId: holding, quantity: "1",
+          amount: "25000", taxFacts, sourceRefs: [saleTrace] },
+        { id: interestId, at: "2024-02-11T00:00:00.000Z", order: 1, kind: "interest", cashAccountId: cashFlow.cashAccountId,
+          amount: "40000", taxFacts, sourceRefs: [interestTrace] },
+      ],
+    };
+    const opening = seed.compiled.reconciledOpeningState;
+    const reconciledOpeningState = createAuthoritativeState({
+      ...opening,
+      accounts: { ...opening.accounts, [wrapper]: { id: wrapper, kind: "brokerage", ownerId: wage.ownerId, cash: money("0") } },
+      positions: { [holding]: { id: holding, accountId: wrapper, quantity: quantity("1", SHARE), price: money("25000"), carryingValue: money("25000") } },
+    });
+    const payrollWithholding: PayrollWithholdingElection[] = ["US:FEDERAL", state].map(jurisdiction => ({
+      id: `tb1-zero-withholding:${jurisdiction}`, version: "payroll-withholding/v1", incomeId: wage.id, ownerId: wage.ownerId,
+      employerId, depositAccountId: cashFlow.cashAccountId, jurisdiction, start: seed.context.simulationStart,
+      userConfirmed: true, provenance: "Synthetic zero-remittance election for this single paycheck",
+      calculation: { kind: "fixed", amount: money("0") },
+    }));
+    const input: HouseholdTaxInput = {
+      ...admitted.value, simulationStart: seed.context.simulationStart,
+      fundingPolicy: seed.input.fundingPolicy!, refundAccountId: cashFlow.cashAccountId,
+      settlements: [...seed.input.settlements!, { id: "final-fl-2024", jurisdiction: state, taxYear: "2024",
+        at: instant("2024-12-31T23:59:59.998Z") }],
+      payrollWithholding, domainOperations: domains.operations.map(({ id, at }) => ({ id, at: instant(at) })),
+    };
+    const tax = createHouseholdTaxParticipant(input);
+    let annualEconomics: readonly RecognizedTaxEconomics[] | undefined;
+    const kernel = compileHouseholdKernel({
+      ...seed.compiled, reconciledOpeningState,
+      cashFlowInput: { ...cashFlow, incomes: [{ ...wage, end: instant("2024-02-01T00:00:00.000Z"), payrollWithholding }] },
+      participants: [createDomainMechanicsParticipant(domains), {
+        ...tax,
+        observe(descriptor, facts, runtime) {
+          if (descriptor.id.startsWith("tax:final:final-2024:")) {
+            const year = runtime.tax as { years?: { "2024"?: { economics?: unknown } } } | undefined;
+            const ledger = year?.years?.["2024"]?.economics;
+            if (ledger instanceof TaxEconomicLedger) annualEconomics = ledger.canonicalEntries;
+          }
+          return tax.observe!(descriptor, facts, runtime);
+        },
+      }],
+      nonInvestmentPositionIds: taxCreditPositionIds(input),
+    }, seed.context.simulationStart);
+    const run = runHouseholdKernel({ kernel, runContext: seed.context, resultTier: "detail" });
+    const { liabilityId, creditPositionId } = taxBalanceIds("US:FEDERAL", "2024");
+    const journals = run.periods.flatMap(period => period.transactions);
+    const final = journals.find(tx => tx.type === "tax_final_settlement" && tx.legs.some(leg => leg.type === "liability" && leg.entityId === liabilityId));
+    const liability = final?.legs.find(leg => leg.type === "liability" && leg.entityId === liabilityId && leg.posting === "debit")?.amount;
+    if (liability === undefined || annualEconomics === undefined) throw new Error(`Missing 2024 federal settlement or annual economics: ${JSON.stringify(run.diagnostics)}`);
+    return { input, run, journals, liability, final, annualEconomics, liabilityId, creditPositionId, bank: cashFlow.cashAccountId,
+      wageId: wage.id, residence, work, wrapper, holding, domains, saleTrace, interestTrace, reconciledOpeningState,
+      primitiveState: seed.compiled.reconciledPrimitiveState };
+  };
+
+  it.each([
+    ["0", "59822.70", "60962.70", "1140.00"],
+    ["-1000", "59502.70", "60604.70", "1102.00"],
+    ["-20000", "58862.70", "59242.70", "380.00"],
+  ] as const)("admits and posts the same sources with %s realized gain/loss", (loss, withoutNiit, withNiit, observedNiit) => {
+    const on = fixture(loss, true), off = fixture(loss, false);
+    // Rev. Proc. 2023-34 single brackets on $215,400 / $214,400 / $212,400
+    // of taxable income, plus $10,453.20 Social Security and $2,755 Medicare.
+    expect(off.liability.toJSON()).toEqual(money(withoutNiit).toJSON());
+    expect(on.liability.toJSON()).toEqual(money(withNiit).toJSON());
+    // For the $20,000 loss the current signed-gain path supplies $210,000 MAGI
+    // and $20,000 NII. Its $10,000 threshold excess yields $380 at 3.8%.
+    expect(on.liability.minus(off.liability).toJSON()).toEqual(money(observedNiit).toJSON());
+    for (const result of [on, off]) {
+      const { input, run, journals, final, bank, liability, liabilityId, creditPositionId } = result;
+      expect(input.incomes).toEqual([expect.objectContaining({ id: result.wageId, incomeType: "salary", grossOrNet: "gross",
+        residence: [result.residence], work: [result.work] })]);
+      expect(input.filingStatuses?.["2024"]).toMatchObject({ status: "known", value: "single", taxYear: "2024",
+        sources: [expect.objectContaining({ id: String(input.ownerId), provenance: "legacy_snapshot" })] });
+      expect(run.status, JSON.stringify(run.diagnostics)).toBe("completed");
+      expect(run.diagnostics).toEqual([]);
+      expect(run.periods).toHaveLength(12);
+      expect(run.periods[0]!.period.start).toBe("2024-01-01T00:00:00.000Z");
+      expect(run.reachedThrough).toBe("2025-01-01T00:00:00.000Z");
+      const [sale, interest] = result.domains.operations;
+      const annualEntries = result.annualEconomics.map(({ sourceId, at, allocation, facts, income }) => ({ sourceId, at, allocation, facts, income }));
+      const expectedEntries = [
+        { sourceId: result.wageId, at: "2024-01-15T00:00:00.000Z", allocation: "1",
+          facts: { ...sale!.taxFacts, workJurisdictions: [state] }, income: { ...emptyTaxIncome(), wages: money("190000") } },
+        { sourceId: sale!.id, at: sale!.at, allocation: "1", facts: sale!.taxFacts,
+          income: { ...emptyTaxIncome(), longTermGains: money(loss) } },
+        { sourceId: interest!.id, at: interest!.at, allocation: "1", facts: interest!.taxFacts,
+          income: { ...emptyTaxIncome(), taxableInterest: money("40000") } },
+      ];
+      expect(annualEntries.map(canonicalSerialize).sort()).toEqual(expectedEntries.map(canonicalSerialize).sort());
+      for (const entry of annualEntries) {
+        const { rule } = resolveTaxCoreRule(input.catalog, "US:FEDERAL", "single", entry.at, entry.facts);
+        expect(rule).toMatchObject({ id: federal.id, version: federal.version });
+        expect(rule.niit?.rate.toJSON()).toBe(result === on ? "0.038" : undefined);
+        expect(rule.niit?.threshold.toJSON()).toEqual(result === on ? money("200000").toJSON() : undefined);
+      }
+      const recognized = executeDomainOperation({ state: result.reconciledOpeningState, primitiveState: result.primitiveState }, result.domains, sale!);
+      expect(recognized.facts.taxEconomics).toEqual([expect.objectContaining({
+        sourceId: sale!.id, at: sale!.at, facts: sale!.taxFacts,
+        traceRefs: [expect.objectContaining({ traceId: result.saleTrace })],
+      })]);
+      expect(canonicalSerialize(recognized.facts.taxEconomics?.[0]?.income)).toBe(canonicalSerialize(expectedEntries[1]!.income));
+      expect(canonicalSerialize(journals.filter(tx => tx.type === "sale"))).toBe(canonicalSerialize(recognized.facts.transactions));
+      const journalAmounts = (tx: (typeof journals)[number]) => ({ ...tx, legs: tx.legs.map(leg => ({ ...leg, amount: leg.amount.toJSON() })) });
+      expect(journals.filter(tx => tx.id === `domain:${interest!.id}:income`).map(journalAmounts)).toEqual([expect.objectContaining({
+        legs: expect.arrayContaining([expect.objectContaining({ type: "income", posting: "credit", amount: money("40000").toJSON() })]),
+      })]);
+      expect(journals.filter(tx => tx.type === "payroll_income").map(journalAmounts)).toEqual([expect.objectContaining({
+        id: `tx:recognition:income:${result.wageId}:2024-01-15T00:00:00.000Z`,
+        legs: expect.arrayContaining([expect.objectContaining({ type: "cash", accountId: bank, amount: money("190000").toJSON() })]),
+      })]);
+      expect(final).toMatchObject({ date: "2024-12-31T23:59:59.999Z", traceRefs: expect.arrayContaining([
+        expect.objectContaining({ traceId: result.saleTrace }),
+        expect.objectContaining({ traceId: result.interestTrace }),
+        expect.objectContaining({ traceId: `compiler:canonical:Income:${result.wageId}:tax` }),
+        expect.objectContaining({ traceId: expect.stringContaining(`rule:tax_core:${federal.id}:${federal.version}:`), ruleIds: expect.arrayContaining([federal.id]) }),
+      ]) });
+      expect(run.periods[10]!.liabilities.toJSON()).toEqual(liability.toJSON());
+      expect(journals.filter(tx => ["tax_final_settlement", "tax_refund", "tax_withholding", "tax_credit_application"].includes(tx.type))).toEqual([final]);
+      expect(new Set(journals.map(tx => tx.id)).size).toBe(journals.length);
+      for (const tx of journals) assertBalanced(tx);
+      expect(run.state.liabilities[liabilityId]!.balance.isZero()).toBe(true);
+      expect(run.state.positions[creditPositionId]!.carryingValue.isZero()).toBe(true);
+      expect(run.state.accounts[bank]!.cash.toJSON()).toEqual(money("230000").minus(liability).toJSON());
+      expect(run.state.accounts[result.wrapper]!.cash.toJSON()).toEqual(money("25000").toJSON());
+      expect(run.state.positions[result.holding]!.quantity.equals(quantity("0", SHARE))).toBe(true);
+    }
+  });
+
+  describe("capital loss above the ordinary deduction limit", () => {
+    let niit: ReturnType<typeof money>;
+    beforeAll(() => {
+      const on = fixture("-20000", true), off = fixture("-20000", false);
+      niit = on.liability.minus(off.liability);
+    });
+
+    it.fails("TB-1 temporary witness: caps the loss at $3,000 when determining 2024 NIIT", () => {
+      // IRC §1211(b) and Form 8960: MAGI $227,000, excess over $200,000
+      // threshold $27,000, NII $37,000. The smaller base times 3.8% is $1,026.
+      expect(niit.toJSON()).toEqual(money("1026.00").toJSON());
+    });
+  });
+});
 
 describe("P2 independently sourced health wage bases", () => {
   it("keeps gross economics and applies different income/payroll/state/local exclusions exactly once", () => {
