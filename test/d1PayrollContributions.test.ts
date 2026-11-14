@@ -24,6 +24,8 @@ import { GOLDEN_HOUSEHOLD_IDS as golden } from "../src/application/goldenHouseho
 import { money, Quantity, SHARE, USD } from "../src/values/index.js";
 import { instant } from "../src/time/index.js";
 import { executeDomainOperation } from "../src/simulation/domainMechanics.js";
+import { employerWage } from "./fixtures/employerWage.js";
+import { wageStreamOriginal } from "../src/simulation/d2/integration/householdWages/index.js";
 
 const id = (value: number) => `d1c50000-0000-4000-8000-${String(value).padStart(12, "0")}`;
 const person = domainId("person", golden.person), household = domainId("household", golden.household), cash = domainId("account", id(1));
@@ -35,7 +37,32 @@ const policy = (character: ContributionCharacter, overrides: Partial<D1Contribut
 };
 const allocation = (number: number, character: ContributionCharacter, amount: string, overrides: Partial<D1ContributionFacts> = {}): PayrollContributionAllocation => ({ id: id(number), priority: number, accountId: domainId("account", id(number + 100)), positionId: domainId("position", id(number + 200)), policy: policy(character, overrides), calculation: { kind: "fixed", amount: money(amount) }, vestedFraction: "1" });
 const opening = (allocations: readonly PayrollContributionAllocation[]) => createAuthoritativeState({ accounts: { [cash]: { id: cash, ownerId: person, kind: "checking", cash: money("0") }, ...Object.fromEntries(allocations.map(item => [item.accountId, { id: item.accountId, ownerId: domainId("person", item.policy.personId), kind: "retirement" as const, cash: money("0") }])) }, positions: Object.fromEntries(allocations.map(item => [item.positionId, { id: item.positionId, accountId: item.accountId, quantity: Quantity.parse("0", SHARE), price: money("100"), carryingValue: money("0") }])) });
-const payroll = (state: ReturnType<typeof opening>, allocations: readonly PayrollContributionAllocation[], gross = "1000", key = "payroll:1") => payrollContributionCandidate(state, { id: key, incomeId: golden.income, at, gross: money(gross), depositAccountId: cash, allocations });
+const payroll = (state: ReturnType<typeof opening>, allocations: readonly PayrollContributionAllocation[],
+  gross = "1000", installment = 1, signedEmployeeAmounts?: readonly string[]) => {
+  const earner = domainId("person", allocations[0]!.policy.personId);
+  const bank = earner === person ? cash : domainId("account", id(998));
+  const bankState = state.accounts[bank] === undefined
+    ? createAuthoritativeState({ ...state, accounts: { ...state.accounts, [bank]: { id: bank, ownerId: earner, kind: "checking", cash: money("0") } } })
+    : state;
+  const incomeId = domainId("income", id(900 + installment));
+  const runContext = createRunContext({ runId: runId(id(910)), scenarioId: scenarioId(golden.rootScenario),
+    asOf: instant("2026-01-01T00:00:00.000Z"), dataCutoff: instant("2026-01-01T00:00:00.000Z"),
+    simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-02-01T00:00:00.000Z"), baseCurrency: USD });
+  const period = { start: runContext.simulationStart, end: runContext.simulationEnd };
+  const employeeDeductions = allocations.filter(item => !item.policy.character.startsWith("employer_")).map((item, index) => {
+    if (item.calculation.kind !== "fixed") throw new Error("Expected fixed employee allocation");
+    return { positionId: item.positionId, amount: signedEmployeeAmounts?.[index] ?? item.calculation.amount.amount.toString() };
+  });
+  const wage = employerWage(runContext, { householdId: household, personId: earner, bankAccountId: bank,
+    bankOwner: "person", incomeId, employerId: "Synthetic D1 employer", gross, firstPayday: "2026-01-15",
+    allocations, employeeDeductions });
+  const original = wage.originalAt(period);
+  return payrollContributionCandidate(bankState, { id: original.transaction.id, incomeId, householdId: household,
+    ownerId: earner, at, gross: money(gross), depositAccountId: bank, allocations, runContext,
+    occurrenceId: original.occurrenceId, householdWage: { source: wage.income.householdWageSource!, stream: wageStreamOriginal(wage.income),
+      period, context: { runId: runContext.runId, asOf: runContext.asOf, dataCutoff: runContext.dataCutoff,
+        householdId: household, personId: earner, bankAccountId: bank, direction: "credit", eventAt: at, eventId: original.transaction.id } } });
+};
 
 describe("D1 payroll recognition and shared contribution capacity", () => {
   it("converts a committed after-tax payroll contribution without taxing it again or consuming more capacity", () => {
@@ -57,12 +84,12 @@ describe("D1 payroll recognition and shared contribution capacity", () => {
     const employer = { ...allocation(1, "employer_401k", "70000", annual), priority: 20 }, afterTax = { ...allocation(2, "after_tax_401k", "1000", annual), priority: 10 };
     const elective = { ...allocation(3, "traditional_401k", "15000", annual), policy: { ...policy("traditional_401k", annual), excessPolicy: "auto_cap" as const } };
     const original = opening([employer, afterTax, elective]);
-    const prior = payroll(original, [employer, afterTax], "1000", "prior");
+    const prior = payroll(original, [employer, afterTax], "1000");
     const rejected = decideContribution(prior.state, { ...elective.policy, excessPolicy: "reject" }, elective.accountId, at, money("15000"));
     expect(rejected.accepted.isZero()).toBe(true);
     expect(rejected.buckets.every(bucket => (bucket.consumedAmount ?? rejected.accepted).isZero())).toBe(true);
-    const result = payroll(prior.state, [elective], "20000", "later");
     const accepted = money("1000").plus(money(catchup));
+    const result = payroll(prior.state, [elective], "20000", 2, [accepted.amount.toString()]);
     expect(result.takeHomeCash.equals(money("20000").minus(accepted))).toBe(true);
     const entry = Object.values(result.state.contributions!).find(item => item.character === "traditional_401k")!;
     expect(entry.amount.equals(accepted)).toBe(true);
@@ -78,7 +105,7 @@ describe("D1 payroll recognition and shared contribution capacity", () => {
   it("requires Roth for catch-up triggered by exhausted additions, before ordinary 402(g) is exhausted", () => {
     const annual = { ageAtYearEnd: 50, planHasRoth: true, priorYearSponsorWages: money("150001") };
     const employer = allocation(1, "employer_401k", "71000", annual), traditional = allocation(2, "traditional_401k", "9000", annual), roth = allocation(3, "roth_401k", "8000", annual);
-    const prior = payroll(opening([employer, traditional, roth]), [employer], "1000", "prior");
+    const prior = payroll(opening([employer, traditional, roth]), [employer], "1000");
     expect(() => decideContribution(prior.state, traditional.policy, traditional.accountId, at, money("9000"))).toThrow("Applicable catch-up deferrals must be Roth");
     const capped = decideContribution(prior.state, { ...traditional.policy, excessPolicy: "auto_cap" }, traditional.accountId, at, money("9000"));
     expect(capped.accepted.amount.toString()).toBe("1000");
@@ -105,7 +132,7 @@ describe("D1 payroll recognition and shared contribution capacity", () => {
   it.each([[36, "24500"], [50, "32500"], [60, "35750"], [63, "35750"], [64, "32500"]])("enforces age %s elective capacity across two participant paths", (age, limit) => {
     const first = allocation(1, "roth_401k", "20000", { ageAtYearEnd: age, planHasRoth: true, priorYearSponsorWages: money("100000") });
     const second = { ...allocation(2, "traditional_401k", "20000", { ageAtYearEnd: age, planHasRoth: true, priorYearSponsorWages: money("100000") }), policy: { ...policy("traditional_401k", { ageAtYearEnd: age, planHasRoth: true, priorYearSponsorWages: money("100000") }), excessPolicy: "auto_cap" as const } };
-    const result = payroll(opening([first, second]), [first, second], "50000");
+    const result = payroll(opening([first, second]), [first, second], "50000", 1, ["20000", money(limit).minus(money("20000")).amount.toString()]);
     expect(Object.values(result.state.contributions!).reduce((sum, entry) => sum.plus(entry.amount), money("0")).amount.toString()).toBe(limit);
     expect(result.takeHomeCash.equals(money("50000").minus(money(limit)))).toBe(true);
   });
@@ -147,12 +174,12 @@ describe("D1 payroll recognition and shared contribution capacity", () => {
     const first = allocation(1, "employee_hsa", "5500", { ageAtYearEnd: 55, hsaCoverage: "family", hsaFamilyAllocation: money("4500") });
     const spouse = { ...allocation(2, "employee_hsa", "5250", { ageAtYearEnd: 55, hsaCoverage: "family", hsaFamilyAllocation: money("4250") }), policy: policy("employee_hsa", { ageAtYearEnd: 55, hsaCoverage: "family", hsaFamilyAllocation: money("4250") }, id(999)) };
     const original = opening([first, spouse]);
-    const one = payroll(original, [first], "10000"), two = payroll(one.state, [spouse], "10000", "spouse-payroll");
+    const one = payroll(original, [first], "10000"), two = payroll(one.state, [spouse], "10000", 2);
     const family = Object.values(two.state.contributions!).flatMap(entry => entry.buckets.filter(bucket => bucket.identity.includes(":hsa_family:"))).reduce((sum, bucket) => sum.plus(bucket.amount), money("0"));
     expect(family.amount.toString()).toBe("8750");
     expect(Object.values(two.state.contributions!).reduce((sum, entry) => sum.plus(entry.amount), money("0")).amount.toString()).toBe("10750");
     const extra = { ...allocation(3, "employer_hsa", "1", { ageAtYearEnd: 55, hsaCoverage: "family", hsaFamilyAllocation: money("4500") }), accountId: first.accountId, positionId: first.positionId };
-    expect(() => payroll(two.state, [extra], "1000", "extra-payroll")).toThrow();
+    expect(() => payroll(two.state, [extra], "1000", 3)).toThrow();
   });
   it("round-trips durable salary allocation, rule and plan-scope identities", () => {
     const authored = authorPayrollContributionPlan(createGoldenHouseholdDraft(), { primitiveId: id(888), investmentId: golden.retirementInvestment, incomeId: golden.income, priority: 10, character: "traditional_401k", calculation: { kind: "percent", rate: "0.05" }, planKey: "sponsor", vestedFraction: "1", excessPolicy: "reject", facts: { taxYear: 2026, ageAtYearEnd: 36, eligiblePlanCompensation: "100000" } });

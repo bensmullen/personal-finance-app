@@ -11,8 +11,10 @@ const months = Number(process.env.PFM_S8_MONTHS);
 if (months !== 13 && months !== 25) throw new Error("S8_HORIZON_INVALID");
 // Composition happens before decoding payloads. No artifact-derived documents
 // or receipt echo authority are installed, even for negative restore cases.
-registerPublishers({ fsa: mode !== "missing_fsa", card: mode !== "missing_card", retirement: mode !== "missing_retirement" });
+registerPublishers({ retirement: mode !== "missing_retirement" });
 const { wages } = combinedScenario({ months });
+if (mode === "missing_fsa") publishers.fsa = () => undefined;
+if (mode === "missing_card") publishers.card = () => undefined;
 if (mode === "missing_employer") wages.source.mode = "missing";
 if (mode === "changed_employer") wages.source.mode = "changed";
 if (mode === "missing_wage_bank") wages.source.mode = "bank_missing";

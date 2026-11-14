@@ -7,13 +7,13 @@ import { householdWageOriginalDigest, registerHouseholdWageOriginalProvider, typ
 import { canonicalSerialize, type RunContext } from "../../src/simulation/run.js";
 import { taxBalanceIds } from "../../src/simulation/tax/contracts.js";
 import type { PayrollWithholdingElection } from "../../src/simulation/tax/contracts.js";
+import type { PayrollContributionAllocation } from "../../src/simulation/payrollContributions.js";
 import type { RecurringIncomeStream } from "../../src/simulation/verticalSlice2.js";
 import { instant, utcCalendarMonthDifference, utcMonthlyPeriods, type Period } from "../../src/time/index.js";
-import { money, Quantity, Rate, rateConvention, Unit } from "../../src/values/index.js";
+import { decimal, money, Quantity, Rate, rateConvention, SHARE, Unit } from "../../src/values/index.js";
 
 export type EmployerWageSourceMode = "available" | "missing" | "withdrawn" | "changed" | "duplicate" | "late" |
   "bank_owner" | "bank_other_person" | "bank_missing" | "bank_permission";
-type FixedWithholding = PayrollWithholdingElection & { readonly calculation: { readonly kind: "fixed"; readonly amount: ReturnType<typeof money> } };
 
 /** An employer contract and BANK roster authored separately from the R3 kernel. */
 export function employerWage(context: RunContext, terms: {
@@ -25,8 +25,12 @@ export function employerWage(context: RunContext, terms: {
   readonly firstPayday: string;
   readonly gross: string;
   readonly bankOwner?: "person";
-  readonly withholding?: FixedWithholding;
-  readonly elections?: readonly FixedWithholding[];
+  readonly withholding?: PayrollWithholdingElection;
+  readonly elections?: readonly PayrollWithholdingElection[];
+  readonly withheldAmounts?: Readonly<Record<string, string>>;
+  readonly allocations?: readonly PayrollContributionAllocation[];
+  readonly employeeDeductions?: readonly { readonly positionId: string; readonly amount: string }[];
+  readonly endDate?: string;
 }) {
   const { householdId, personId, incomeId, bankAccountId, employerId, withholding } = terms;
   const elections = terms.elections ?? (withholding === undefined ? [] : [withholding]);
@@ -44,6 +48,7 @@ export function employerWage(context: RunContext, terms: {
   const stream: WageStreamOriginal = {
     id: domainId("income", incomeId), ownerId: domainId("person", personId),
     depositAccountId: domainId("account", bankAccountId), baseMonthlyAmount: gross, start,
+    ...(terms.endDate === undefined ? {} : { end: instant(`${terms.endDate}T00:00:00.000Z`) }),
     recurrence: { kind: "utc_monthly", anchor: start, invalidDayPolicy: "skip" },
     growthBaseAt: start, growthRate: Rate.fromDecimal("0", rateConvention.effectiveAnnual()),
     primitiveIds: {
@@ -51,6 +56,7 @@ export function employerWage(context: RunContext, terms: {
       recurrence: primitiveId("employer-recurrence"),
     },
     ...(elections.length === 0 ? {} : { payrollWithholding: elections }),
+    ...(terms.allocations === undefined ? {} : { payrollContributions: terms.allocations }),
   };
   const publication = {
     sourceId, revisionId, publishedAt: context.dataCutoff, knownAt: context.dataCutoff,
@@ -66,20 +72,33 @@ export function employerWage(context: RunContext, terms: {
     const id = accountingTransactionId(`tx:recognition:income:${incomeId}:${date}`);
     const year = date.slice(0, 4);
     const active = elections.filter(e => e.start <= date && (e.end === undefined || date < e.end));
-    const traceRefs = elections.length === 0
+    const payroll = elections.length > 0 || Boolean(terms.allocations?.length);
+    const deductions = (terms.employeeDeductions ?? []).map(item => createAccountingLeg({
+      type: "asset", posting: "debit", entityId: domainId("position", item.positionId),
+      amount: money(item.amount), quantity: new Quantity(decimal(item.amount).times(decimal("0.01")), SHARE),
+    }));
+    const traceRefs = !payroll
       ? freezeTraceRefs(["base", "salary-growth-assumption", `growth:${month}`, "recurrence"]
         .map(label => calculationTraceRef(calculationTraceId(`vs2:income:${incomeId}:${label}`))))!
-      : [calculationTraceRef(calculationTraceId(`payroll:${id}:gross:${incomeId}`), []),
+      : [calculationTraceRef(calculationTraceId(`payroll:${id}:gross:${incomeId}`),
+        (terms.allocations ?? []).flatMap(item => item.policy.limits.map(binding => domainId("tax-rule", binding.ruleId)))),
         ...active.map(election => calculationTraceRef(calculationTraceId(
           `payroll:withholding:${election.id}:income:${incomeId}:owner:${personId}:employer:${employerId}:occurrence:${occurrenceId}:year:${year}:jurisdiction:${election.jurisdiction}:provenance:${election.provenance}`,
         )))];
-    const withheld = active.reduce((sum, election) => sum.plus(election.calculation.amount), money("0"));
-    const net = gross.minus(withheld);
-    const legTraces = elections.length === 0 ? { traceRefs } : {};
-    const transaction = createAccountingTransaction({ id, date, type: elections.length === 0 ? "income" : "payroll_income", traceRefs, legs: [
-      ...active.filter(e => e.calculation.amount.isPositive()).map(election => createAccountingLeg({ type: "asset", posting: "debit",
-        entityId: taxBalanceIds(election.jurisdiction, year).creditPositionId, amount: election.calculation.amount,
-        quantity: Quantity.parse(election.calculation.amount.amount.toString(), Unit.of("usd_tax_credit")) })),
+    const credits = active.map(election => {
+      const amount = terms.withheldAmounts?.[election.id];
+      if (amount !== undefined) return { election, amount: money(amount) };
+      if (election.calculation.kind !== "fixed") throw new Error("Expected the independently signed withholding amount");
+      return { election, amount: election.calculation.amount };
+    });
+    const withheld = credits.reduce((sum, credit) => sum.plus(credit.amount), money("0"));
+    const net = deductions.reduce((cash, leg) => cash.minus(leg.amount), gross.minus(withheld));
+    const legTraces = payroll ? {} : { traceRefs };
+    const transaction = createAccountingTransaction({ id, date, type: payroll ? "payroll_income" : "income", traceRefs, legs: [
+      ...deductions,
+      ...credits.filter(credit => credit.amount.isPositive()).map(({ election, amount }) => createAccountingLeg({ type: "asset", posting: "debit",
+        entityId: taxBalanceIds(election.jurisdiction, year).creditPositionId, amount,
+        quantity: Quantity.parse(amount.amount.toString(), Unit.of("usd_tax_credit")) })),
       ...(net.isPositive() ? [createAccountingLeg({ type: "cash", posting: "debit",
         accountId: stream.depositAccountId, cashFlowClass: "operating", amount: net, ...legTraces })] : []),
       createAccountingLeg({ type: "income", posting: "credit", amount: gross, ...legTraces }),
@@ -138,7 +157,7 @@ export function employerWage(context: RunContext, terms: {
     original: { version: "household-economic-original/v1", family: "wage", publisherId: archiveId,
       sourceId, revisionId, digest: householdWageOriginalDigest(document(first)) },
   } };
-  const fixture = { income, reads, source };
+  const fixture = { income, reads, source, originalAt: document };
   archives.set(archiveId, fixture);
   return fixture;
 }
@@ -147,4 +166,5 @@ const archives = new Map<string, {
   readonly income: RecurringIncomeStream;
   readonly reads: { employer: number; bank: number };
   readonly source: { mode: EmployerWageSourceMode };
+  readonly originalAt: (period: Period) => HouseholdWageOriginal;
 }>();

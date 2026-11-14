@@ -126,7 +126,7 @@ describe("source-owned household wage posting", () => {
     expect(actual.period.transactions).toEqual(reference.period.transactions);
     expect(actual.period.recognitions).toEqual(reference.period.recognitions);
     expect(actual.period.payrollWithholding).toEqual(reference.period.payrollWithholding);
-    expect(actual.state).toEqual(reference.state);
+    expect(canonicalSerialize(actual.state)).toBe(canonicalSerialize(reference.state));
     expect(actual.state.accounts[ids.bank]!.cash).toEqual(money(payroll ? "215.37" : "225.37"));
     const proof = Object.values(actual.state.d2PostedTransactions!)[0]!;
     expect(proof.transaction).toEqual(document().transaction);

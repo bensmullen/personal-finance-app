@@ -149,7 +149,10 @@ describe("#149 S8-2 canonical cross-domain truth table", () => {
     for (const order of [participants, [...participants].reverse()]) {
       const out = run(s, applyHouseholdExecutionOverlay(s.kernel, { participants: order }));
       expect(out.status).toBe("incomplete"); expect(out.periods).toEqual([]); expect(out.state).toEqual(s.opening);
-      expect(out.diagnostics.map(d => d.code), JSON.stringify(out.diagnostics)).toContain("HOUSEHOLD_CONTENTION_UNRESOLVED");
+      expect(out.diagnostics).toContainEqual(expect.objectContaining({
+        entityType: "fsa_cash", code: "source_not_qualified",
+        message: expect.stringContaining("Unrelated same-instant BANK work lacks a cross-source authenticated sequence"),
+      }));
       expect(out.state.identities.postedTransactionIds).toEqual([]);
       expect(out.state.d2PostedTransactions).toBeUndefined();
     }

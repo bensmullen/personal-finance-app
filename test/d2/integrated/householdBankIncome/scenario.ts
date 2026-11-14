@@ -70,8 +70,8 @@ export function install() {
       effectiveUntil: instant("2028-02-01T00:00:00.000Z"), status: "active" as const };
     const originals = [
         { ...base, kind: "account", sourceId: "deed", bankAccountId: ids.bank, accountKind: "checking",
-          owner: control.personBank ? { kind: "person", id: ids.alice }
-            : { kind: "household", id: control.rebound ? "different-household" : ids.household } },
+          owner: control.personBank ? { kind: "person" as const, id: ids.alice }
+            : { kind: "household" as const, id: control.rebound ? "different-household" : ids.household } },
         { ...base, kind: "household", sourceId: "household", householdId: ids.household },
         { ...base, kind: "membership", sourceId: `member:${c.personId}`, householdId: ids.household, personId: c.personId },
         { ...base, kind: "permission", sourceId: `permission:${c.personId}`, householdId: ids.household,

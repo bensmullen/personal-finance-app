@@ -32,6 +32,8 @@ import {
 import { createPrimitiveRuntimeStateStore } from "../src/simulation/period.js";
 import { taxRule } from "./fixtures/t1aTaxRules.js";
 import { paycheckFixture as healthPaycheckFixture } from "./d2/health/premiums/payrollPort/scenario.js";
+import { employerWage } from "./fixtures/employerWage.js";
+import { wageStreamOriginal } from "../src/simulation/d2/integration/householdWages/index.js";
 
 describe("P2 health expense alongside existing retirement payroll", () => {
   it("reconciles 1000 gross = 50 retirement + 150 health + 100 withholding + 700 BANK", () => {
@@ -62,9 +64,30 @@ const election = (changes: Partial<PayrollWithholdingElection> = {}): PayrollWit
   calculation: { kind: "fixed", amount: money("100") }, ...changes,
 });
 const initial = () => createAuthoritativeState({ accounts: { [ids.cash]: { id: ids.cash, kind: "checking", ownerId: ids.person, cash: money("0") } } });
-const paycheck = (elections: readonly PayrollWithholdingElection[], gross = "1000", allocations: readonly PayrollContributionAllocation[] = []) => payrollContributionCandidate(initial(), {
-  id: "paycheck", incomeId: ids.income, ownerId: ids.person, occurrenceId: "occurrence-A", at, gross: money(gross), depositAccountId: ids.cash, allocations, withholding: elections,
-});
+const paycheckSource = (elections: readonly PayrollWithholdingElection[], gross: string,
+  signedCredit?: string, allocations: readonly PayrollContributionAllocation[] = [], signedDeductions: readonly string[] = []) => {
+  const start = instant("2026-01-01T00:00:00.000Z"), end = instant("2026-02-01T00:00:00.000Z");
+  const runContext = createRunContext({ runId: runId(uuid(70)), scenarioId: scenarioId(uuid(71)),
+    asOf: start, dataCutoff: start, simulationStart: start, simulationEnd: end, baseCurrency: USD });
+  const period = { start, end };
+  const employeeDeductions = allocations.filter(item => !item.policy.character.startsWith("employer_")).map((item, i) => ({
+    positionId: item.positionId, amount: signedDeductions[i]!,
+  }));
+  const fixture = employerWage(runContext, { householdId: ids.household, personId: ids.person, bankAccountId: ids.cash,
+    bankOwner: "person", incomeId: ids.income, employerId: "synthetic-job-A", gross, firstPayday: "2026-01-15",
+    elections, allocations, employeeDeductions,
+    ...(signedCredit === undefined ? {} : { withheldAmounts: { [elections[0]!.id]: signedCredit } }) });
+  const original = fixture.originalAt(period);
+  return { id: original.transaction.id, incomeId: ids.income, householdId: ids.household,
+    ownerId: ids.person, occurrenceId: original.occurrenceId, at, gross: money(gross), depositAccountId: ids.cash,
+    allocations, withholding: elections, runContext,
+    householdWage: { source: fixture.income.householdWageSource!, stream: wageStreamOriginal(fixture.income), period,
+      context: { runId: runContext.runId, asOf: start, dataCutoff: start, householdId: ids.household,
+        personId: ids.person, bankAccountId: ids.cash, direction: "credit" as const, eventAt: at, eventId: original.transaction.id } },
+  };
+};
+const paycheck = (elections: readonly PayrollWithholdingElection[], gross = "1000", signedCredit?: string) =>
+  payrollContributionCandidate(initial(), paycheckSource(elections, gross, signedCredit));
 
 describe("source-bound atomic paycheck", () => {
   it.each([
@@ -73,7 +96,8 @@ describe("source-bound atomic paycheck", () => {
     [{ kind: "fixed", amount: money("0") } as const, "1000", "0"],
   ] as const)("posts exact take-home and paid credit for %j", (calculation, cash, credit) => {
     const original = initial();
-    const result = payrollContributionCandidate(original, { id: "paycheck", incomeId: ids.income, ownerId: ids.person, occurrenceId: "occurrence-A", at, gross: money("1000"), depositAccountId: ids.cash, allocations: [], withholding: [election({ calculation })] });
+    const source = paycheckSource([election({ calculation })], "1000", credit);
+    const result = payrollContributionCandidate(original, source);
     expect(result.state.accounts[ids.cash]!.cash.equals(money(cash))).toBe(true);
     expect(result.state.positions[taxBalanceIds("US:FEDERAL", "2026").creditPositionId]!.carryingValue.equals(money(credit))).toBe(true);
     expect(result.transactions).toHaveLength(1);
@@ -82,19 +106,23 @@ describe("source-bound atomic paycheck", () => {
     expect(statements.income.equals(money("1000"))).toBe(true);
     expect(statements.netWorth.equals(money("1000"))).toBe(true);
     expect(result.transactions[0]!.legs.filter(leg => leg.type === "cash")).toEqual([expect.objectContaining({ posting: "debit", accountId: ids.cash, amount: money(cash) })]);
-    expect(result.withholdingEvidence).toMatchObject({ incomeId: ids.income, ownerId: ids.person, employerId: "synthetic-job-A", occurrenceId: "occurrence-A", transactionId: "paycheck", credits: [{ taxYear: "2026", jurisdiction: "US:FEDERAL" }] });
+    expect(result.withholdingEvidence).toMatchObject({ incomeId: ids.income, ownerId: ids.person, employerId: "synthetic-job-A",
+      occurrenceId: source.occurrenceId, transactionId: `tx:recognition:income:${ids.income}:${at}`,
+      credits: [{ taxYear: "2026", jurisdiction: "US:FEDERAL" }] });
     expect(original.accounts[ids.cash]!.cash.isZero()).toBe(true);
     expect(Object.keys(original.positions)).toEqual([]);
   });
   it("rounds gross fractions to cents with the existing payroll half-even policy", () => {
-    expect(paycheck([election({ calculation: { kind: "percent_gross", rate: "0.005" } })], "1").takeHomeCash.equals(money("1"))).toBe(true);
-    expect(paycheck([election({ calculation: { kind: "percent_gross", rate: "0.015" } })], "1").takeHomeCash.equals(money("0.98"))).toBe(true);
+    expect(paycheck([election({ calculation: { kind: "percent_gross", rate: "0.005" } })], "1", "0").takeHomeCash.equals(money("1"))).toBe(true);
+    expect(paycheck([election({ calculation: { kind: "percent_gross", rate: "0.015" } })], "1", "0.02").takeHomeCash.equals(money("0.98"))).toBe(true);
   });
   it("rejects excess deductions, duplicate jurisdictions, and foreign ownership atomically", () => {
-    expect(() => paycheck([election({ calculation: { kind: "fixed", amount: money("1000.01") } })])).toThrow("exceed available gross");
-    expect(() => paycheck([election(), election({ id: uuid(2) })])).toThrow("Conflicting active");
-    expect(() => paycheck([election({ ownerId: uuid(9) })])).toThrow("exact salary source");
-    expect(() => paycheck([election({ depositAccountId: domainId("account", uuid(9)) })])).toThrow("exact salary source");
+    const signed = paycheckSource([election()], "1000");
+    const candidate = (...withholding: PayrollWithholdingElection[]) => payrollContributionCandidate(initial(), { ...signed, withholding });
+    expect(() => candidate(election({ calculation: { kind: "fixed", amount: money("1000.01") } }))).toThrow("exceed available gross");
+    expect(() => candidate(election(), election({ id: uuid(2) }))).toThrow("Conflicting active");
+    expect(() => candidate(election({ ownerId: uuid(9) }))).toThrow("exact salary source");
+    expect(() => candidate(election({ depositAccountId: domainId("account", uuid(9)) }))).toThrow("exact salary source");
     expect(initial().accounts[ids.cash]!.cash.isZero()).toBe(true);
   });
   it("honors a half-open midyear election change and does not invent gap coverage", () => {
@@ -114,7 +142,8 @@ describe("source-bound atomic paycheck", () => {
     });
     const original = createAuthoritativeState({ accounts: { ...initial().accounts, ...Object.fromEntries(allocations.map(item => [item.accountId, { id: item.accountId, ownerId: ids.person, kind: "retirement" as const, cash: money("0") }])) },
       positions: Object.fromEntries(allocations.map(item => [item.positionId, { id: item.positionId, accountId: item.accountId, quantity: Quantity.parse("0", SHARE), price: money("100"), carryingValue: money("0") }])) });
-    const result = payrollContributionCandidate(original, { id: "combined", incomeId: ids.income, ownerId: ids.person, occurrenceId: "combined-pay", at, gross: money("1000"), depositAccountId: ids.cash, allocations, withholding: [election()] });
+    const signed = paycheckSource([election()], "1000", undefined, allocations, ["100", "100", "100"]);
+    const result = payrollContributionCandidate(original, signed);
     result.transactions.forEach(assertBalanced);
     expect(result.takeHomeCash.equals(money("600"))).toBe(true);
     expect(result.employeeContributions.equals(money("300"))).toBe(true);
@@ -130,7 +159,9 @@ describe("source-bound atomic paycheck", () => {
     expect(Object.values(withHealth.state.contributions!)).toHaveLength(4);
     expect(withHealth.transactions[0]!.legs.filter(l => l.type === "expense")).toHaveLength(1);
     expect(deriveStatements(withHealth.state, withHealth.transactions, USD).netWorth.equals(money("950"))).toBe(true);
-    expect(() => payrollContributionCandidate(original, { id: "excess", incomeId: ids.income, ownerId: ids.person, occurrenceId: "excess-pay", at, gross: money("1000"), depositAccountId: ids.cash, allocations, withholding: [election({ calculation: { kind: "fixed", amount: money("701") } })] })).toThrow("exceed available gross");
+    expect(() => payrollContributionCandidate(original, { ...signed,
+      withholding: [election({ calculation: { kind: "fixed", amount: money("701") } })],
+    })).toThrow("exceed available gross");
     expect(original.contributions).toBeUndefined();
     expect(original.accounts[ids.cash]!.cash.isZero()).toBe(true);
   });
@@ -360,7 +391,9 @@ describe("durable Income authoring and compilation", () => {
     const compiled = compileHouseholdProjection(model, { cashFlow: { baseCurrency: "USD", simulationStart: "2026-01-01", simulationEnd: "2026-03-01", months: 2, sameInstantCashFlowOrder: "income_before_expense", executionAccountId: golden.checking } });
     expect(compiled.status, JSON.stringify(compiled.diagnostics)).toBe("compiled");
     if (compiled.status !== "compiled") throw new Error("Expected a partially supported executable");
-    const context = { ...taxHouseholdFixture().context, scenarioId: domainId("scenario", golden.rootScenario), simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-03-01T00:00:00.000Z") };
+    const context = { ...taxHouseholdFixture().context, scenarioId: domainId("scenario", golden.rootScenario),
+      asOf: instant("2026-01-01T00:00:00.000Z"), dataCutoff: instant("2026-01-01T00:00:00.000Z"),
+      simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-03-01T00:00:00.000Z") };
     const result = runHouseholdKernel({ kernel: compiled.value.executionKernel!, runContext: context });
     expect(result.periods).toHaveLength(2);
     expect(result.periods[0]!.outputCapabilities?.statementIncome?.status).toBe("complete");

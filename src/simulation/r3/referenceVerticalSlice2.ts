@@ -746,7 +746,8 @@ const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): Ver
               const net = sumMoney(deposits.map(leg => leg.amount), request.input.baseCurrency);
               if (paycheck.id !== transactionId || paycheck.date !== occurrence.scheduledAt ||
                   grossLegs.length !== 1 || !grossLegs[0]!.amount.equals(amount) ||
-                  !net.equals(payroll.takeHomeCash) || deposits.some(leg => leg.accountId !== stream.depositAccountId))
+                  !net.equals(payroll.takeHomeCash) ||
+                  deposits.some(leg => leg.type !== "cash" || leg.accountId !== stream.depositAccountId))
                 invalidInput("Payroll journal differs from the reference occurrence", `incomes.${stream.id}`);
               const withholding = payroll.withholdingEvidence;
               if (withholding !== undefined) {

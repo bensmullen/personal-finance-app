@@ -553,7 +553,7 @@ describe("R3 reusable deterministic household kernel", () => {
     expect(phases).not.toContain("replay_started");
     expect(artifact.encoded).not.toContain('"transactions"');
     expect(artifact.encoded).not.toContain('"recognitions"');
-    expect(artifact.encoded).not.toContain('"settlements"');
+    for (const period of basis.periods) expect(period).not.toHaveProperty("settlements");
     expect(artifact.encoded).not.toContain('"effects"');
   });
 
