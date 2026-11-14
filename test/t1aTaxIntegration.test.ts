@@ -22,7 +22,8 @@ import { taxRule, syntheticPayroll } from "./fixtures/t1aTaxRules.js";
 import { federal2024TaxCatalog, federal2026TaxCatalog } from "../src/rules/tax/lawCatalog.js";
 import type { PayrollWithholdingElection } from "../src/simulation/tax/contracts.js";
 import { taxCatalogFingerprint } from "../src/rules/tax/catalog.js";
-import { taxBalanceIds, taxDiagnostic, taxOutputCapabilities } from "../src/simulation/tax/contracts.js";
+import { taxBalanceIds, taxDiagnostic, taxOutputCapabilities, type RecognizedTaxEconomics } from "../src/simulation/tax/contracts.js";
+import { TaxEconomicLedger } from "../src/simulation/tax/economics.js";
 import { mergeOutputCapabilities } from "../src/simulation/r3/capabilities.js";
 import { healthTaxFixture } from "./d2/health/premiums/payrollPort/taxScenario.js";
 import { originals as healthOriginals } from "./d2/health/premiums/payrollPort/scenario.js";
@@ -105,33 +106,48 @@ describe("TB-1 household NIIT on a 2024 realized capital loss", () => {
         at: instant("2024-12-31T23:59:59.998Z") }],
       payrollWithholding, domainOperations: domains.operations.map(({ id, at }) => ({ id, at: instant(at) })),
     };
+    const tax = createHouseholdTaxParticipant(input);
+    let annualEconomics: readonly RecognizedTaxEconomics[] | undefined;
     const kernel = compileHouseholdKernel({
       ...seed.compiled, reconciledOpeningState,
       cashFlowInput: { ...cashFlow, incomes: [{ ...wage, end: instant("2024-02-01T00:00:00.000Z"), payrollWithholding }] },
-      participants: [createDomainMechanicsParticipant(domains), createHouseholdTaxParticipant(input)],
+      participants: [createDomainMechanicsParticipant(domains), {
+        ...tax,
+        observe(descriptor, facts, runtime) {
+          if (descriptor.id.startsWith("tax:final:final-2024:")) {
+            const year = runtime.tax as { years?: { "2024"?: { economics?: unknown } } } | undefined;
+            const ledger = year?.years?.["2024"]?.economics;
+            if (ledger instanceof TaxEconomicLedger) annualEconomics = ledger.canonicalEntries;
+          }
+          return tax.observe!(descriptor, facts, runtime);
+        },
+      }],
       nonInvestmentPositionIds: taxCreditPositionIds(input),
     }, seed.context.simulationStart);
     const run = runHouseholdKernel({ kernel, runContext: seed.context, resultTier: "detail" });
     const { liabilityId, creditPositionId } = taxBalanceIds("US:FEDERAL", "2024");
     const journals = run.periods.flatMap(period => period.transactions);
-    const final = journals.find(tx => tx.type === "tax_final_settlement" && tx.legs.some(leg => leg.entityId === liabilityId));
-    const liability = final?.legs.find(leg => leg.type === "liability" && leg.entityId === liabilityId)?.amount;
-    if (liability === undefined) throw new Error(`Missing 2024 federal settlement: ${JSON.stringify(run.diagnostics)}`);
-    return { input, run, journals, liability, final, liabilityId, creditPositionId, bank: cashFlow.cashAccountId,
+    const final = journals.find(tx => tx.type === "tax_final_settlement" && tx.legs.some(leg => leg.type === "liability" && leg.entityId === liabilityId));
+    const liability = final?.legs.find(leg => leg.type === "liability" && leg.entityId === liabilityId && leg.posting === "debit")?.amount;
+    if (liability === undefined || annualEconomics === undefined) throw new Error(`Missing 2024 federal settlement or annual economics: ${JSON.stringify(run.diagnostics)}`);
+    return { input, run, journals, liability, final, annualEconomics, liabilityId, creditPositionId, bank: cashFlow.cashAccountId,
       wageId: wage.id, residence, work, wrapper, holding, domains, saleTrace, interestTrace, reconciledOpeningState,
       primitiveState: seed.compiled.reconciledPrimitiveState };
   };
 
   it.each([
-    ["0", "59822.70", "1140.00"],
-    ["-1000", "59502.70", "1102.00"],
-    ["-20000", "58862.70", undefined],
-  ] as const)("admits and posts the same sources with %s realized gain/loss", (loss, baseLiability, controlNiit) => {
+    ["0", "59822.70", "60962.70", "1140.00"],
+    ["-1000", "59502.70", "60604.70", "1102.00"],
+    ["-20000", "58862.70", "59242.70", "380.00"],
+  ] as const)("admits and posts the same sources with %s realized gain/loss", (loss, withoutNiit, withNiit, observedNiit) => {
     const on = fixture(loss, true), off = fixture(loss, false);
     // Rev. Proc. 2023-34 single brackets on $215,400 / $214,400 / $212,400
     // of taxable income, plus $10,453.20 Social Security and $2,755 Medicare.
-    expect(off.liability).toEqual(money(baseLiability));
-    if (controlNiit !== undefined) expect(on.liability.minus(off.liability)).toEqual(money(controlNiit));
+    expect(off.liability.toJSON()).toEqual(money(withoutNiit).toJSON());
+    expect(on.liability.toJSON()).toEqual(money(withNiit).toJSON());
+    // For the $20,000 loss the current signed-gain path supplies $210,000 MAGI
+    // and $20,000 NII. Its $10,000 threshold excess yields $380 at 3.8%.
+    expect(on.liability.minus(off.liability).toJSON()).toEqual(money(observedNiit).toJSON());
     for (const result of [on, off]) {
       const { input, run, journals, final, bank, liability, liabilityId, creditPositionId } = result;
       expect(input.incomes).toEqual([expect.objectContaining({ id: result.wageId, incomeType: "salary", grossOrNet: "gross",
@@ -144,35 +160,52 @@ describe("TB-1 household NIIT on a 2024 realized capital loss", () => {
       expect(run.periods[0]!.period.start).toBe("2024-01-01T00:00:00.000Z");
       expect(run.reachedThrough).toBe("2025-01-01T00:00:00.000Z");
       const [sale, interest] = result.domains.operations;
+      const annualEntries = result.annualEconomics.map(({ sourceId, at, allocation, facts, income }) => ({ sourceId, at, allocation, facts, income }));
+      const expectedEntries = [
+        { sourceId: result.wageId, at: "2024-01-15T00:00:00.000Z", allocation: "1",
+          facts: { ...sale!.taxFacts, workJurisdictions: [state] }, income: { ...emptyTaxIncome(), wages: money("190000") } },
+        { sourceId: sale!.id, at: sale!.at, allocation: "1", facts: sale!.taxFacts,
+          income: { ...emptyTaxIncome(), longTermGains: money(loss) } },
+        { sourceId: interest!.id, at: interest!.at, allocation: "1", facts: interest!.taxFacts,
+          income: { ...emptyTaxIncome(), taxableInterest: money("40000") } },
+      ];
+      expect(annualEntries.map(canonicalSerialize).sort()).toEqual(expectedEntries.map(canonicalSerialize).sort());
+      for (const entry of annualEntries) {
+        const { rule } = resolveTaxCoreRule(input.catalog, "US:FEDERAL", "single", entry.at, entry.facts);
+        expect(rule).toMatchObject({ id: federal.id, version: federal.version });
+        expect(rule.niit?.rate.toJSON()).toBe(result === on ? "0.038" : undefined);
+        expect(rule.niit?.threshold.toJSON()).toEqual(result === on ? money("200000").toJSON() : undefined);
+      }
       const recognized = executeDomainOperation({ state: result.reconciledOpeningState, primitiveState: result.primitiveState }, result.domains, sale!);
       expect(recognized.facts.taxEconomics).toEqual([expect.objectContaining({
         sourceId: sale!.id, at: sale!.at, facts: sale!.taxFacts,
-        income: expect.objectContaining({ longTermGains: money(loss), shortTermGains: money("0") }),
         traceRefs: [expect.objectContaining({ traceId: result.saleTrace })],
       })]);
-      expect(journals.filter(tx => tx.type === "sale")).toEqual(recognized.facts.transactions);
-      expect(journals.filter(tx => tx.id === `domain:${interest!.id}:income`)).toEqual([expect.objectContaining({
-        legs: expect.arrayContaining([expect.objectContaining({ type: "income", posting: "credit", amount: money("40000") })]),
+      expect(canonicalSerialize(recognized.facts.taxEconomics?.[0]?.income)).toBe(canonicalSerialize(expectedEntries[1]!.income));
+      expect(canonicalSerialize(journals.filter(tx => tx.type === "sale"))).toBe(canonicalSerialize(recognized.facts.transactions));
+      const journalAmounts = (tx: (typeof journals)[number]) => ({ ...tx, legs: tx.legs.map(leg => ({ ...leg, amount: leg.amount.toJSON() })) });
+      expect(journals.filter(tx => tx.id === `domain:${interest!.id}:income`).map(journalAmounts)).toEqual([expect.objectContaining({
+        legs: expect.arrayContaining([expect.objectContaining({ type: "income", posting: "credit", amount: money("40000").toJSON() })]),
       })]);
-      expect(journals.filter(tx => tx.type === "payroll_income")).toEqual([expect.objectContaining({
+      expect(journals.filter(tx => tx.type === "payroll_income").map(journalAmounts)).toEqual([expect.objectContaining({
         id: `tx:recognition:income:${result.wageId}:2024-01-15T00:00:00.000Z`,
-        legs: expect.arrayContaining([expect.objectContaining({ type: "cash", accountId: bank, amount: money("190000") })]),
+        legs: expect.arrayContaining([expect.objectContaining({ type: "cash", accountId: bank, amount: money("190000").toJSON() })]),
       })]);
       expect(final).toMatchObject({ date: "2024-12-31T23:59:59.999Z", traceRefs: expect.arrayContaining([
         expect.objectContaining({ traceId: result.saleTrace }),
         expect.objectContaining({ traceId: result.interestTrace }),
         expect.objectContaining({ traceId: `compiler:canonical:Income:${result.wageId}:tax` }),
-        expect.objectContaining({ ruleIds: expect.arrayContaining([federal.id]) }),
+        expect.objectContaining({ traceId: expect.stringContaining(`rule:tax_core:${federal.id}:${federal.version}:`), ruleIds: expect.arrayContaining([federal.id]) }),
       ]) });
-      expect(run.periods[10]!.liabilities).toEqual(liability);
+      expect(run.periods[10]!.liabilities.toJSON()).toEqual(liability.toJSON());
       expect(journals.filter(tx => ["tax_final_settlement", "tax_refund", "tax_withholding", "tax_credit_application"].includes(tx.type))).toEqual([final]);
       expect(new Set(journals.map(tx => tx.id)).size).toBe(journals.length);
       for (const tx of journals) assertBalanced(tx);
-      expect(run.state.liabilities[liabilityId]!.balance).toEqual(money("0"));
-      expect(run.state.positions[creditPositionId]!.carryingValue).toEqual(money("0"));
-      expect(run.state.accounts[bank]!.cash).toEqual(money("230000").minus(liability));
-      expect(run.state.accounts[result.wrapper]!.cash).toEqual(money("25000"));
-      expect(run.state.positions[result.holding]!.quantity).toEqual(quantity("0", SHARE));
+      expect(run.state.liabilities[liabilityId]!.balance.isZero()).toBe(true);
+      expect(run.state.positions[creditPositionId]!.carryingValue.isZero()).toBe(true);
+      expect(run.state.accounts[bank]!.cash.toJSON()).toEqual(money("230000").minus(liability).toJSON());
+      expect(run.state.accounts[result.wrapper]!.cash.toJSON()).toEqual(money("25000").toJSON());
+      expect(run.state.positions[result.holding]!.quantity.equals(quantity("0", SHARE))).toBe(true);
     }
   });
 
@@ -186,7 +219,7 @@ describe("TB-1 household NIIT on a 2024 realized capital loss", () => {
     it.fails("TB-1 temporary witness: caps the loss at $3,000 when determining 2024 NIIT", () => {
       // IRC §1211(b) and Form 8960: MAGI $227,000, excess over $200,000
       // threshold $27,000, NII $37,000. The smaller base times 3.8% is $1,026.
-      expect(niit).toEqual(money("1026.00"));
+      expect(niit.toJSON()).toEqual(money("1026.00").toJSON());
     });
   });
 });
