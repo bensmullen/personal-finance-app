@@ -1,14 +1,21 @@
 // Synthetic scaling diagnosis, never a speed SLA or financial-completeness claim.
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync, openSync, closeSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { types } from 'node:util';
 
 const args = process.argv.slice(2);
 const directory = resolve('engineering-validation-artifacts/forecast-feasibility');
-mkdirSync(directory, { recursive: true });
-if (Number(process.versions.node.split('.')[0]) !== 22) throw new Error('Node 22 required');
+const entry = process.argv[1];
+const invoked = entry !== undefined && (resolve(entry) === fileURLToPath(import.meta.url) ||
+  (basename(entry) === 'vite-node.mjs' && args[0] === '--probe'));
+if (invoked) {
+  mkdirSync(directory, { recursive: true });
+  if (Number(process.versions.node.split('.')[0]) !== 22) throw new Error('Node 22 required');
+}
 
 const diagnosticCounts = diagnostics => {
   const counts = new Map();
@@ -17,6 +24,105 @@ const diagnosticCounts = diagnostics => {
 };
 
 const bounded = value => value.length <= 160 ? value : `${value.slice(0, 157)}...`;
+
+// Only fixed runtime messages can leave this probe. Compiler and replay errors
+// can include model content, even when the input fixture is synthetic.
+const safeMessages = new Set([
+  'Invalid string length', 'Maximum call stack size exceeded',
+  'Do not know how to serialize a BigInt', 'Cyclic forecast read model',
+  'Missing forecast read model', 'Unsupported raw JSON in forecast read model',
+]);
+const safeErrorMessage = message => safeMessages.has(message) ? bounded(message) : 'Message withheld';
+const safeErrorNames = new Set(['RangeError', 'ReferenceError', 'SyntaxError', 'TypeError', 'ValidationError']);
+
+// Hash the entire JSON-visible model in order with explicit container and
+// scalar boundaries. Each long string is hashed once by content. In particular,
+// period replay anchors all carry the same large encoded replay basis, which
+// JSON.stringify would expand once per anchor into a single output string.
+export function digestForecastReadModel(root) {
+  const hash = createHash('sha256');
+  const longStrings = new Map();
+  const active = new Set();
+  const chunkSize = 8_192;
+  let buffer = '';
+  const write = token => {
+    buffer += token;
+    if (buffer.length >= chunkSize) {
+      hash.update(buffer);
+      buffer = '';
+    }
+  };
+  const writeString = value => {
+    if (value.length < chunkSize) {
+      write(JSON.stringify(value));
+      return;
+    }
+    let digest = longStrings.get(value);
+    if (digest === undefined) {
+      const content = createHash('sha256');
+      for (let offset = 0; offset < value.length; offset += chunkSize) {
+        content.update(value.slice(offset, offset + chunkSize), 'utf16le');
+      }
+      digest = content.digest('hex');
+      longStrings.set(value, digest);
+    }
+    write(`~${value.length}:${digest}`);
+  };
+  const jsonValue = (value, key) => {
+    if ((value !== null && (typeof value === 'object' || typeof value === 'function')) ||
+        typeof value === 'bigint') {
+      const toJSON = value.toJSON;
+      if (typeof toJSON === 'function') value = Reflect.apply(toJSON, value, [key]);
+    }
+    if (types.isNumberObject(value)) return +value;
+    if (types.isStringObject(value)) return String(value);
+    if (types.isBooleanObject(value)) return Boolean.prototype.valueOf.call(value);
+    if (types.isBigIntObject(value)) return BigInt.prototype.valueOf.call(value);
+    return value;
+  };
+  const omitted = value => value === undefined || typeof value === 'function' || typeof value === 'symbol';
+  const visit = value => {
+    if (typeof value === 'string') {
+      writeString(value);
+      return;
+    }
+    if (typeof value === 'bigint') throw new TypeError('Do not know how to serialize a BigInt');
+    if (value === null || typeof value !== 'object') {
+      write(JSON.stringify(value));
+      return;
+    }
+    if (JSON.isRawJSON?.(value)) throw new TypeError('Unsupported raw JSON in forecast read model');
+    if (active.has(value)) throw new TypeError('Cyclic forecast read model');
+    active.add(value);
+    if (Array.isArray(value)) {
+      const length = value.length;
+      write(`[${length}:`);
+      for (let index = 0; index < length; index++) {
+        const item = jsonValue(value[index], String(index));
+        if (index > 0) write(',');
+        visit(omitted(item) ? null : item);
+      }
+      write(']');
+    } else {
+      write('{');
+      for (const key of Object.keys(value)) {
+        const item = jsonValue(value[key], key);
+        if (omitted(item)) continue;
+        writeString(key);
+        write(':');
+        visit(item);
+        write(',');
+      }
+      write('}');
+    }
+    active.delete(value);
+  };
+  const value = jsonValue(root, '');
+  if (omitted(value)) throw new TypeError('Missing forecast read model');
+  visit(value);
+  return hash.update(buffer).digest('hex');
+}
+
 const record = value => {
   if (value === null || typeof value !== 'object') return false;
   const prototype = Object.getPrototypeOf(value);
@@ -168,7 +274,7 @@ function compareKernelRuns(summary, reference, expected, executable, summarize, 
   return evidence;
 }
 
-if (args[0] === '--probe' && args.length === 3) {
+if (invoked && args[0] === '--probe' && args.length === 3) {
   const months = Number(args[1]);
   if (![8, 20, 120, 360, 649].includes(months) || !['ordinary', 'manual'].includes(args[2])) throw new Error('Invalid probe');
   if (args[2] === 'ordinary' && months > 20) throw new Error('Heavy probe excluded from ordinary CI');
@@ -198,7 +304,7 @@ if (args[0] === '--probe' && args.length === 3) {
   const endInstant = `${end}T00:00:00.000Z`;
   const registry = new PerformanceRegistry();
   const started = performance.now();
-  const result = runPersonalHouseholdForecast(model, request, createApplicationPerformanceObserver(
+  let result = runPersonalHouseholdForecast(model, request, createApplicationPerformanceObserver(
     { now: () => performance.now() }, { runId: `feasibility:${months}`, fixtureId: fixture.id,
       dataClassification: 'synthetic', modelCounts: fixture.coverage.canonicalObjectCounts,
       executionLocation: 'local_node', runtime: process.version, cacheState: 'not_applicable' }, registry));
@@ -214,16 +320,28 @@ if (args[0] === '--probe' && args.length === 3) {
   const executed = result.status === expectedApplicationStatus && !result.executionError &&
     applicationCoverage.complete && result.reachedThrough === endInstant &&
     !result.diagnostics.some(issue => issue.severity === 'error');
+  const { status, executionError, reachedThrough } = result;
+  const applicationDiagnosticCounts = diagnosticCounts(result.diagnostics);
   let equality = 'not measured';
   let referenceEquality = 'not measured';
   let referenceEvidence = 'not measured';
   let parityFailure;
   if (executed && args[2] === 'manual') {
-    let stage = 'repeat application execution';
+    let stage = 'repeat_application_run';
     try {
-      const repeated = runPersonalHouseholdForecast(model, request);
-      const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-      equality = digest(result) === digest(repeated) ? 'equal' : 'different';
+      {
+        const repeated = runPersonalHouseholdForecast(model, request);
+        if (repeated.executionError) {
+          throw new Error(repeated.message);
+        }
+        stage = 'serialize_first';
+        const firstDigest = digestForecastReadModel(result);
+        result = undefined;
+        stage = 'serialize_repeat';
+        const repeatedDigest = digestForecastReadModel(repeated);
+        stage = 'compare_repeats';
+        equality = firstDigest === repeatedDigest ? 'equal' : 'different';
+      }
       stage = 'select canonical scenario';
       // Existing R3 reference contract, scoped to compiled deterministic kernel.
       // Application tax participants and worker transport remain separate evidence.
@@ -267,16 +385,16 @@ if (args[0] === '--probe' && args.length === 3) {
         }
       }
     } catch (error) {
-      parityFailure = { stage, error: bounded(String(error?.name ?? 'Error')),
+      parityFailure = { stage, error: safeErrorNames.has(error?.name) ? error.name : 'Error', message: safeErrorMessage(error?.message),
         ...(Array.isArray(error?.issues) ? { diagnosticCounts: diagnosticCounts(error.issues) } : {}) };
     }
   }
-  const evidence = { months, fixture: fixture.id, classification: 'synthetic', status: result.status,
-    executionError: result.executionError === true, reachedThrough: result.reachedThrough ?? null,
-    periodCount: result.points?.length ?? 0, executed, financialCompleteness: result.status === 'completed',
+  const evidence = { months, fixture: fixture.id, classification: 'synthetic', status,
+    executionError: executionError === true, reachedThrough: reachedThrough ?? null,
+    periodCount: applicationCoverage.periodCount, executed, financialCompleteness: status === 'completed',
     applicationCoverage: { ...applicationCoverage, capabilities: applicationCapabilityStatuses },
     wallMs, heapUsedBytes, heapMeaning: 'sampled after forecast, not peak',
-    diagnosticCounts: diagnosticCounts(result.diagnostics),
+    diagnosticCounts: applicationDiagnosticCounts,
     phases: Object.fromEntries(PERFORMANCE_PHASES.map(phase => [phase, registry.latest(phase) ?? 'not measured'])),
     worker: { status: 'not measured', reason: 'existing synthetic fixture executes local_node; worker evidence remains #181-owned' },
     financialEquality: { repeatExecution: equality, optimizedVsReference: referenceEquality,
@@ -284,7 +402,7 @@ if (args[0] === '--probe' && args.length === 3) {
     referenceEvidence, ...(parityFailure === undefined ? {} : { parityFailure }) };
   writeFileSync(resolve(directory, `${months}.json`), JSON.stringify(evidence, null, 2) + '\n');
   if (!executed || (args[2] === 'manual' && (parityFailure || equality !== 'equal' || referenceEquality !== 'equal'))) process.exitCode = 1;
-} else {
+} else if (invoked) {
   if (args.length > 1 || (args[0] && args[0] !== '--manual')) throw new Error('Use no arguments or --manual');
   const mode = args[0] ? 'manual' : 'ordinary';
   const months = mode === 'manual' ? [8, 20, 120, 360, 649] : [8, 20];

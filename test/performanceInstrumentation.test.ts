@@ -33,6 +33,47 @@ const oneMonth = <T extends ReturnType<typeof createRealisticPerformanceFixture>
 }) as T;
 
 describe("performance instrumentation", () => {
+  it("digests every JSON-visible field without expanding shared replay content into a single string", async () => {
+    const url = new URL("../tools/ci/forecast-feasibility.mjs", import.meta.url).href;
+    const { digestForecastReadModel: digest } = await import(url) as {
+      digestForecastReadModel: (value: unknown) => string;
+    };
+    const basis = { encoded: "a".repeat(8_191) + "\ud800\udc00", integrity: "replay-integrity" };
+    const point = (day: string) => ({
+      traceRefs: [{ replayArtifact: { basis, start: day } }],
+      outputCapabilities: { cash: { diagnostics: [{ code: "PFA-TAX-009", catalogRef: "catalog:0" }] } },
+      cash: { amount: "100.00", currency: "USD" },
+    });
+    const model = {
+      status: "incomplete",
+      diagnosticCatalogs: { entries: [{ id: "catalog:0", content: "law" }] },
+      points: [point("2026-01-01"), point("2026-02-01")],
+    };
+    const independent = JSON.parse(JSON.stringify(model)) as typeof model;
+    expect(digest(independent)).toBe(digest(model));
+    for (const change of [
+      (copy: typeof model) => { copy.status = "completed"; },
+      (copy: typeof model) => { copy.diagnosticCatalogs.entries[0]!.content = "new law"; },
+      (copy: typeof model) => { copy.points.reverse(); },
+      (copy: typeof model) => { copy.points[1]!.outputCapabilities.cash.diagnostics[0]!.catalogRef = "catalog:1"; },
+      (copy: typeof model) => { copy.points[1]!.cash.amount = "100.01"; },
+      (copy: typeof model) => { copy.points[1]!.traceRefs[0]!.replayArtifact.basis.encoded = basis.encoded.slice(0, -1) + "\udc01"; },
+    ]) {
+      const changed = JSON.parse(JSON.stringify(model)) as typeof model;
+      change(changed);
+      expect(digest(changed)).not.toBe(digest(model));
+    }
+    const keyed = { toJSON: (key: string) => key };
+    const projected = { money: money("1.25", USD), keyed, slots: [undefined, , keyed, NaN], omitted: undefined };
+    expect(digest(projected)).toBe(digest(JSON.parse(JSON.stringify(projected))));
+    expect(digest({ toJSON: () => ({ toJSON: () => "ignored", amount: "1" }) })).toBe(digest({ amount: "1" }));
+    expect(digest({ a: 1, b: 2 })).not.toBe(digest({ b: 2, a: 1 }));
+    expect(digest([null])).not.toBe(digest([null, null]));
+    const cycle: { self?: unknown } = {};
+    cycle.self = cycle;
+    expect(() => digest(cycle)).toThrow("Cyclic forecast read model");
+  });
+
   it.each([8, 20, 120])("publishes %i growing snapshots using prefix identity and only their new merge suffix", months => {
     const registry = new PerformanceRegistry();
     const session = createPerformanceSession({ context, clock: { now: () => 0 }, sink: registry });
