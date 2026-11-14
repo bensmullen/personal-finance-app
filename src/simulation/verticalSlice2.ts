@@ -33,6 +33,7 @@ import {
   applyAccountingTransactionAtomically,
   applyHouseholdDomainTransactionAtomically,
   assertAuthoritativeStateCurrency,
+  admitS4OpeningSources,
   cloneAuthoritativeState,
   createIndexedExecutionState,
   registerAuthoritativeIdentity,
@@ -739,7 +740,7 @@ function executeCashFlowPeriodCandidate(
               householdId: request.input.householdId, personId: domainId("person", stream.ownerId), bankAccountId: stream.depositAccountId,
               direction: "credit" as const, eventAt: occurrence.scheduledAt, eventId: `tx:recognition:income:${stream.id}:${occurrence.scheduledAt}`,
             } };
-            const hasElections = Boolean(stream.payrollContributions?.length || stream.payrollWithholding?.length);
+            const hasElections = Boolean(wageSource?.health || stream.payrollContributions?.length || stream.payrollWithholding?.length);
             const transactionId = `tx:recognition:income:${stream.id}:${occurrence.scheduledAt}`;
             const directPosting = hasElections ? undefined : transaction(transactionId, occurrence.scheduledAt, "income", [
               { posting: "debit", type: "cash", amount, accountId: stream.depositAccountId, cashFlowClass: "operating" },
@@ -1058,11 +1059,14 @@ const runVerticalSlice2Prepared = (request: VerticalSlice2RunInput): VerticalSli
 };
 
 /** Runs a deterministic monthly household cash-flow projection (360 months by default). */
-export const runVerticalSlice2 = (request: VerticalSlice2RunInput): VerticalSlice2RunResult =>
-  (request.months ?? 360) > 24 ? runVerticalSlice2Internal({
+export const runVerticalSlice2 = (request: VerticalSlice2RunInput): VerticalSlice2RunResult => {
+  assertRunContext(request.runContext);
+  admitS4OpeningSources(request.openingState, request.runContext);
+  return (request.months ?? 360) > 24 ? runVerticalSlice2Internal({
     runContext: request.runContext, openingState: request.openingState, input: request.input,
     ...(request.months === undefined ? {} : { months: request.months }),
     ...(request.primitiveState === undefined ? {} : { primitiveState: request.primitiveState }),
   }) : runVerticalSlice2Prepared(request);
+};
 
 export const createVerticalSlice2PrimitiveId = (value: string): PrimitiveInstanceId => domainId("primitive-instance", value);

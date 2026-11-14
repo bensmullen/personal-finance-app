@@ -1,7 +1,8 @@
 import { domainId } from "../../../../identity/index.js";
 import { ValidationError } from "../../../../diagnostics/index.js";
 import { sha256 } from "../../../../rules/tax/t1b/contentIdentity.js";
-import type { HouseholdBankEventContext, HouseholdEconomicOriginalReference, PayrollHealthSourceBinding } from "../../../../state/index.js";
+import { householdPayrollHealthPostingEvidence, type HouseholdBankEventContext,
+  type HouseholdEconomicOriginalReference, type PayrollHealthSourceBinding } from "../../../../state/index.js";
 import { createFundingPolicy, fundingPolicyId } from "../../../../funding/index.js";
 import { calculationTraceId, calculationTraceRef } from "../../../../lineage/index.js";
 import { civilDate, instant, type CivilDate } from "../../../../time/index.js";
@@ -155,10 +156,10 @@ function premiumGuard(input: PremiumGuardBinding): HouseholdKernelParticipant {
     try { return readPremiumOriginal(binding.source.original, binding.context); }
     catch (error) { return reject(error instanceof Error ? error.message : "PREMIUM_ORIGINAL_UNAVAILABLE"); }
   };
-  const inspect = (s: PayrollHealthSourceBinding) => {
+  const inspect = (s: PayrollHealthSourceBinding, members: readonly string[] = [s.ownerId]) => {
     const d = original(), p = d.confirmation.proposal;
     if (s.householdId === p.householdId && (s.planId === p.planId || s.coverageId === p.coverageId)
-      && (s.ownerId === p.payerId || p.memberIds.includes(s.ownerId))
+      && (s.ownerId === p.payerId || members.some(member => p.memberIds.includes(member)))
       && s.periodStart < d.original.period.end && s.periodEnd > d.original.period.start)
       reject("DUPLICATE_PREMIUM_PAYROLL_ROUTE");
   };
@@ -168,14 +169,28 @@ function premiumGuard(input: PremiumGuardBinding): HouseholdKernelParticipant {
         if (context.runId !== binding.context.runId || context.asOf !== binding.context.asOf || context.dataCutoff !== binding.context.dataCutoff)
           reject("PREMIUM_RUN_CONTEXT_CHANGED");
         original();
-        for (const proof of Object.values(opening.state.d2PostedTransactions ?? {}))
+        for (const proof of Object.values(opening.state.d2PostedTransactions ?? {})) {
           if (proof.registration.kind === "payroll_health_deduction") inspect(proof.registration.deduction.source);
+          const composite = householdPayrollHealthPostingEvidence(proof, context);
+          if (composite) inspect(composite.deduction.source, composite.memberIds);
+        }
       }
       return { id, operations: [] };
     },
-    observe: (_descriptor, facts, runtime) => {
-      for (const row of facts.cash?.payrollWithholding ?? facts.summary?.cash?.payrollWithholding ?? [])
-        if (row.healthDeduction) inspect(row.healthDeduction.source);
+    observe: (_descriptor, facts, runtime, observation) => {
+      for (const row of facts.cash?.payrollWithholding ?? facts.summary?.cash?.payrollWithholding ?? []) {
+        if (!row.healthDeduction) continue;
+        if (!observation) {
+          inspect(row.healthDeduction.source);
+          continue;
+        }
+        const proof = observation.postingProofs?.[row.transactionId];
+        if (!proof) return reject("PAYROLL_POSTING_UNAVAILABLE");
+        const composite = householdPayrollHealthPostingEvidence(proof, observation.context);
+        if (!composite && proof.registration.kind !== "payroll_health_deduction")
+          return reject("PAYROLL_HEALTH_ORIGINAL_UNAVAILABLE");
+        inspect(composite?.deduction.source ?? row.healthDeduction.source, composite?.memberIds);
+      }
       return runtime;
     },
   } satisfies HouseholdKernelParticipant);

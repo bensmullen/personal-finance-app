@@ -1,4 +1,5 @@
-import { applyAccountingTransactionAtomically, applyD2SettlementAtomically, requalifyD2SettlementReceiptHistory,
+import { applyAccountingTransactionAtomically, applyD2SettlementAtomically, applyNativeHouseholdOriginalAtomically,
+  requalifyD2SettlementReceiptHistory,
   type AuthoritativeState, type D2FsaSettlementReceipt } from "../../../../state/index.js";
 import type { AccountingTransaction } from "../../../../accounting/index.js";
 import { applyHouseholdExecutionOverlay, type CompiledHouseholdKernel, type HouseholdKernelParticipant } from "../../../householdExecution.js";
@@ -43,8 +44,9 @@ function checkHistory(state: AuthoritativeState, s: FsaCashSource, sources: read
     // Its documentary flag must not demand or fabricate a posting ahead of its event.
     const later = sources.find(other => other.original.proofId === r.proofId
       && other.original.medicalReceiptId === r.receiptId && other.request.plan.planId === s.request.plan.planId);
-    if (later && (later.deposit.settledAt > s.deposit.settledAt
-      || (later.deposit.settledAt === s.deposit.settledAt && precedes(eventsFor(s)[1]!, eventsFor(later)[1]!)))) continue;
+    const laterDeposit = later && eventsFor(later)[1];
+    if (laterDeposit && (laterDeposit.at > s.deposit.settledAt ||
+      laterDeposit.at === s.deposit.settledAt && precedes(eventsFor(s)[1]!, laterDeposit))) continue;
     const c = result.claims.find(c => c.proofId === r.proofId);
     if (!c || !history.some(p => p.claimId === c.claimId && p.settlementId === h.settlementId
       && p.amount.equals(h.approvedAmount) && p.source.medicalReceiptId === r.receiptId
@@ -60,7 +62,8 @@ function coverage(sources: readonly FsaCashSource[], through: string, forecastEn
   const partial = sources.filter(s => s.deposit.settledAt < through && s.deposit.amount.compare(s.original.amount) < 0);
   // Missing the forecast horizon is incomplete; a well-sourced later
   // event *inside* the horizon is not missing coverage for the whole run.
-  const pending = sources.filter(s => s.original.paidAt < through && s.deposit.settledAt >= forecastEnd);
+  const pending = sources.filter(s => s.original.paidAt < through &&
+    (s.deposit.settledAt >= forecastEnd || s.householdBank && s.deposit.status !== "posted"));
   const diagnostics = [
     { severity: "warning" as const, code: "FSA_PAYROLL_TAX_INCOMPLETE", entityType: "fsa_cash",
       message: "S7: No payroll, wage-base or medical-deduction tax effect is inferred from reimbursement." },
@@ -87,8 +90,10 @@ interface Event {
 const eventsFor = (s: FsaCashSource): readonly Event[] => [
   { source: s, id: originalOperationId(s), at: s.original.paidAt, role: "original",
     ...(s.original.executionOrder ? { order: s.original.executionOrder } : {}) },
-  { source: s, id: depositOperationId(s), at: s.deposit.settledAt, role: "deposit",
-    ...(s.deposit.executionOrder ? { order: s.deposit.executionOrder } : {}) },
+  ...((s.householdBank && s.deposit.status !== "posted") ? [] : [{
+    source: s, id: depositOperationId(s), at: s.deposit.settledAt, role: "deposit" as const,
+    ...(s.deposit.executionOrder ? { order: s.deposit.executionOrder } : {}),
+  }]),
 ];
 const precedes = (a: Event, b: Event): boolean => !!a.order && !!b.order
   && a.order.sequenceId === b.order.sequenceId && a.order.position < b.order.position;
@@ -110,7 +115,7 @@ function createParticipant(configuration: FsaCashInput, format: FsaCashSourceFor
   return Object.freeze({ id: participantId, version: `paid-expense-reimbursement/${format}`,
     portableCodec: format === "v1" ? "d2-fsa-cash/v1" : codec, economicInputs: input,
     prepare: (context, period, opening, work = [], tier = "detail") => {
-      const sources = input.sources.map(r => readFsaCashSource(r.sourceId, r.expectedSource, format));
+      const sources = input.sources.map(r => readFsaCashSource(r.sourceId, r.expectedSource, format, context));
       try { requalifyD2SettlementReceiptHistory(opening.state, context); }
       catch (error) {
         if (error instanceof FsaCashIncomplete) throw error;
@@ -124,7 +129,7 @@ function createParticipant(configuration: FsaCashInput, format: FsaCashSourceFor
           qualifyFsaCashOriginal(s, context);
           if (checkArchive(opening.state, s, s.original.paidAt < period.start)) posted.add(originalOperationId(s));
         }
-        if (s.deposit.settledAt < period.end) {
+        if ((!s.householdBank || s.deposit.status === "posted") && s.deposit.settledAt < period.end) {
           const receipt = qualifyFsaCashSource(s, context, format);
           const prior = opening.state.d2SettlementReceipts?.[receipt.id];
           if (prior) {
@@ -154,10 +159,16 @@ function createParticipant(configuration: FsaCashInput, format: FsaCashSourceFor
           resourceAccesses: [{ kind: "account_cash", accountId: s.original.bankAccountId, mode: e.role === "original" ? "consume" : "produce" }], traceRefs },
           execute: candidate => {
             const ref = input.sources.find(r => r.sourceId === s.sourceId)!;
-            const current = readFsaCashSource(ref.sourceId, ref.expectedSource, format);
+            const current = readFsaCashSource(ref.sourceId, ref.expectedSource, format, context);
             const bank = candidate.state.accounts[s.original.bankAccountId];
-            if (!bank || bank.ownerId !== s.original.personId || !["checking", "savings"].includes(bank.kind))
+            if (!bank || bank.ownerId !== (current.householdBank ? current.original.householdId : current.original.personId) ||
+                !["checking", "savings"].includes(bank.kind))
               incomplete("Exact source-owned checking/savings BANK required");
+            const publication = current.householdBank && (e.role === "original"
+              ? current.householdBank.originalContext : current.householdBank.settlementContext);
+            if (current.householdBank && (!publication || publication.runId !== context.runId ||
+                publication.asOf !== context.asOf || publication.dataCutoff !== context.dataCutoff))
+              incomplete("Native FSA publication differs from the actual run context");
             let transaction: AccountingTransaction;
             if (e.role === "original") {
               qualifyFsaCashOriginal(current, context);
@@ -165,7 +176,9 @@ function createParticipant(configuration: FsaCashInput, format: FsaCashSourceFor
               if (!bank.cash.equals(current.original.bankCashBefore) || bank.cash.compare(current.original.amount) < 0)
                 incomplete("Original expense must be funded at its actual payment time");
               transaction = originalTransaction(current);
-              applyAccountingTransactionAtomically(candidate.state, transaction, originalRegistration(current));
+              const registration = originalRegistration(current);
+              if (registration.nativeHousehold) applyNativeHouseholdOriginalAtomically(candidate.state, transaction, registration, context);
+              else applyAccountingTransactionAtomically(candidate.state, transaction, registration);
             } else {
               checkArchive(candidate.state, current, true); checkHistory(candidate.state, current, sources);
               const receipt = qualifyFsaCashSource(current, context, format);
@@ -175,7 +188,7 @@ function createParticipant(configuration: FsaCashInput, format: FsaCashSourceFor
               transaction = receipt.paymentTransaction;
             }
             // Loss/amendment during posting fails the surrounding period candidate as well.
-            readFsaCashSource(ref.sourceId, ref.expectedSource, format);
+            readFsaCashSource(ref.sourceId, ref.expectedSource, format, context);
             const facts = coverage(sources, period.end, input.forecastEnd ?? context.simulationEnd);
             if (tier === "summary") {
               const sink = new SummaryOperationSink(transaction.legs[0]!.amount.currency); sink.transaction(transaction);

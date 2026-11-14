@@ -9,6 +9,7 @@ import { immutableConfiguration } from "../../../r3/compiledHousehold.js";
 import { canonicalSerialize } from "../../../run.js";
 import { qualifyHouseholdBankRoute } from "../householdBank/index.js";
 import type { RecurringIncomeStream } from "../../../verticalSlice2.js";
+import { qualifyHouseholdPayrollHealth, type HouseholdPayrollHealthSource } from "../../health/premiums/payrollBinding/index.js";
 export type WageStreamOriginal = Omit<RecurringIncomeStream, "householdWageSource">;
 export const wageStreamOriginal = ({ householdWageSource: _source, ...stream }: RecurringIncomeStream): WageStreamOriginal => stream;
 
@@ -16,10 +17,12 @@ export interface HouseholdWageSourceRef {
   readonly version: "household-wage-source/v1";
   readonly bank: { readonly publisherId: string; readonly sourceId: string };
   readonly original: HouseholdEconomicOriginalReference;
+  readonly health?: HouseholdPayrollHealthSource;
 }
 /** Reconstructed by the independent employer archive, including the complete
  * signed journal. No caller amount or transaction is sent to the publisher. */
 export interface HouseholdWageOriginal {
+  readonly health?: HouseholdPayrollHealthSource;
   readonly stream: WageStreamOriginal;
   readonly sourceId: string; readonly revisionId: string;
   readonly publishedAt: Instant; readonly knownAt: Instant;
@@ -41,7 +44,8 @@ export interface HouseholdWageOriginalProvider {
   } | undefined;
 }
 const providers = new Map<string, HouseholdWageOriginalProvider>();
-const same = (a: unknown, b: unknown) => canonicalSerialize(a) === canonicalSerialize(b);
+const same = (a: unknown, b: unknown) => a === undefined || b === undefined
+  ? a === b : canonicalSerialize(a) === canonicalSerialize(b);
 const invalid = (): never => failValidation({ severity: "error", code: issueCodes.verticalSlice2InputInvalid,
   entityType: "vertical_slice_2", fieldPath: "incomes.householdWageSource", message: "HOUSEHOLD_WAGE_ORIGINAL_NOT_ADMITTED" });
 function need(ok: boolean): asserts ok { if (!ok) invalid(); }
@@ -70,6 +74,8 @@ function read(ref: HouseholdEconomicOriginalReference, context: HouseholdBankEve
     (eligible[1] === undefined || eligible[1].publishedAt !== publication.publishedAt) && publication.effectiveUntil > context.eventAt &&
     householdWageOriginalDigest(publication) === ref.digest);
   const original = publication;
+  if (original.health !== undefined)
+    need(original.health.version === "household-payroll-health-source/v1" && original.transaction.type === "payroll_income");
   need(original.stream.id === original.incomeId && original.stream.ownerId === original.personId && original.stream.depositAccountId === original.bankAccountId &&
     original.householdId === context.householdId && original.personId === context.personId &&
     original.bankAccountId === context.bankAccountId && original.employerId.trim().length > 0 && original.personId !== original.householdId &&
@@ -90,7 +96,11 @@ export function registerHouseholdWageOriginalProvider(provider: HouseholdWageOri
   const registered = Object.freeze({ publisherId: provider.publisherId, readOriginals: provider.readOriginals.bind(provider) });
   registerHouseholdEconomicOriginalAuthority("wage", provider.publisherId, { qualify: (ref, context) => {
     try { const { original, witness } = read(ref, context);
-      return { witness, transaction: original.transaction, context, requiredFamilies: ["wage"] };
+      return { witness, transaction: original.transaction, context,
+        requiredFamilies: original.health === undefined ? ["wage"] : ["wage", "payroll_health"],
+        ...(original.health === undefined ? {} : { payrollHealthPublisher: {
+          publisherId: original.health.publisherId, sourceId: original.health.sourceId,
+        } }) };
     } catch { return undefined; }
   } });
   providers.set(provider.publisherId, registered);
@@ -100,9 +110,19 @@ export function qualifyHouseholdWage(source: HouseholdWageSourceRef, context: Ho
 ): HouseholdDomainPostingEvidence {
   need(source.version === "household-wage-source/v1");
   const { original, witness } = read(source.original, context);
-  need(same({ stream: original.stream, incomeId: original.incomeId, occurrenceId: original.occurrenceId, period: original.period, gross: original.gross, transaction: original.transaction }, expected));
+  need(same(original.health, source.health) &&
+    same({ stream: original.stream, incomeId: original.incomeId, occurrenceId: original.occurrenceId, period: original.period, gross: original.gross, transaction: original.transaction }, expected));
+  const route = qualifyHouseholdBankRoute(source.bank.publisherId, source.bank.sourceId, context);
+  const health = source.health === undefined ? undefined : qualifyHouseholdPayrollHealth(source.health, context);
+  if (health !== undefined) {
+    const binding = health.payrollHealth.deduction.source;
+    need(route.personOwnerId === undefined && binding.employerId === original.employerId &&
+      binding.incomeId === expected.incomeId && binding.occurrenceId === expected.occurrenceId &&
+      binding.periodStart === expected.period.start && binding.periodEnd === expected.period.end &&
+      same(health.transaction, expected.transaction));
+  }
   return immutableConfiguration({ version: "household-domain-posting/v1", context,
-    route: qualifyHouseholdBankRoute(source.bank.publisherId, source.bank.sourceId, context), originals: [witness] });
+    route, originals: health === undefined ? [witness] : [witness, health.witness] });
 }
 
 /** Exclusivity admission uses employer publications, never stream labels or
@@ -122,6 +142,10 @@ export function qualifyDistinctWage(source: HouseholdWageSourceRef, stream: Wage
   need(doc.period.start <= context.eventAt && context.eventAt < doc.period.end);
   const actual = { ...context, eventAt: doc.transaction.date, eventId: doc.transaction.id };
   const admitted = read(source.original, actual);
-  need(admitted.original.incomeId === stream.id && same(admitted.original.stream, stream));
+  need(admitted.original.incomeId === stream.id && same(admitted.original.stream, stream) && same(admitted.original.health, source.health));
+  if (source.health !== undefined) qualifyHouseholdWage(source, actual, {
+    stream, incomeId: admitted.original.incomeId, occurrenceId: admitted.original.occurrenceId,
+    period: admitted.original.period, gross: admitted.original.gross, transaction: admitted.original.transaction,
+  });
   qualifyHouseholdBankRoute(source.bank.publisherId, source.bank.sourceId, actual);
 }

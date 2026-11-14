@@ -4,9 +4,11 @@ import { ValidationError } from "../../../../diagnostics/index.js";
 import { calculationTraceId, calculationTraceRef } from "../../../../lineage/index.js";
 import { sha256 } from "../../../../rules/tax/t1b/contentIdentity.js";
 import { claimId, recognitionId, settlementId } from "../../../../semantics/identity.js";
-import { d2SettlementSourceFingerprint, registerD2SettlementSourceAuthority,
+import { d2SettlementSourceFingerprint, registerD2SettlementSourceAuthority, registerHouseholdEconomicOriginalAuthority,
   type D2FsaSettlementReceipt, type D2FsaSourceBinding, type D2SettlementSourceContext,
-  type D2SourceQualification, type D2PostingRegistration } from "../../../../state/index.js";
+  type D2SourceQualification, type D2PostingRegistration, type HouseholdBankEventContext,
+  type HouseholdEconomicWitness, type NativeHouseholdPostingAttachment } from "../../../../state/index.js";
+import { qualifyHouseholdBankRoute } from "../householdBank/index.js";
 import { instant, type Instant } from "../../../../time/index.js";
 import { Money, USD } from "../../../../values/index.js";
 import { immutableConfiguration } from "../../../r3/compiledHousehold.js";
@@ -56,6 +58,12 @@ export interface FsaCashSource {
   /** Exact source-owner publication/availability for EVERY raw evidence record. */
   readonly provenance: readonly (FsaCashStamp & { readonly evidence: FsaSource })[];
   readonly yearChain?: FsaYearChainRequest;
+  readonly householdBank?: {
+    readonly bankPublisherId: string;
+    readonly bankSourceId: string;
+    readonly originalContext: HouseholdBankEventContext;
+    readonly settlementContext?: HouseholdBankEventContext;
+  };
 }
 /** expectedSource is a versioned full-content fingerprint, never an original
  * document or publisher authentication. Only the v1 restore path accepts the
@@ -65,6 +73,8 @@ export type FsaCashSourceFormat = "v1" | "v2";
 export interface FsaCashSourceProvider {
   /** Lookup raw independently owned facts. The caller's receipt is never supplied. */
   readonly lookup: (sourceId: string) => FsaCashSource | undefined;
+  /** Native publishers can select the active revision at the exact query cutoff. */
+  readonly lookupAt?: (sourceId: string, context: D2SettlementSourceContext) => FsaCashSource | undefined;
 }
 export type FsaCashIncompleteReason = Extract<D2SourceQualification, { status: "incomplete" }>["reason"];
 export class FsaCashIncomplete extends ValidationError {
@@ -87,13 +97,13 @@ const exact = (m: Money): boolean => m instanceof Money && m.currency.equals(USD
 let provider: FsaCashSourceProvider | undefined;
 
 /** Composition-root registration once per process, including independent restore. */
-export function registerFsaCashSourceProvider(owner: FsaCashSourceProvider): void {
+export function registerFsaCashSourceProvider(owner: FsaCashSourceProvider, nativePublisherId?: string): void {
   if (provider) throw new Error("FSA_CASH_SOURCE_PROVIDER_DUPLICATE");
   registerD2SettlementSourceAuthority("fsa_paid_reimbursement", {
     qualify: (binding, context) => {
       if (binding.kind !== "fsa_paid_reimbursement") return { status: "incomplete", reason: "source_not_qualified" };
       try {
-        const source = readFsaCashSource(binding.sourceId);
+        const source = readFsaCashSource(binding.sourceId, undefined, "v2", context);
         // Never decode the archived inline v1 evidence as a source. Reconstruct
         // BOTH versions from the independently registered publisher; select v1
         // only on exact agreement with its historical full-source binding.
@@ -109,13 +119,43 @@ export function registerFsaCashSourceProvider(owner: FsaCashSourceProvider): voi
       }
     },
   });
-  provider = Object.freeze({ lookup: owner.lookup });
+  if (nativePublisherId !== undefined) {
+    registerHouseholdEconomicOriginalAuthority("fsa", nativePublisherId, { qualify: (ref, context) => {
+      try {
+        const source = readFsaCashSource(ref.sourceId, undefined, "v2", context);
+        const role = context.direction === "debit" ? "original" : "settlement";
+        const expected = nativeWitness(source, role);
+        if (!source.householdBank || !same(expected.original, ref)) return undefined;
+        const historical = role === "original" ? source.householdBank.originalContext : source.householdBank.settlementContext;
+        if (!historical || !same(historical, { ...context, asOf: historical.asOf, dataCutoff: historical.dataCutoff }))
+          return undefined;
+        const receipt = role === "settlement" ? qualifyFsaCashSource(source, context) : undefined;
+        if (role === "original") qualifyFsaCashOriginal(source, context);
+        const transaction = receipt?.paymentTransaction ?? originalTransaction(source);
+        const { planId, planYearId, memberId, payeeId, medicalReceiptId, expensePaymentId } = source.original;
+        if (context.eventId !== transaction.id || context.eventAt !== transaction.date ||
+            context.personId !== source.original.personId || context.householdId !== source.original.householdId ||
+            context.bankAccountId !== source.original.bankAccountId) return undefined;
+        return { witness: expected, context, transaction, requiredFamilies: ["fsa"],
+          nativeSource: { kind: "fsa_paid_reimbursement", planId, planYearId, memberId, payeeId, medicalReceiptId, expensePaymentId } };
+      } catch { return undefined; }
+    } });
+  }
+  fsaNativePublisherId = nativePublisherId;
+  provider = Object.freeze({ lookup: owner.lookup.bind(owner),
+    ...(owner.lookupAt === undefined ? {} : { lookupAt: owner.lookupAt.bind(owner) }) });
 }
-export function readFsaCashSource(sourceId: string, expectedSource?: string, format: FsaCashSourceFormat = "v2"): FsaCashSource {
+let fsaNativePublisherId: string | undefined;
+export function readFsaCashSource(sourceId: string, expectedSource?: string, format: FsaCashSourceFormat = "v2",
+  context?: D2SettlementSourceContext): FsaCashSource {
   if (!text(sourceId) || (expectedSource !== undefined && (typeof expectedSource !== "string"
     || format === "v2" && !fingerprintPattern.test(expectedSource))))
     reject("Invalid source reference fingerprint version or format");
-  const value = provider?.lookup(sourceId);
+  let value = provider?.lookup(sourceId);
+  if (context && value?.householdBank && provider?.lookupAt) {
+    value = provider.lookupAt(sourceId, Object.freeze({ asOf: context.asOf, dataCutoff: context.dataCutoff }));
+    if (value && !value.householdBank) reject("The native FSA source cannot switch to a Person BANK route");
+  }
   if (!value) throw new FsaCashIncomplete("source_unavailable", sourceId);
   const source = immutableConfiguration(value);
   if (source.sourceId !== sourceId || !text(source.version)
@@ -135,12 +175,49 @@ function order(o: FsaCashOrder | undefined): void {
 const key = (s: FsaCashSource) => `fsa-cash:${encodeURIComponent(s.sourceId)}`;
 export const originalOperationId = (s: FsaCashSource) => `${key(s)}:original`;
 export const depositOperationId = (s: FsaCashSource) => `${key(s)}:deposit`;
+function nativeWitness(s: FsaCashSource, role: "original" | "settlement"): HouseholdEconomicWitness {
+  const publisherId = fsaNativePublisherId ?? reject("Native FSA publisher unavailable");
+  const o = s.original;
+  const claim = s.request.receipts.find(row => row.receiptId === o.medicalReceiptId && row.proofId === o.proofId)
+    ?? reject("Native FSA original claim unavailable");
+  const { decision: _decision, reimbursement: _reimbursement, ...paid } = claim;
+  const plan = s.request.plan;
+  const originalEvidence = [claim.evidence, claim.destination?.evidence, plan.planEvidence,
+    ...plan.members.filter(member => member.memberId === o.memberId).map(member => member.evidence)];
+  const originalFacts = { original: o, paid, plan, context: s.householdBank?.originalContext,
+    provenance: s.provenance.filter(row => originalEvidence.some(evidence => evidence && same(evidence, row.evidence))) };
+  const digest = `sha256:${sha256(canonicalSerialize(role === "original" ? originalFacts : s))}`;
+  const person = domainId("person", o.personId);
+  return {
+    original: { version: "household-economic-original/v1", family: "fsa", publisherId, sourceId: s.sourceId,
+      revisionId: role === "original" ? o.approvalId : s.version, digest },
+    source: { kind: "organization", id: o.planId },
+    payer: role === "original" ? { kind: "person", id: person } : { kind: "organization", id: o.planId },
+    beneficiary: person,
+  };
+}
+function nativeAttachment(s: FsaCashSource, role: "original" | "settlement"): NativeHouseholdPostingAttachment {
+  const bank = s.householdBank ?? reject("Native FSA BANK route unavailable");
+  const context = (role === "original" ? bank.originalContext : bank.settlementContext)
+    ?? reject("Native FSA historical event context unavailable");
+  const id = accountingTransactionId(role === "original" ? originalOperationId(s) : depositOperationId(s));
+  const o = s.original;
+  if (context.eventId !== id || context.eventAt !== (role === "original" ? o.paidAt : s.deposit.settledAt) ||
+      context.direction !== (role === "original" ? "debit" : "credit") || context.householdId !== o.householdId ||
+      context.personId !== o.personId || context.bankAccountId !== o.bankAccountId)
+    reject("Native FSA context differs from the actual paid or settled event");
+  const route = qualifyHouseholdBankRoute(bank.bankPublisherId, bank.bankSourceId, context);
+  if (route.personOwnerId !== undefined) reject("Native FSA requires Household-owned BANK");
+  return { version: "native-household-posting/v1", family: "fsa", cashRole: "bank",
+    transactionId: id, context, route, originals: [nativeWitness(s, role)] };
+}
 export function originalRegistration(s: FsaCashSource): D2PostingRegistration {
   const o = s.original;
   return { role: "original", kind: "fsa_paid_reimbursement", operationId: originalOperationId(s),
     householdId: domainId("household", o.householdId), personId: domainId("person", o.personId), bankAccountId: o.bankAccountId,
     planId: o.planId, planYearId: o.planYearId, memberId: o.memberId, payeeId: o.payeeId,
-    medicalReceiptId: o.medicalReceiptId, expensePaymentId: o.expensePaymentId };
+    medicalReceiptId: o.medicalReceiptId, expensePaymentId: o.expensePaymentId,
+    ...(s.householdBank === undefined ? {} : { nativeHousehold: nativeAttachment(s, "original") }) };
 }
 export function originalTransaction(s: FsaCashSource) {
   const o = s.original, traceRefs = [calculationTraceRef(calculationTraceId(o.approvalId))];
@@ -186,7 +263,8 @@ export function qualifyFsaCashOriginal(s: FsaCashSource, context: D2SettlementSo
     || r.payment.status !== "paid" || r.payment.paidAt !== o.paidAt.slice(0, 10)
     || r.payment.paymentRef !== o.expensePaymentId || !r.payment.amount.equals(o.amount)
     || !r.incurredAmount.equals(o.amount)
-    || destination.accountId !== o.bankAccountId || destination.ownerId !== o.personId
+    || destination.accountId !== o.bankAccountId || destination.ownerId !== (s.householdBank ? o.householdId : o.personId)
+    || !!destination.householdBank !== !!s.householdBank
     || destination.householdId !== o.householdId
     || ![plan.period, plan.coverage].every(incurredCovered))
     reject("Original BANK debit requires matching, source-owned PAID medical expense");
@@ -258,7 +336,7 @@ function deriveReceipt(s: FsaCashSource, context: D2SettlementSourceContext, for
     || [raw.plan, r].some(p => ["householdId", "personId", "employerId", "planId", "planYearId"].some(k =>
       p[k as keyof FsaIdentity] !== o[k as keyof FsaIdentity]))
     || r.memberId !== o.memberId || r.payeeId !== o.payeeId || c.destinationAccountId !== o.bankAccountId
-    || d.bankAccountId !== o.bankAccountId || d.ownerId !== o.personId || d.householdId !== o.householdId
+    || d.bankAccountId !== o.bankAccountId || d.ownerId !== (s.householdBank ? o.householdId : o.personId) || d.householdId !== o.householdId
     || ![d.sourceApprovalId, d.paymentApprovalId, d.authorizationId, d.paymentId, d.entitlementConsumptionId].every(text))
     reject("Owner eligibility, proof, paid expense, exact plan allocation and actual approved BANK deposit must agree");
   const stamps = [o, d, ...s.provenance];
@@ -274,7 +352,12 @@ function deriveReceipt(s: FsaCashSource, context: D2SettlementSourceContext, for
     medicalReceiptId: o.medicalReceiptId, expensePaymentId: o.expensePaymentId, incurredAt: o.incurredAt,
     entitlementConsumptionId: d.entitlementConsumptionId, ...(d.executionOrder ? { executionOrder: d.executionOrder } : {}) };
   const traceIds = [...new Set([...c.traceRefs, o.approvalId, d.sourceApprovalId, d.paymentApprovalId])].map(calculationTraceId);
-  return immutableConfiguration<D2FsaSettlementReceipt>({ schemaVersion: "d2-shared/settlement-receipt/v1", kind: source.kind,
+  return immutableConfiguration<D2FsaSettlementReceipt>({
+    schemaVersion: s.householdBank === undefined ? "d2-shared/settlement-receipt/v1" : "d2-shared/settlement-receipt/v2",
+    ...(s.householdBank === undefined ? {} : { nativeHousehold: {
+      original: nativeAttachment(s, "original"), settlement: nativeAttachment(s, "settlement"),
+    } }),
+    kind: source.kind,
     id: `${key(s)}:receipt`, operationId: depositOperationId(s), authorizationId: d.authorizationId,
     claimId: claimId(c.claimId), paymentId: d.paymentId, recognitionId: recognitionId(`${key(s)}:recognition`),
     settlementId: settlementId(h.settlementId ?? reject("Settled plan reimbursement ID required")), effectiveAt: d.settledAt, bankAccountId: o.bankAccountId,
