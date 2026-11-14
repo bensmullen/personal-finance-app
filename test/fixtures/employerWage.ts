@@ -25,6 +25,7 @@ export function employerWage(context: RunContext, terms: {
   readonly firstPayday: string;
   readonly gross: string;
   readonly bankOwner?: "person";
+  readonly allowLaterObservation?: boolean;
   readonly withholding?: PayrollWithholdingElection;
   readonly elections?: readonly PayrollWithholdingElection[];
   readonly withheldAmounts?: Readonly<Record<string, string>>;
@@ -113,8 +114,12 @@ export function employerWage(context: RunContext, terms: {
     .map(period => [period.start.slice(0, 7), document(period)]));
   const reads = { employer: 0, bank: 0 };
   const source = { mode: "available" as EmployerWageSourceMode };
+  // The signed transaction remains bound to its originating run. The archive
+  // can attest to that publication again at a later opening-state observation.
   const matchesRun = (query: { readonly runId: string; readonly asOf: string; readonly dataCutoff: string }) =>
-    query.runId === context.runId && query.asOf === context.asOf && query.dataCutoff === context.dataCutoff;
+    query.runId === context.runId && (terms.allowLaterObservation
+      ? query.asOf >= context.asOf && query.dataCutoff >= context.dataCutoff
+      : query.asOf === context.asOf && query.dataCutoff === context.dataCutoff);
   registerHouseholdWageOriginalProvider({ publisherId: archiveId, readOriginals: query => {
     reads.employer++;
     const original = originals.get(query.context.eventAt.slice(0, 7));
@@ -124,7 +129,7 @@ export function employerWage(context: RunContext, terms: {
       : source.mode === "late" ? { ...original, knownAt: context.simulationEnd }
       : original;
     return { version: "household-wage-inventory/v1", publisherId: archiveId, sourceId, context: query.context,
-      checkedAt: context.asOf, completeThrough: context.dataCutoff, completeness: "complete",
+      checkedAt: query.context.asOf, completeThrough: query.context.dataCutoff, completeness: "complete",
       originals: source.mode === "duplicate" ? [current, current] : [current] };
   } });
   const bankOriginals: readonly HouseholdBankOriginal[] = [
@@ -149,7 +154,7 @@ export function employerWage(context: RunContext, terms: {
       return fact;
     });
     return { version: "household-bank-original-inventory/v1", publisherId: bankId, query,
-      checkedAt: context.asOf, completeThrough: context.dataCutoff, completeness: "complete", originals };
+      checkedAt: query.context.asOf, completeThrough: query.context.dataCutoff, completeness: "complete", originals };
   } });
   const income: RecurringIncomeStream = { ...stream, householdWageSource: {
     version: "household-wage-source/v1",

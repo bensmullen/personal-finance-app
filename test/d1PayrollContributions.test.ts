@@ -39,6 +39,10 @@ const allocation = (number: number, character: ContributionCharacter, amount: st
 const opening = (allocations: readonly PayrollContributionAllocation[]) => createAuthoritativeState({ accounts: { [cash]: { id: cash, ownerId: person, kind: "checking", cash: money("0") }, ...Object.fromEntries(allocations.map(item => [item.accountId, { id: item.accountId, ownerId: domainId("person", item.policy.personId), kind: "retirement" as const, cash: money("0") }])) }, positions: Object.fromEntries(allocations.map(item => [item.positionId, { id: item.positionId, accountId: item.accountId, quantity: Quantity.parse("0", SHARE), price: money("100"), carryingValue: money("0") }])) });
 const payroll = (state: ReturnType<typeof opening>, allocations: readonly PayrollContributionAllocation[],
   gross = "1000", installment = 1, signedEmployeeAmounts?: readonly string[]) => {
+  return payrollWithOriginal(state, allocations, gross, installment, signedEmployeeAmounts).result;
+};
+const payrollWithOriginal = (state: ReturnType<typeof opening>, allocations: readonly PayrollContributionAllocation[],
+  gross: string, installment: number, signedEmployeeAmounts?: readonly string[], allowLaterObservation = false) => {
   const earner = domainId("person", allocations[0]!.policy.personId);
   const bank = earner === person ? cash : domainId("account", id(998));
   const bankState = state.accounts[bank] === undefined
@@ -55,13 +59,14 @@ const payroll = (state: ReturnType<typeof opening>, allocations: readonly Payrol
   });
   const wage = employerWage(runContext, { householdId: household, personId: earner, bankAccountId: bank,
     bankOwner: "person", incomeId, employerId: "Synthetic D1 employer", gross, firstPayday: "2026-01-15",
-    allocations, employeeDeductions });
+    allocations, employeeDeductions, allowLaterObservation });
   const original = wage.originalAt(period);
-  return payrollContributionCandidate(bankState, { id: original.transaction.id, incomeId, householdId: household,
+  const result = payrollContributionCandidate(bankState, { id: original.transaction.id, incomeId, householdId: household,
     ownerId: earner, at, gross: money(gross), depositAccountId: bank, allocations, runContext,
     occurrenceId: original.occurrenceId, householdWage: { source: wage.income.householdWageSource!, stream: wageStreamOriginal(wage.income),
       period, context: { runId: runContext.runId, asOf: runContext.asOf, dataCutoff: runContext.dataCutoff,
         householdId: household, personId: earner, bankAccountId: bank, direction: "credit", eventAt: at, eventId: original.transaction.id } } });
+  return { result, original: wage };
 };
 
 describe("D1 payroll recognition and shared contribution capacity", () => {
@@ -233,7 +238,7 @@ describe("D1 payroll recognition and shared contribution capacity", () => {
   });
   it.each(["vest", "forfeit"] as const)("round-trips an explicit full %s event and replays its committed effects", kind => {
     const employer = { ...allocation(1, "employer_401k", "400"), vestedFraction: "0.25" };
-    const contributed = payroll(opening([employer]), [employer]);
+    const { result: contributed, original } = payrollWithOriginal(opening([employer]), [employer], "1000", 1, undefined, true);
     const state = contributed.state;
     state.positions[employer.positionId] = { ...state.positions[employer.positionId]!, price: money("110") };
     const event = { eventId: id(987), positionId: employer.positionId, at: instant("2026-02-10T00:00:00.000Z"), kind };
@@ -244,8 +249,20 @@ describe("D1 payroll recognition and shared contribution capacity", () => {
     expect(result.periods[0]!.statements.income.isZero()).toBe(true); expect(result.periods[0]!.statements.expenses.isZero()).toBe(true);
     expect(result.periods[0]!.netWorth.amount.toString()).toBe(kind === "vest" ? "1440" : "1110");
     expect(Object.values(result.state.contributions!)).toHaveLength(1);
-    const restored = restorePortableHouseholdReplayArtifact(createPortableHouseholdReplayArtifact(result));
+    const artifact = createPortableHouseholdReplayArtifact(result);
+    const beforeRestore = { ...original.reads };
+    const restored = restorePortableHouseholdReplayArtifact(artifact);
+    expect(original.reads.employer).toBeGreaterThan(beforeRestore.employer);
+    expect(original.reads.bank).toBeGreaterThan(beforeRestore.bank);
     expect(runHouseholdKernel({ kernel: restored.replay.kernel, runContext: restored.replay.runContext }).state).toEqual(result.state);
+    expect(restorePortableHouseholdReplayArtifact(artifact)).toBe(restored);
+    original.source.mode = "withdrawn";
+    try {
+      expect(() => restorePortableHouseholdReplayArtifact(artifact)).toThrow("HOUSEHOLD_REPLAY_BASIS_MISMATCH");
+      expect(() => restorePortableHouseholdReplayArtifact(structuredClone(artifact))).toThrow("HOUSEHOLD_REPLAY_BASIS_MISMATCH");
+    } finally {
+      original.source.mode = "available";
+    }
     const authored = authorPayrollContributionPlan(createGoldenHouseholdDraft(), { primitiveId: id(888), investmentId: golden.retirementInvestment, incomeId: golden.income, priority: 10, character: "employer_401k", calculation: { kind: "fixed", amount: "400" }, planKey: "sponsor", vestedFraction: "0.25", excessPolicy: "reject", facts: { taxYear: 2026, eligiblePlanCompensation: "100000" }, contingentEvents: [{ eventId: id(987), date: "2026-02-10", kind }] });
     expect(durablePayrollAllocations(importPersonalModelJson(exportPersonalModelJson(authored)))[0]!.events).toMatchObject([{ eventId: id(987), kind, at: "2026-02-10T00:00:00.000Z" }]);
   });

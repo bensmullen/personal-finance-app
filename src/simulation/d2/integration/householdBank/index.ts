@@ -1,6 +1,7 @@
 import { registerHouseholdBankRouteAuthority, type HouseholdBankEventContext, type HouseholdBankRoutePin } from "../../../../state/index.js";
 import { sha256 } from "../../../../rules/tax/t1b/contentIdentity.js";
 import { instant, type Instant } from "../../../../time/index.js";
+import { failValidation } from "../../../../diagnostics/index.js";
 
 export type { HouseholdBankEventContext, HouseholdBankRoutePin } from "../../../../state/index.js";
 
@@ -55,7 +56,10 @@ const canonical = (value: unknown): string => {
   return JSON.stringify(value);
 };
 const token = (s: string): boolean => typeof s === "string" && s.trim().length > 0 && s.length <= 256;
-function need(ok: boolean): asserts ok { if (!ok) throw new Error("HOUSEHOLD_BANK_ORIGINAL_NOT_ADMITTED"); }
+function need(ok: boolean): asserts ok {
+  if (!ok) failValidation({ severity: "error", code: "HOUSEHOLD_BANK_ORIGINAL_NOT_ADMITTED",
+    entityType: "household_bank_original", message: "HOUSEHOLD_BANK_ORIGINAL_NOT_ADMITTED" });
+}
 const kinds = ["account", "household", "membership", "permission"] as const;
 
 function read(publisherId: string, sourceId: string, context: HouseholdBankEventContext): HouseholdBankRoutePin {

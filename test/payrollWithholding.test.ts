@@ -256,7 +256,7 @@ describe("durable Income authoring and compilation", () => {
       period.period, compiled.value.openingState, createPrimitiveRuntimeStateStore(),
     );
     expect(directReference.period.payrollWithholding).toEqual(period.payrollWithholding);
-    expect(directReference.period.transactions.map(item => item.legs)).toEqual(period.transactions.map(item => item.legs));
+    expect(directReference.period.transactions).toEqual(period.transactions);
     const withoutSalaryOriginal = {
       ...compiled.value.input,
       incomes: compiled.value.input.incomes.map(stream => {
@@ -572,6 +572,7 @@ describe("payroll credits, tax accrual and net final settlement", () => {
       source.mode = mode;
       try {
         const rejected = runHouseholdKernel(fixture);
+        expect(rejected.status).toBe("incomplete");
         expect(rejected.periods).toHaveLength(0);
         expect(rejected.state).toEqual(fixture.kernel.executable.reconciledOpeningState);
         expect(() => restorePortableHouseholdReplayArtifact(artifact)).toThrow(/BASIS_MISMATCH/);

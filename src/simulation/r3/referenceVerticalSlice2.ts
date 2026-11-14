@@ -420,6 +420,7 @@ export interface PreparedVerticalSlice2Occurrence {
   readonly descriptor: HouseholdWorkDescriptor;
   readonly streamId: IncomeId | ExpenseId;
   readonly scheduledAt: Instant;
+  readonly eventTraceRefs: readonly CalculationTraceRef[];
 }
 
 export interface PreparedVerticalSlice2Period {
@@ -450,6 +451,7 @@ const occurrenceDescriptor = (
   context: RunContext,
   stream: RecurringIncomeStream | RecurringExpenseStream,
   scheduledAt: Instant,
+  eventTraceRefs: readonly CalculationTraceRef[],
 ): PreparedVerticalSlice2Occurrence => {
   const income = "depositAccountId" in stream;
   const occurrenceIdentity = generatedOccurrenceKey({
@@ -470,7 +472,7 @@ const occurrenceDescriptor = (
     primitiveInstanceId: stream.primitiveIds.recurrence,
     occurrenceIdentity,
   });
-  return Object.freeze({ descriptor, streamId: stream.id, scheduledAt });
+  return Object.freeze({ descriptor, streamId: stream.id, scheduledAt, eventTraceRefs });
 };
 
 const payrollPriority = (stream: RecurringIncomeStream): number =>
@@ -550,7 +552,9 @@ export const prepareVerticalSlice2Period = (
     const scheduled = evaluatePrimitive({ primitiveId: "P03", input: { amount: stream.baseMonthlyAmount }, parameters: { schedule: stream.recurrence }, priorState: null, context: { ...primitiveContext(request, stream.id, stream.primitiveIds.recurrence, subtractMilliseconds(period.end, 1), "occurrence-preparation", scheduleTraces), period } });
     for (const candidate of scheduled.output.occurrences) {
       const temporal = evaluatePrimitive({ primitiveId: "P04", input: { value: candidate.value }, parameters: { start: stream.start, end: stream.end ?? runContext.simulationEnd }, priorState: null, context: primitiveContext(request, stream.id, stream.primitiveIds.recurrence, candidate.scheduledAt, "occurrence-eligibility", scheduleTraces) });
-      if (temporal.output.active && eventRuntimeAllows(input, stream, eventOutputs, candidate.scheduledAt).allowed) occurrences.push(occurrenceDescriptor(runContext, stream, candidate.scheduledAt));
+      const eligibility = eventRuntimeAllows(input, stream, eventOutputs, candidate.scheduledAt);
+      if (temporal.output.active && eligibility.allowed)
+        occurrences.push(occurrenceDescriptor(runContext, stream, candidate.scheduledAt, eligibility.traceRefs));
     }
   }
   const ordered = withLocalOrdering(input, occurrences);
@@ -610,7 +614,7 @@ export const executePreparedVerticalSlice2Occurrence = (
     ? { ...inputWithoutMixedOrder, incomes: Object.freeze([]), expenses: Object.freeze([executableStream as RecurringExpenseStream]), events: Object.freeze([]) }
     : { ...inputWithoutMixedOrder, incomes: Object.freeze([executableStream as RecurringIncomeStream]), expenses: Object.freeze([]), events: Object.freeze([]) };
   return executeReferenceCashPeriod({ runContext, openingState: state, primitiveState, input: filtered },
-    prepared.period, state, primitiveState, income, input.events);
+    prepared.period, state, primitiveState, income, input.events, occurrence.eventTraceRefs);
 };
 
 const outstandingExpenses = (state: AuthoritativeState, currency: Currency): Money => sumMoney(
@@ -621,6 +625,7 @@ const outstandingExpenses = (state: AuthoritativeState, currency: Currency): Mon
 interface VerticalSlice2InternalRunInput extends VerticalSlice2RunInput {
   readonly modeledSourceIncome?: RecurringIncomeStream;
   readonly modeledSourceEvents?: VerticalSlice2Input["events"];
+  readonly preparedEventTraceRefs?: readonly CalculationTraceRef[];
   /** Internal slice composition hook; callers supply an already validated monthly period. */
   readonly targetPeriods?: readonly Period[];
 }
@@ -698,7 +703,7 @@ const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): Ver
           const occurrence = recurrence.output.occurrences.find((value) => value.scheduledAt === candidate.scheduledAt)!;
           const amount = postedMoney(occurrence.value, request.input.baseCurrency);
           if (!amount.isPositive()) continue;
-          const traceRefs = freezeTraceRefs([...recurrenceTraces, ...eventEligibility.traceRefs])!;
+          const traceRefs = freezeTraceRefs([...recurrenceTraces, ...(request.preparedEventTraceRefs ?? eventEligibility.traceRefs)])!;
           const provenance = generatedProvenance(stream.primitiveIds.recurrence, occurrence.scheduledAt, occurrence.occurrenceId);
           actions.push({ scheduledAt: occurrence.scheduledAt, kind: "income", priority: payrollPriority(stream), id: `${stream.id}:${occurrence.occurrenceId}`, execute: () => {
             const bank = state.accounts[stream.depositAccountId];
@@ -806,7 +811,7 @@ const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): Ver
           const occurrence = recurrence.output.occurrences.find((value) => value.scheduledAt === candidate.scheduledAt)!;
           const amount = postedMoney(occurrence.value, request.input.baseCurrency);
           if (!amount.isPositive()) continue;
-          const traceRefs = freezeTraceRefs([...recurrenceTraces, ...eventEligibility.traceRefs])!;
+          const traceRefs = freezeTraceRefs([...recurrenceTraces, ...(request.preparedEventTraceRefs ?? eventEligibility.traceRefs)])!;
           const provenance = generatedProvenance(stream.primitiveIds.recurrence, occurrence.scheduledAt, occurrence.occurrenceId);
           actions.push({ scheduledAt: occurrence.scheduledAt, kind: "expense", priority: stream.settlementPriority ?? Number.MAX_SAFE_INTEGER, id: `${stream.id}:${occurrence.occurrenceId}`, execute: () => {
             registerAuthoritativeIdentity(state.identities, "generatedOccurrenceKeys", occurrence.occurrenceId);
@@ -928,10 +933,12 @@ const executeReferenceCashPeriod = (
   primitiveState: PrimitiveRuntimeStateStore,
   modeledSourceIncome?: RecurringIncomeStream,
   modeledSourceEvents?: VerticalSlice2Input["events"],
+  preparedEventTraceRefs?: readonly CalculationTraceRef[],
 ): { readonly state: AuthoritativeState; readonly primitiveState: PrimitiveRuntimeStateStore; readonly period: VerticalSlice2PeriodResult } => {
   const result = runVerticalSlice2Internal({ runContext: request.runContext, input: request.input, openingState, primitiveState, months: 1, targetPeriods: Object.freeze([period]),
     ...(modeledSourceIncome === undefined ? {} : { modeledSourceIncome }),
-    ...(modeledSourceEvents === undefined ? {} : { modeledSourceEvents }) });
+    ...(modeledSourceEvents === undefined ? {} : { modeledSourceEvents }),
+    ...(preparedEventTraceRefs === undefined ? {} : { preparedEventTraceRefs }) });
   if (result.status !== "completed" || result.periods[0] === undefined) {
     throw new ValidationError(result.diagnostics);
   }
