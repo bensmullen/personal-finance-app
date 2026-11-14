@@ -68,19 +68,23 @@ export const executeDomainOperation = (opening: OperationState, input: DomainMec
   const currency = Currency.of(input.currency), zero = Money.zero(currency), rounding = new RoundingPolicy(currency.minorUnitScale, "half_even");
   const at = instant(operation.at), amount = Money.parse(operation.amount, currency);
   if (amount.isNegative() || !amount.amount.fitsScale(currency.minorUnitScale)) fail("DOMAIN_AMOUNT_INVALID", "Use nonnegative money at cash settlement precision.");
+  const holding = input.holdings.find(item => item.id === operation.holdingId);
+  if (operation.kind === "indirect_distribution" && holding !== undefined) {
+    // Cloning validates account references, so check the original position first.
+    const sourcePosition = opening.state.positions[holding.id];
+    if (sourcePosition && !Object.hasOwn(opening.state.accounts, sourcePosition.accountId))
+      fail("DOMAIN_RETIREMENT_SOURCE_ACCOUNT_REQUIRED", "The owned source holding requires an existing account.");
+  }
   const state = cloneAuthoritativeState(opening.state);
   const prior = (opening.runtime?.domainMechanics as DomainRuntime | undefined) ?? openingRuntime(input);
   if (prior.completedOperationIds?.includes(operation.id) || state.identities.postedTransactionIds.some(id => id.startsWith("domain:" + operation.id + ":")))
     return { ...opening, facts: {} };
   const lots = { ...prior.lots }, basis = { ...prior.basis }, receipts = { ...prior.receipts };
   const retirementMovement = ["conversion", "direct_rollover", "mixed_rollover", "indirect_distribution"].includes(operation.kind);
-  const holding = input.holdings.find(item => item.id === operation.holdingId);
   const position = holding === undefined ? undefined : state.positions[holding.id];
   const sourceAccountId = holding?.accountId;
   if (retirementMovement && input.holdings.filter(item => item.accountId === sourceAccountId && state.positions[item.id]?.quantity.amount.isPositive()).length !== 1)
     fail("DOMAIN_RETIREMENT_ALLOCATION_UNSUPPORTED", "Retirement movement requires one eligible owned source holding; multi-holding allocation is unavailable.");
-  if (operation.kind === "indirect_distribution" && position && !Object.hasOwn(state.accounts, position.accountId))
-    fail("DOMAIN_RETIREMENT_SOURCE_ACCOUNT_REQUIRED", "The owned source holding requires an existing account.");
   const basisContributionIds = new Set(prior.basisContributionIds ?? []);
   const indirectSourceBasis = (id: string) =>
     participantBasis(holding?.afterTaxBasis === undefined ? undefined : basis[id], currency);
