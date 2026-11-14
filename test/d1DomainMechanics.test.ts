@@ -1,10 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { assertBalanced } from "../src/accounting/index.js";
+import { ValidationError } from "../src/diagnostics/index.js";
 import { domainId } from "../src/identity/index.js";
 import { createAuthoritativeState } from "../src/state/index.js";
 import { createPrimitiveRuntimeStateStore } from "../src/simulation/period.js";
 import { executeDomainOperation, domainCashAccesses, longTermHolding, type DomainHolding, type DomainMechanicsInput, type DomainOperation } from "../src/simulation/domainMechanics.js";
 import type { OperationState } from "../src/simulation/r3/operations.js";
+import { taxBalanceIds } from "../src/simulation/tax/contracts.js";
 import { decimal, money, quantity, SHARE, USD } from "../src/values/index.js";
 import { instant } from "../src/time/index.js";
 
@@ -29,6 +31,96 @@ const taxes = (candidate: ReturnType<typeof executeDomainOperation>) => Object.f
 const statements = (candidate: ReturnType<typeof executeDomainOperation>) => Object.fromEntries(["income", "expense", "gain", "loss"].map(type => [type,
   (candidate.facts.transactions ?? []).flatMap(tx => tx.legs).filter(leg => leg.type === type).reduce((sum, leg) => sum.plus(leg.posting === (type === "expense" || type === "loss" ? "debit" : "credit") ? leg.amount.amount : leg.amount.amount.negated()), decimal("0")).toString()]));
 const balanced = (candidate: ReturnType<typeof executeDomainOperation>) => { for (const tx of candidate.facts.transactions ?? []) assertBalanced(tx); };
+
+describe("Participant-received employer-plan distribution basis eligibility", () => {
+  const distribution = operation("indirect_distribution", { cashAccountId: bank });
+  const openingPlan = () => {
+    const before = opening();
+    before.state.accounts[wrapper] = { ...before.state.accounts[wrapper]!, kind: "retirement" };
+    return before;
+  };
+  const plan = (afterTaxBasis: string) => input({ ...holding(), afterTaxBasis });
+  const rejection = (code: string) => expect.objectContaining({
+    issues: [expect.objectContaining({ code, entityType: "domain_mechanics" })],
+  });
+  const expectDistribution = (before: OperationState, configuration: DomainMechanicsInput, result: ReturnType<typeof executeDomainOperation>) => {
+    const { creditPositionId } = taxBalanceIds("US:FEDERAL", "2026");
+    expect(amounts(result)).toEqual({ bank: "10080", wrapper: "0", units: "9", carrying: "900", netWorth: "11000" });
+    expect(result.state.positions[creditPositionId]?.carryingValue).toEqual(money("20", USD));
+    expect(result.facts.taxEconomics).toHaveLength(1);
+    expect(taxes(result)).toEqual({ traditionalDistributions: "100" });
+    expect(result.facts.transactions).toHaveLength(1);
+    balanced(result);
+    expect([...result.state.identities.postedTransactionIds]).toEqual([result.facts.transactions![0]!.id]);
+    expect(result.runtime?.domainMechanics).toMatchObject({
+      receipts: { [distribution.id]: { at: distribution.at, gross: "100", received: "80", accountId: bank } },
+      completedOperationIds: [distribution.id],
+    });
+
+    const replay = executeDomainOperation(result, configuration, distribution);
+    expect(replay.facts).toEqual({});
+    expect(replay.state).toBe(result.state);
+    expect(replay.runtime).toBe(result.runtime);
+    expect(before.state).toEqual(openingPlan().state);
+    expect(before.runtime).toBeUndefined();
+  };
+
+  it("settles explicitly pre-tax principal as $80 cash and a $20 federal credit once", () => {
+    const before = openingPlan(), configuration = plan("0");
+    expectDistribution(before, configuration, executeDomainOperation(before, configuration, distribution));
+  });
+
+  it.each([
+    ["nonzero recovered cent", "0.10", "100", "DOMAIN_INDIRECT_AFTER_TAX_UNSUPPORTED"],
+    ["insufficient owned value", "0", "1000.01", "DOMAIN_RETIREMENT_OWNED_VALUE_REQUIRED"],
+  ])("rejects %s without mutating opening state", (_label, basis, amount, code) => {
+    const before = openingPlan();
+    expect(() => executeDomainOperation(before, plan(basis), { ...distribution, amount })).toThrow(rejection(code));
+    expect(before.state).toEqual(openingPlan().state);
+    expect(before.runtime).toBeUndefined();
+  });
+
+  it("rejects a missing runtime basis entry without mutating state or recording a receipt", () => {
+    const configuration = plan("0");
+    const runtime = () => ({
+      domainMechanics: {
+        lots: { [position]: configuration.holdings[0]!.lots },
+        basis: { [destination]: "0", [roth]: "0" },
+        receipts: {},
+      },
+    });
+    const before = { ...openingPlan(), runtime: runtime() };
+    expect(() => executeDomainOperation(before, configuration, distribution)).toThrow(rejection("DOMAIN_RETIREMENT_BASIS_REQUIRED"));
+    expect(before.state).toEqual(openingPlan().state);
+    expect(before.runtime).toEqual(runtime());
+  });
+
+  describe("$0.01 previously taxed basis on $1,000 of owned value (#310)", () => {
+    const before = openingPlan(), configuration = plan("0.01");
+    let result: ReturnType<typeof executeDomainOperation> | undefined;
+    let rejectionCode: string | undefined;
+
+    beforeAll(() => {
+      try {
+        result = executeDomainOperation(before, configuration, distribution);
+      } catch (error) {
+        if (!(error instanceof ValidationError) || error.issues.length !== 1 ||
+            error.issues[0]?.code !== "DOMAIN_INDIRECT_AFTER_TAX_UNSUPPORTED") throw error;
+        rejectionCode = error.issues[0].code;
+      }
+    });
+
+    it("executes the exact-cent fixture and records the resulting journal, taxes and receipt", () => {
+      expect(result).toBeDefined();
+      expectDistribution(before, configuration, result!);
+    });
+
+    // $100 / $1,000 of $0.01 is $0.001. Eligibility must precede cent rounding.
+    it.fails("temporary #310 witness: rejects positive source basis even when recovery rounds to zero", () => {
+      expect(rejectionCode).toBe("DOMAIN_INDIRECT_AFTER_TAX_UNSUPPORTED");
+    });
+  });
+});
 
 describe("D1-B independent financial effects (opening bank 10000, wrapper 0, holding 1000)", () => {
   it.each([
