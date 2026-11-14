@@ -1,5 +1,5 @@
 import type { HouseholdForecastPoint } from "./householdProjection.js";
-import { restorePortableHouseholdReplayArtifact } from "../simulation/r3/replayArtifact.js";
+import { restoreHouseholdForecastEvidence } from "./householdProjection.js";
 import { householdEvidenceMonth } from "./mortgageChartData.js";
 import { Currency, Money, decimal, RoundingPolicy, Unit } from "../values/index.js";
 import type { PortableModelEnvelope } from "../model/modelVersion.js";
@@ -35,7 +35,7 @@ export function inspectMonthlyMoney(point: HouseholdForecastPoint, model?: Porta
   if (!ref) throw new Error("Monthly evidence is unavailable");
   const address = ref.replayArtifact as { basis: unknown; start: string; end: string };
   if (address.start !== point.periodStart || address.end !== point.periodEnd) throw new Error("Monthly evidence does not match the selected period");
-  const basis = restorePortableHouseholdReplayArtifact(address.basis, observation);
+  const basis = restoreHouseholdForecastEvidence(address.basis, model, observation);
   if (`household:replay:${basis.runMetadata.inputFingerprint}:${address.start}:${address.end}` !== ref.traceId) throw new Error("Monthly evidence identity does not match");
   const periods = householdEvidenceMonth(basis, address.start, address.end, observation);
   const currency = Currency.of(point.cash.currency);

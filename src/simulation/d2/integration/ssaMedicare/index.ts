@@ -20,6 +20,8 @@ import { canonicalSerialize, type RunContext } from "../../../run.js";
 import { composeMedicareObligations, type MedicareCoordinationRequest } from "../../health/medicare/coordination/index.js";
 import { coordinateSocialSecurity, type CoordinatedPayableAward } from "../../retirement/benefits/coordination/index.js";
 import { reviewSsaMedicareOriginals, type SsaMedicareOriginalSources } from "./originalSources.js";
+import { qualifyDistinctWage, wageStreamOriginal } from "../householdWages/index.js";
+import type { RecurringIncomeStream } from "../../../verticalSlice2.js";
 export { registerSsaMedicareOriginalSources, type SsaMedicareOriginalAdapter, type SsaMedicareOriginalSources } from "./originalSources.js";
 
 /** Verified external source evidence is the trust boundary, as in A1/C2. These
@@ -27,6 +29,7 @@ export { registerSsaMedicareOriginalSources, type SsaMedicareOriginalAdapter, ty
  * A caller's complete flag or conditional proposal is never posting authority.
  */
 export interface ConfirmedSsaMedicarePayment {
+  readonly nativeHousehold?: SsaMedicarePaymentInput["nativeHousehold"];
   readonly originalSources?: SsaMedicareOriginalSources;
   readonly a1: Parameters<typeof coordinateSocialSecurity>[0];
   readonly award: CoordinatedPayableAward;
@@ -39,6 +42,7 @@ export interface ConfirmedSsaMedicarePayment {
   readonly bankCashBefore: Money;
 }
 export interface SsaMedicareInput {
+  readonly exclusiveWages?: readonly RecurringIncomeStream[];
   readonly householdId: string;
   readonly personId: string;
   /** Explicit additional recipients; each payment still has one owned BANK. */
@@ -71,7 +75,7 @@ const knownBy = (value: unknown, cutoff: string): boolean => {
   if (value === null || typeof value !== "object" || value instanceof Money) return true;
   if (Array.isArray(value)) return value.every(v => knownBy(v, cutoff));
   return Object.entries(value).every(([key, v]) =>
-    ["asOf", "knownAt", "publishedAt"].includes(key) && typeof v === "string"
+    key === "nativeHousehold" ? true : ["asOf", "knownAt", "publishedAt"].includes(key) && typeof v === "string"
       ? (v.length === 10 ? at(v) : v) <= cutoff : knownBy(v, cutoff));
 };
 
@@ -131,7 +135,7 @@ function qualifyPayment(q: ConfirmedSsaMedicarePayment, householdId: string, per
     || s.effectiveStart > date || s.effectiveEndExclusive <= date || s.asOf > s.knownAt || s.publishedAt > s.knownAt
     || s.knownAt > p.paymentAt || !exact(q.bankCashBefore))
     fail("SSA_BANK_NOT_ADMITTED", "Explicit source-known existing recipient-owned USD BANK and exact cash required");
-  return immutableConfiguration({ payable: p, right, requests, bankAccountId: bank.accountId, bankCashBefore: q.bankCashBefore,
+  return immutableConfiguration({ ...(q.nativeHousehold === undefined ? {} : { nativeHousehold: q.nativeHousehold }), payable: p, right, requests, bankAccountId: bank.accountId, bankCashBefore: q.bankCashBefore,
     rightSettlementId: settlementId(q.rightSettlementId), sourceInputs: orderedPayment(q) });
 }
 
@@ -179,13 +183,28 @@ export function createSsaMedicareParticipant(configuration: SsaMedicareInput): H
         if (prior && !same(prior.sourceInputs, q)) fail("SSA_CHANGED_PAYMENT", "Committed payment source/amount/version/account cannot change");
         if (q.payable.paymentAt < period.start || q.payable.paymentAt >= period.end) continue;
         if (!members.includes(q.payable.recipientId)) fail("SSA_SOURCE_NOT_ADMITTED", "Recipient absent from explicit household roster");
+        const reviewWages = () => { for (const wage of input.exclusiveWages ?? []) {
+          if (wage.ownerId !== q.payable.recipientId || wage.start > q.payable.paymentAt || wage.end !== undefined && wage.end <= q.payable.paymentAt) continue;
+          if (q.originalSources === undefined) fail("SSA_EXCLUSIVE_REPRESENTATION_REQUIRED", "Wage exclusivity requires independently authenticated SSA originals");
+          if (wage.householdWageSource === undefined) fail("SSA_EXCLUSIVE_REPRESENTATION_REQUIRED", "Independent employer original required");
+          try {
+            qualifyDistinctWage(wage.householdWageSource!, wageStreamOriginal(wage), { runId: context.runId, asOf: context.asOf, dataCutoff: context.dataCutoff,
+              householdId: domainId("household", input.householdId), personId: domainId("person", q.payable.recipientId),
+              bankAccountId: wage.depositAccountId, direction: "credit", eventAt: q.payable.paymentAt, eventId: `ssa-exclusivity:${q.payable.paymentId}` });
+          } catch { fail("SSA_EXCLUSIVE_REPRESENTATION_REQUIRED", "Overlapping wage lacks independent current employer authority"); }
+        } };
+        reviewWages();
         const bound = qualifySsaMedicarePayment(q, input.householdId, q.payable.recipientId, context.dataCutoff);
+        if (bound.nativeHousehold !== undefined && (q.originalSources === undefined ||
+          bound.nativeHousehold.context.runId !== context.runId || bound.nativeHousehold.context.asOf !== context.asOf ||
+          bound.nativeHousehold.context.dataCutoff !== context.dataCutoff))
+          fail("SSA_SOURCE_NOT_ADMITTED", "Household SSA requires independent originals and the actual run observation boundary");
         if (!context.baseCurrency.equals(USD) || !knownBy(q, context.dataCutoff))
           fail("SSA_SOURCE_NOT_ADMITTED", "All source facts must be known by the run data cutoff");
         validateAuthoritativeState(opening.state);
         if (prior) continue;
         const bank = opening.state.accounts[q.bank.accountId];
-        if (!bank || bank.ownerId !== q.payable.recipientId || !["checking", "savings"].includes(bank.kind) || !exact(bank.cash))
+        if (!bank || bank.ownerId !== (bound.nativeHousehold ? input.householdId : q.payable.recipientId) || !["checking", "savings"].includes(bank.kind) || !exact(bank.cash))
           fail("SSA_BANK_NOT_ADMITTED", "Existing exact recipient-owned checking/savings account required");
         const operationId = `ssa-medicare:${q.payable.paymentId}`;
         const traceRefs = [...new Set([...q.award.traceRefs, ...q.c2.inventories.flatMap(i => [i.source.ruleSnapshotId]),
@@ -199,8 +218,10 @@ export function createSsaMedicareParticipant(configuration: SsaMedicareInput): H
           sequencingInstant: q.payable.paymentAt, dependsOn: [],
           resourceAccesses: [{ kind: "account_cash", accountId: q.bank.accountId, mode: "produce" }], traceRefs },
           execute: candidate => {
+            reviewWages();
             const state = cloneAuthoritativeState(candidate.state);
             const receipt = applySsaMedicarePaymentAtomically(state, bound);
+            reviewWages();
             const facts = { outputCapabilities: capabilities, taxDiagnostics, traceRefs };
             if (tier === "summary") {
               const sink = new SummaryOperationSink(USD); sink.transaction(receipt.transaction);
@@ -246,7 +267,11 @@ registerSsaMedicareSourceAuthority(value => {
 });
 
 export function attachSsaMedicare(kernel: CompiledHouseholdKernel, input: SsaMedicareInput) {
-  const participant = createSsaMedicareParticipant(input);
+  const wages = kernel.executable.cashFlowInput?.incomes ?? [];
+  const sources = wages.filter(w => w.householdWageSource !== undefined).map(w => canonicalSerialize(w.householdWageSource!.original));
+  if (new Set(sources).size !== sources.length || new Set(wages.map(w => w.id)).size !== wages.length)
+    fail("SSA_EXCLUSIVE_REPRESENTATION_REQUIRED", "Duplicated wage source or stream cannot establish exclusivity");
+  const participant = createSsaMedicareParticipant({ ...input, ...(sources.length === 0 ? {} : { exclusiveWages: wages.filter(w => w.householdWageSource !== undefined) }) });
   const existing = kernel.executable.participants ?? [], prior = existing.find(p => p.id === id);
   if (prior && (prior.version !== participant.version || !same(prior.economicInputs, participant.economicInputs)))
     fail("SSA_CHANGED_PARTICIPANT", "Cannot replace an attached source-bound SSA participant");
@@ -256,7 +281,8 @@ export function attachSsaMedicare(kernel: CompiledHouseholdKernel, input: SsaMed
     if (q.originalSources !== undefined) qualifySsaMedicarePayment(q, input.householdId, q.payable.recipientId);
     const cash = kernel.executable.cashFlowInput;
     if (cash?.incomes.some(s => (s.ownerId === q.payable.recipientId || s.ownerId === input.householdId)
-      && s.start <= q.payable.paymentAt && (!s.end || s.end > q.payable.paymentAt))
+      && s.start <= q.payable.paymentAt && (!s.end || s.end > q.payable.paymentAt)
+      && (s.ownerId === input.householdId || s.householdWageSource?.original.family !== "wage"))
       || cash?.expenses.some(s => s.start <= q.payable.paymentAt && (!s.end || s.end > q.payable.paymentAt)
         && (s.sourceTraceRefs ?? []).some(ref => q.c2.premiums.coverages.some(c => ref.traceId === c.id || ref.traceId === c.quote.quoteId))))
       fail("SSA_EXCLUSIVE_REPRESENTATION_REQUIRED", "Overlapping generic income or premium stream lacks proven exclusive source representation");

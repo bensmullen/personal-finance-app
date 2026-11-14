@@ -43,7 +43,8 @@ describe("#149 S8-4 bounded joint HELOC portable history", () => {
     expect(txs.filter(t => t.type === "heloc_interest")).toHaveLength(13);
     expect(new Set(txs.map(t => t.id)).size).toBe(txs.length);
     expect(detail.state.identities.postedTransactionIds).toHaveLength(txs.length + 1); // original draw
-    expect(Object.keys(detail.state.d2PostedTransactions!)).toHaveLength(32); // 6 S8-3 + 26 HELOC
+    expect(Object.values(detail.state.d2PostedTransactions!).filter(p => p.registration.kind !== "household_domain")).toHaveLength(32);
+    expect(Object.values(detail.state.d2PostedTransactions!).filter(p => p.registration.kind === "household_domain")).toHaveLength(25);
     const checkpoints = exportHouseholdReplayCheckpoints(summary);
     expect(checkpoints.map(c => c.at)).toEqual([instant("2027-01-01T00:00:00.000Z"), instant("2028-01-01T00:00:00.000Z")]);
     expect(checkpoints.map(c => Object.values(c.state.d2SettlementReceipts!).filter(r => r.kind === "heloc_phase_service").length)).toEqual([11, 13]);
@@ -77,13 +78,15 @@ describe("#149 S8-4 bounded joint HELOC portable history", () => {
         const selected = replayHouseholdForecastWindow(restored, detail.periods[index]!.period);
         expect(selected.periods).toEqual([detail.periods[index]]); expect(selected.state).toEqual(expected.state);
         expect(child(index, "present")).toEqual({ state: canonicalSerialize(expected.state), periods: canonicalSerialize(expected.periods),
-          issuerRead: true, bankRead: true, cardRead: true, fsaRead: true, retirementRead: true });
+          issuerRead: true, bankRead: true, cardRead: true, fsaRead: true, retirementRead: true, wageRead: true });
       }
       for (const mode of ["withdrawn", "version", "bank_absent", "approval", "history"]) {
         const rejected = child(24, mode);
         expect(rejected).toMatchObject({ rejected: true, issuerRead: true });
         if (mode !== "withdrawn") expect(rejected.bankRead).toBe(true);
       }
+      for (const mode of ["changed_employer", "missing_wage_bank"])
+        expect(child(24, mode)).toMatchObject({ rejected: true });
     } finally { rmSync(directory, { recursive: true, force: true }); }
     // A restored warm basis cannot authorize changed original publishers either.
     const first = s.pairs[0]!;

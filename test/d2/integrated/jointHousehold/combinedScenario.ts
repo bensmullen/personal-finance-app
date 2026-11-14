@@ -14,6 +14,7 @@ import { fsaScopeId } from "../../../../src/simulation/d2/health/fsa/index.js";
 import { scenario, start } from "./scenario.js";
 import { evidence, provenance } from "../fsaCash/scenario.js";
 import { document as issuerDocument } from "../cardBank/scenario.js";
+import { employerWage } from "../../../fixtures/employerWage.js";
 
 // Independent synthetic publisher facts, rebuilt in each process. Providers
 // never accept a receipt, portable source snapshot, or replay artifact as input.
@@ -137,19 +138,26 @@ export function registerPublishers({ fsa = true, card = true, retirement = true 
   } });
 }
 
-export function combinedScenario({ months = 2, cash = "2000", fsa = medicalSource() } = {}) {
+export function combinedScenario({ months = 2, cash = "2000", fsa = medicalSource(), wageDay = "05" } = {}) {
   // S8-1 stays untouched. Confirmed premiums/extra principal cover 2026 only;
   // longer replay never invents 2027/28 premium sources.
   const base = scenario({ months: 12, cash });
   const opening = createAuthoritativeState({ accounts: { ...base.opening.accounts,
     [ids.retirement]: { id: ids.retirement, kind: "retirement", ownerId: ids.member, cash: money("1000") } },
     positions: {}, liabilities: { ...base.opening.liabilities, [ids.card]: { id: ids.card, balance: money("1000") } } });
-  const context = { ...base.context, asOf: at("2029-12-31"), dataCutoff: at("2029-12-31"),
-    simulationEnd: utcMonthlyPeriods(start, months).at(-1)!.end };
+  // The documentary publishers use the historical observation boundary.
+  const context = { ...base.context, asOf: instant("2029-12-31T00:00:00.000Z"),
+    dataCutoff: instant("2029-12-31T00:00:00.000Z"), simulationEnd: utcMonthlyPeriods(start, months).at(-1)!.end };
+  const wages = employerWage(context, {
+    householdId: ids.household, personId: ids.member, bankAccountId: ids.bank, incomeId: ids.wage,
+    bankOwner: "person", employerId: "synthetic-employer", gross: "1000", firstPayday: `2026-01-${wageDay}`,
+  });
   const extended = applyHouseholdExecutionOverlay(base.attached.kernel, { executionMonths: months, reconciledOpeningState: opening,
+    cashFlowInput: { ...base.attached.kernel.cash!.input, incomes: [wages.income] },
     scenarioBindings: { source: "#149 S8-2; historical synthetic dated confirmations; J1 structure only" }, participants: [structuralRetirement()] });
   const kernel = attachFsaCash(attachCardBank(extended, { sourceIds: ["s8-issuer-source"] }), {
     sources: [{ sourceId: fsa.sourceId, expectedSource: fsaCashSourceFingerprint(fsa) }],
   });
-  return { base, opening, context, kernel, run: () => runHouseholdKernel({ kernel, runContext: context, resultTier: "detail" }) };
+  return { base, opening, context, kernel, wages,
+    run: () => runHouseholdKernel({ kernel, runContext: context, resultTier: "detail" }) };
 }

@@ -111,6 +111,7 @@ export interface HouseholdProjectionPeriodResult {
 
 /** Household aggregates are deliberately distinct from standalone slice results. */
 export interface HouseholdCashFlowPeriodSummary {
+  readonly payrollWithholding?: NonNullable<VerticalSlice2PeriodResult["payrollWithholding"]>;
   readonly recurringIncomeRecognized: Money;
   readonly recurringExpenseRecognized: Money;
   readonly expenseCashSettlement: Money;
@@ -991,6 +992,9 @@ const runCompiledHouseholdProjectionInternal = (
         cashPeriods.length === 0
           ? undefined
           : Object.freeze({
+              ...(cashPeriods.some(item => item.payrollWithholding?.length) ? {
+                payrollWithholding: Object.freeze(cashPeriods.flatMap(item => item.payrollWithholding ?? [])),
+              } : {}),
               recurringIncomeRecognized: cashPeriods.reduce(
                 (total, item) => total.plus(item.recurringIncomeRecognized),
                 Money.zero(runContext.baseCurrency),
@@ -1162,6 +1166,18 @@ export interface HouseholdReplayCheckpoint {
 // Their audit trees share unchanged nodes with the execution stream. Transported
 // forecasts without these optional roots can still replay from the opening basis.
 const forecastCheckpoints = new WeakMap<object, readonly HouseholdReplayCheckpoint[]>();
+const forecastTerminalRoots = new WeakMap<object, AuthoritativeState>();
+const restoredReplayAdmission = new WeakMap<object, () => void>();
+
+/** Recheck independently supplied originals when a restored basis is actually used. */
+export const registerRestoredReplayAdmission = (replay: HouseholdForecastSummaryResult["replay"], admit: () => void): void => {
+  restoredReplayAdmission.set(replay, admit);
+};
+
+/** Private committed root for encoding a delta against the last checkpoint. */
+export const householdReplayTerminalRoot = (forecast: HouseholdForecastSummaryResult): AuthoritativeState =>
+  snapshotAuthoritativeCheckpoint(forecastTerminalRoots.get(forecast) ?? forecast.state,
+    forecastCheckpoints.get(forecast)?.at(-1)?.state);
 
 /** Non-materializing engineering evidence; never exports authoritative state. */
 export const householdReplayCheckpointSelection = (
@@ -1266,6 +1282,7 @@ export const runHouseholdForecastSummary = (
   const performance = createPerformanceSession(observer);
   const summaries: HouseholdForecastSummaryPeriod[] = [];
   const checkpoints: HouseholdReplayCheckpoint[] = [];
+  let terminalRoot: AuthoritativeState | undefined;
   try {
     const result = runCompiledHouseholdProjectionInternal({
       compiled: { ...kernel.executable, executionKernel: kernel }, runContext,
@@ -1273,6 +1290,7 @@ export const runHouseholdForecastSummary = (
       accept: () => {}, acceptSummary: period => { summaries.push(period); },
       retain: () => false,
       checkpoint: (period, state, primitiveState, metadata, outputCapabilities) => {
+        terminalRoot = state;
         // Twelve display periods is the initial engineering choice, not a
         // measured product budget. Never retain an unused terminal checkpoint.
         if ((summaries.length + 1) % 12 !== 0 || period.end >= runContext.simulationEnd) return;
@@ -1285,6 +1303,7 @@ export const runHouseholdForecastSummary = (
     const forecast: HouseholdForecastSummaryResult = Object.freeze({ ...result, resultTier: "summary", periods: Object.freeze(summaries),
       replay: Object.freeze({ kernel, runContext }) });
     forecastCheckpoints.set(forecast, Object.freeze(checkpoints));
+    if (terminalRoot !== undefined) forecastTerminalRoots.set(forecast, terminalRoot);
     performance.counters({ replayCheckpointsRetained: checkpoints.length, summaryPeriodsRetained: summaries.length });
     return forecast;
   } finally {
@@ -1396,6 +1415,7 @@ export const replayHouseholdForecastWindow = (
       message: "Replay requires an aligned window of successfully committed forecast periods.", entityType: "household_projection" });
   const performance = createPerformanceSession(observer);
   try {
+    restoredReplayAdmission.get(forecast.replay)?.();
     const checkpoint = (forecastCheckpoints.get(forecast) ?? []).filter(value => value.at <= selectedWindow.start).at(-1);
     report("replay_started");
     const replay = runCompiledHouseholdProjectionInternal({
