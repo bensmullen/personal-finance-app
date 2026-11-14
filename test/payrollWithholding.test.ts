@@ -116,6 +116,16 @@ describe("source-bound atomic paycheck", () => {
     expect(paycheck([election({ calculation: { kind: "percent_gross", rate: "0.005" } })], "1", "0").takeHomeCash.equals(money("1"))).toBe(true);
     expect(paycheck([election({ calculation: { kind: "percent_gross", rate: "0.015" } })], "1", "0.02").takeHomeCash.equals(money("0.98"))).toBe(true);
   });
+  it("archives a fully withheld employer paycheck without posting a BANK deposit", () => {
+    const source = paycheckSource([election({ calculation: { kind: "fixed", amount: money("1000") } })], "1000");
+    const result = payrollContributionCandidate(initial(), source);
+    expect(result.takeHomeCash.isZero()).toBe(true);
+    expect(result.state.accounts[ids.cash]!.cash.isZero()).toBe(true);
+    expect(result.transactions[0]!.legs.some(leg => leg.type === "cash")).toBe(false);
+    expect(result.state.positions[taxBalanceIds("US:FEDERAL", "2026").creditPositionId]!.carryingValue.equals(money("1000"))).toBe(true);
+    expect(result.state.d2PostedTransactions?.[result.transactions[0]!.id]?.transaction).toEqual(result.transactions[0]);
+    assertBalanced(result.transactions[0]!);
+  });
   it("rejects excess deductions, duplicate jurisdictions, and foreign ownership atomically", () => {
     const signed = paycheckSource([election()], "1000");
     const candidate = (...withholding: PayrollWithholdingElection[]) => payrollContributionCandidate(initial(), { ...signed, withholding });

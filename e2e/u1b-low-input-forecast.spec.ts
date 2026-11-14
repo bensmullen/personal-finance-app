@@ -211,6 +211,7 @@ for (const width of [1440, 390]) {
     await start(page);
     await expect(page.getByRole("heading", { name: "Know where you stand.", exact: true })).toBeVisible();
     await expect(status(page)).toHaveAttribute("data-lifecycle", "completed", { timeout: 150_000 });
+    const originalModel = createFlagshipHouseholdDraft();
     const result = await actual(page);
     const payloadEvidence = await page.evaluate(() => {
       const response = (window as ObservedWindow).__u1bResults.at(-1);
@@ -297,7 +298,7 @@ for (const width of [1440, 390]) {
     const paycheck = page.getByRole("region", { name: "Your Paycheck", exact: true });
     await paycheck.getByLabel("paycheck forecast month", { exact: true }).selectOption("2026-02");
     await expect(paycheck.getByRole("button", { name: "Example salary", exact: true })).toBeVisible();
-    expect(await page.evaluate(() => (window as ObservedWindow).__u1bFebruary)).toEqual(inspectMonthlyMoney(result.points[1]!, createFlagshipHouseholdDraft(), referenceObserver));
+    expect(await page.evaluate(() => (window as ObservedWindow).__u1bFebruary)).toEqual(inspectMonthlyMoney(result.points[1]!, originalModel, referenceObserver));
     await openChartDetails(cash);
     await cash.getByLabel("Selected projected period", { exact: true }).selectOption(selected.periodStart);
     await expect(cash.locator(".chart-selected dd").first()).toContainText(formatExactMoney(selected.metrics.totalModeledCash.amount!, selected.metrics.totalModeledCash.currency));
@@ -325,7 +326,7 @@ for (const width of [1440, 390]) {
     await expect(mortgage).toBeVisible({ timeout: 30_000 });
     const mortgageChart = page.getByRole("region", { name: "Mortgage amortization", exact: true });
     const mortgageDetails = await openChartDetails(mortgageChart);
-    const paid = inspectMortgageWindow(result.points.slice(0, 12), GOLDEN_HOUSEHOLD_IDS.mortgage, referenceObserver).rows[0]!;
+    const paid = inspectMortgageWindow(result.points.slice(0, 12), GOLDEN_HOUSEHOLD_IDS.mortgage, referenceObserver, originalModel).rows[0]!;
     await expect(mortgageDetails.locator(".mortgage-readout")).toHaveText(`2026-01 · Interest paid ${formatExactMoney(paid.interestPaid, paid.currency)} · Scheduled principal paid ${formatExactMoney(paid.scheduledPrincipalPaid, paid.currency)} · Extra principal paid ${formatExactMoney(paid.extraPrincipalPaid, paid.currency)}`);
     // Real 649-point source: first, middle and final partial windows preserve
     // all paid/funding/principal and trace IDs, not just chart presence.
@@ -348,9 +349,9 @@ for (const width of [1440, 390]) {
       }
       const actualWindow = await page.evaluate(() => (window as ObservedWindow).__u1bMortgage);
       const selectedPoints = result.points.slice(startIndex, startIndex + 12), referenceStarted = performance.now();
-      const expected = inspectMortgageWindow(selectedPoints, GOLDEN_HOUSEHOLD_IDS.mortgage, referenceObserver);
+      const expected = inspectMortgageWindow(selectedPoints, GOLDEN_HOUSEHOLD_IDS.mortgage, referenceObserver, originalModel);
       referenceWindows.push({ durationMs: performance.now() - referenceStarted,
-        ...householdEvidenceSelectionMeasurements(householdEvidenceProof(result.points)!, { operation: "mortgage_evidence", startIndex, liabilityId: GOLDEN_HOUSEHOLD_IDS.mortgage }, selectedPoints.length) });
+        ...householdEvidenceSelectionMeasurements(householdEvidenceProof(result.points)!, { operation: "mortgage_evidence", startIndex, liabilityId: GOLDEN_HOUSEHOLD_IDS.mortgage }, selectedPoints.length, originalModel) });
       expect(actualWindow).toEqual(expected);
     }
     expect(referenceRestores[0]).toEqual(expect.objectContaining({ cache: "cold", checkpointCount: 54, materializedCheckpointStates: 54 }));
@@ -370,7 +371,7 @@ for (const width of [1440, 390]) {
     // The 0-income qualification lives in a separate visible neutral status, not inside the bar frame.
     await expect(paycheck.locator(".chart-status").filter({ hasText: "Zero modeled income" })).toContainText("Zero modeled income");
     await expect(comparison).toContainText("not a 100%-income allocation");
-    const february = inspectMonthlyMoney(result.points[1]!);
+    const february = inspectMonthlyMoney(result.points[1]!, originalModel);
     await expect(paycheck.locator(".cash-excess")).toContainText(formatExactMoney(february.additionalFunding, february.currency));
     await expect(status(page)).toHaveAttribute("data-request-id", requestId!);
     await expect(status(page)).toHaveAttribute("data-fingerprint", fingerprint!);
@@ -417,6 +418,7 @@ for (const width of [1440, 390]) {
       await page.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
     }
     await expect(status(page)).toHaveAttribute("data-lifecycle", "completed", { timeout: 150_000 });
+    const originalModel = createFlagshipHouseholdDraft();
     const result = await actual(page);
     expect(result.points).toHaveLength(engineering ? 649 : 25);
     await showStatusActions(page);
@@ -436,7 +438,7 @@ for (const width of [1440, 390]) {
       const selected = await page.evaluate(() => ({ window: (window as ObservedWindow).__u1bMortgage,
         evidence: (window as ObservedWindow).__u1bEvidence.filter(item => item.outcome === "result").at(-1),
         transport: (window as ObservedWindow).__u1bTransport }));
-      expect(selected.window).toEqual(inspectMortgageWindow(result.points.slice(startIndex, startIndex + 12), GOLDEN_HOUSEHOLD_IDS.mortgage));
+      expect(selected.window).toEqual(inspectMortgageWindow(result.points.slice(startIndex, startIndex + 12), GOLDEN_HOUSEHOLD_IDS.mortgage, undefined, originalModel));
       expect(selected.evidence?.roundtripMs).toBeLessThan(25_000);
       expect(selected.evidence?.measurements?.restore).toMatchObject({ cache: "cold", checkpointCount: engineering ? 54 : 2, materializedCheckpointStates: engineering ? 54 : 2 });
       const restored = selected.evidence!.measurements!.restore!;
@@ -457,7 +459,7 @@ for (const width of [1440, 390]) {
     await paycheck.getByLabel("paycheck forecast month", { exact: true }).selectOption("2026-02");
     expect(Date.now() - cashStarted).toBeLessThan(10_000);
     await expect.poll(() => page.evaluate(() => (window as ObservedWindow).__u1bFebruary !== undefined), { timeout: 25_000 }).toBe(true);
-    expect(await page.evaluate(() => (window as ObservedWindow).__u1bFebruary)).toEqual(inspectMonthlyMoney(result.points[1]!, createFlagshipHouseholdDraft()));
+    expect(await page.evaluate(() => (window as ObservedWindow).__u1bFebruary)).toEqual(inspectMonthlyMoney(result.points[1]!, originalModel));
   });
 }
 

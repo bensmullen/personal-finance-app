@@ -2044,8 +2044,12 @@ const validateD2Posting = (state: AuthoritativeState, key: string, proof: D2Post
     const cashLegs = tx.legs.filter(leg => leg.type === "cash");
     if (tx.legs.some(leg => !(leg.amount instanceof Money) || leg.amount.isNegative() ||
         !leg.amount.amount.fitsScale(bank.cash.currency.minorUnitScale))) d2Invalid("Household journal requires exact currency units");
-    if (cashLegs.length !== 1 || cashLegs[0]!.accountId !== r.bankAccountId ||
-        cashLegs[0]!.posting !== (c.direction === "credit" ? "debit" : "credit") || !cashLegs[0]!.amount.isPositive())
+    // An independently signed paycheck may allocate all gross pay before
+    // deposit. Its named BANK route still requires full qualification below.
+    const fullyAllocatedWage = cashLegs.length === 0 && tx.type === "payroll_income" &&
+      c.direction === "credit" && r.evidence.originals.length === 1 && r.evidence.originals[0]!.original.family === "wage";
+    if (!fullyAllocatedWage && (cashLegs.length !== 1 || cashLegs[0]!.accountId !== r.bankAccountId ||
+        cashLegs[0]!.posting !== (c.direction === "credit" ? "debit" : "credit") || !cashLegs[0]!.amount.isPositive()))
       d2Invalid("Household route does not match actual BANK direction");
     qualifyHouseholdPosting(tx, r.evidence);
     expected = tx.legs.map(({ traceRefs: _trace, ...leg }) => leg) as AccountingTransaction["legs"];
