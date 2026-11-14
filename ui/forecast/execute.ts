@@ -62,12 +62,12 @@ export function executeForecastWorkerRequest(message: ForecastWorkerRequest | Ev
     if (!source?.basis) throw new Error("Selected forecast evidence is unavailable.");
     report("source_bound");
     let restore: ReplayRestoreMeasurement | undefined;
-    const selectionMeasurements = () => householdEvidenceSelectionMeasurements(source!.basis!, message, message.points.length);
+    const selectionMeasurements = () => householdEvidenceSelectionMeasurements(source!.basis!, message, message.points.length, source!.model);
     const observation = { now: () => clock.now(), phase: (phase: import("../../src/application/mortgageChartData.js").HouseholdEvidencePhase,
       counts?: EvidenceWorkerResponse["verification"]) => { if (counts) verification = counts; report(phase); },
       record: (measurement: ReplayRestoreMeasurement) => { restore = measurement; } };
     const points = restoreHouseholdEvidencePoints(source.basis, message, message.points, message.fingerprint, source.diagnosticCatalogs,
-      observation);
+      observation, source.model);
     sourceIdentityMatched = true;
     const restoredAt = now();
     report("restored", { ...selectionMeasurements(), ...(restore === undefined ? {} : { restore }) });
@@ -75,10 +75,10 @@ export function executeForecastWorkerRequest(message: ForecastWorkerRequest | Ev
     if (!point) throw new Error("Selected forecast period is unavailable.");
     const result = message.operation === "monthly_evidence"
       ? { detail: inspectMonthlyMoney(point, source.model, { ...observation, record() {} }) }
-      : { window: inspectMortgageWindow(points, message.liabilityId, { ...observation, record() {} }) };
+      : { window: inspectMortgageWindow(points, message.liabilityId, { ...observation, record() {} }, source.model) };
     const projectedAt = now();
     const heap = sampledJsHeapBytes();
-    const measurements = { ...householdEvidenceSelectionMeasurements(source.basis, message, points.length),
+    const measurements = { ...householdEvidenceSelectionMeasurements(source.basis, message, points.length, source.model),
       ...(restore === undefined ? {} : { restore }),
       ...(started === undefined || restoredAt === undefined ? {} : { restoreAndSourceValidationMs: Math.max(0, restoredAt - started) }),
       ...(restoredAt === undefined || projectedAt === undefined ? {} : { replayAndProjectionMs: Math.max(0, projectedAt - restoredAt) }),

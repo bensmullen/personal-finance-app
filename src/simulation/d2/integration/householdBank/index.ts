@@ -1,6 +1,7 @@
 import { registerHouseholdBankRouteAuthority, type HouseholdBankEventContext, type HouseholdBankRoutePin } from "../../../../state/index.js";
 import { sha256 } from "../../../../rules/tax/t1b/contentIdentity.js";
 import { instant, type Instant } from "../../../../time/index.js";
+import { failValidation } from "../../../../diagnostics/index.js";
 
 export type { HouseholdBankEventContext, HouseholdBankRoutePin } from "../../../../state/index.js";
 
@@ -55,7 +56,10 @@ const canonical = (value: unknown): string => {
   return JSON.stringify(value);
 };
 const token = (s: string): boolean => typeof s === "string" && s.trim().length > 0 && s.length <= 256;
-function need(ok: boolean): asserts ok { if (!ok) throw new Error("HOUSEHOLD_BANK_ORIGINAL_NOT_ADMITTED"); }
+function need(ok: boolean): asserts ok {
+  if (!ok) failValidation({ severity: "error", code: "HOUSEHOLD_BANK_ORIGINAL_NOT_ADMITTED",
+    entityType: "household_bank_original", message: "HOUSEHOLD_BANK_ORIGINAL_NOT_ADMITTED" });
+}
 const kinds = ["account", "household", "membership", "permission"] as const;
 
 function read(publisherId: string, sourceId: string, context: HouseholdBankEventContext): HouseholdBankRoutePin {
@@ -91,13 +95,16 @@ function read(publisherId: string, sourceId: string, context: HouseholdBankEvent
   need(h.originals.every(o => kinds.includes(o.kind)));
   const account = selected[0]!, household = selected[1]!, member = selected[2]!, permission = selected[3]!;
   need(account.kind === "account" && account.bankAccountId === context.bankAccountId &&
-    account.owner.kind === "household" && account.owner.id === context.householdId && (account.accountKind === "checking" || account.accountKind === "savings"));
+    (account.owner.kind === "household" && account.owner.id === context.householdId ||
+      account.owner.kind === "person" && account.owner.id === context.personId && context.direction === "credit") &&
+    (account.accountKind === "checking" || account.accountKind === "savings"));
   need(household.kind === "household" && household.householdId === context.householdId);
   need(member.kind === "membership" && member.householdId === context.householdId && member.personId === context.personId);
   need(permission.kind === "permission" && permission.householdId === context.householdId && permission.personId === context.personId &&
     permission.bankAccountId === context.bankAccountId && permission.direction === context.direction);
   return Object.freeze({ version: "household-bank-route/v1", accountKind: account.accountKind, publisherId, sourceId, revisionId: permission.revisionId,
-    digest: `sha256:${sha256(canonical(selected))}` });
+    digest: `sha256:${sha256(canonical(selected))}`,
+    ...(account.owner.kind === "person" ? { personOwnerId: context.personId } : {}) });
 }
 
 /** Composition root registers independently controlled original publishers.

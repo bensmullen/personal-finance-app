@@ -1,10 +1,11 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { compileModeledIncomeFixture } from "../../../fixtures/modeledIncome.js";
 import { domainId } from "../../../../src/identity/index.js";
 import { calculationTraceId, calculationTraceRef } from "../../../../src/lineage/index.js";
 import { createAuthoritativeState } from "../../../../src/state/index.js";
 import { civilDate, instant } from "../../../../src/time/index.js";
-import { Currency, Money, Rate, USD, decimal, money, rateConvention } from "../../../../src/values/index.js";
+import { Currency, Money, USD, decimal, money } from "../../../../src/values/index.js";
 import { compileHouseholdKernel, applyHouseholdExecutionOverlay, runHouseholdKernel, replayHouseholdForecastWindow } from "../../../../src/simulation/householdExecution.js";
 import { createPrimitiveRuntimeStateStore } from "../../../../src/simulation/period.js";
 import { canonicalSerialize, createRunContext, runId, scenarioId } from "../../../../src/simulation/run.js";
@@ -117,18 +118,12 @@ describe("#149 bounded physical C1 after-tax premium integration", () => {
   it("admits a separate ordinary wage stream without requiring a premium duplication proof", () => {
     const k = kernel();
     const payday = instant("2026-01-05T00:00:00.000Z");
-    const wage = {
-      id: domainId("income", uuid(9700)), ownerId: payer, baseMonthlyAmount: money("1500"),
-      start: payday, recurrence: { kind: "utc_monthly" as const, anchor: payday, invalidDayPolicy: "skip" as const },
-      depositAccountId: bank, growthRate: Rate.fromDecimal("0", rateConvention.effectiveAnnual()),
-      growthBaseAt: payday, primitiveIds: {
-        growth: domainId("primitive-instance", uuid(9701)),
-        recurrence: domainId("primitive-instance", uuid(9702)),
-      },
-      sourceTraceRefs: [ref("source:salary-unrelated-to-health-plan")],
-    };
+    const wages = compileModeledIncomeFixture(context(), 1, {
+      householdId: k.cash!.input.householdId, personId: payer, accountId: bank, accountType: "checking",
+      incomes: [{ id: uuid(9700), type: "salary", amount: "1500", startDate: payday.slice(0, 10) }],
+    });
     const withWages = applyHouseholdExecutionOverlay(k, {
-      cashFlowInput: { ...k.cash!.input, incomes: [wage] },
+      cashFlowInput: { ...k.cash!.input, incomes: wages.incomes },
     });
     const attached = attachAftertaxPremiums(input(request(), withWages));
     expect(attached.diagnostics).toEqual([]);

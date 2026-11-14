@@ -6,6 +6,7 @@ import type {
   ConstraintOutcome,
   LiquidityShortfall,
 } from "../../funding/index.js";
+import { modeledIncomeFingerprintInput } from "../d2/integration/householdWages/modeledPayroll.js";
 import {
   calculationTraceId,
   calculationTraceRef,
@@ -99,6 +100,7 @@ export interface HouseholdProjectionPeriodResult {
 
 /** Household aggregates are deliberately distinct from standalone slice results. */
 export interface HouseholdCashFlowPeriodSummary {
+  readonly payrollWithholding?: NonNullable<VerticalSlice2PeriodResult["payrollWithholding"]>;
   readonly recurringIncomeRecognized: Money;
   readonly recurringExpenseRecognized: Money;
   readonly expenseCashSettlement: Money;
@@ -452,12 +454,12 @@ const runCompiledHouseholdProjectionInternal = (
     cashFlowInput:
       compiled.cashFlowInput === undefined
         ? undefined
-        : {
+        : modeledIncomeFingerprintInput({
             ...compiled.cashFlowInput,
             incomes: byId(compiled.cashFlowInput.incomes),
             expenses: byId(compiled.cashFlowInput.expenses),
             events: byId(compiled.cashFlowInput.events),
-          },
+          }),
     investmentInput:
       compiled.investmentInput === undefined
         ? undefined
@@ -588,7 +590,7 @@ const runCompiledHouseholdProjectionInternal = (
               nextState,
               nextPrimitiveState,
               compiled.cashFlowInput!,
-              periodContext,
+              runContext,
             );
             nextState = result.state;
             nextPrimitiveState = result.primitiveState;
@@ -1039,6 +1041,9 @@ const runCompiledHouseholdProjectionInternal = (
         cashPeriods.length === 0
           ? undefined
           : Object.freeze({
+              ...(cashPeriods.some(item => item.payrollWithholding?.length) ? {
+                payrollWithholding: Object.freeze(cashPeriods.flatMap(item => item.payrollWithholding ?? [])),
+              } : {}),
               recurringIncomeRecognized: cashPeriods.reduce(
                 (total, item) => total.plus(item.recurringIncomeRecognized),
                 Money.zero(runContext.baseCurrency),

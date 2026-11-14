@@ -174,9 +174,9 @@ describe("U1B sourced planning readiness", () => {
         expect(selected.measurements?.restore?.cache).toBe("warm");
         evidence.rendered(selected.requestId);
         expect(evidence.diagnostics.at(-1)).toMatchObject({ phase: "rendered", requestId: selected.requestId, startIndex });
-        expect(selected.window).toEqual(inspectMortgageWindow(result.points.slice(startIndex, startIndex + 12), ids.mortgage));
+        expect(selected.window).toEqual(inspectMortgageWindow(result.points.slice(startIndex, startIndex + 12), ids.mortgage, undefined, model));
         const portableStarted = performance.now();
-        expect(selected.window).toEqual(inspectMortgageWindow(transportedPoints.slice(startIndex, startIndex + 12), ids.mortgage));
+        expect(selected.window).toEqual(inspectMortgageWindow(transportedPoints.slice(startIndex, startIndex + 12), ids.mortgage, undefined, model));
         phaseDurations.push({ phase: "independent_portable_restore_and_replay", durationMs: performance.now() - portableStarted });
       }
       expect(messages.at(-1)!.points).toHaveLength(startIndex === 24 ? 1 : 12);
@@ -205,7 +205,7 @@ describe("U1B sourced planning readiness", () => {
     const retried = executeForecastWorkerRequest(authenticated, { now: () => 0 });
     expect(retried.outcome).toBe("result");
     expect(retried.ownership).toBe("transported_source");
-    if (retried.outcome === "result") expect(retried.window).toEqual(inspectMortgageWindow(result.points.slice(startIndex, startIndex + 12), ids.mortgage));
+    if (retried.outcome === "result") expect(retried.window).toEqual(inspectMortgageWindow(result.points.slice(startIndex, startIndex + 12), ids.mortgage, undefined, model));
     // A failed telemetry consumer cannot invalidate authentic financial replay.
     expect(executeForecastWorkerRequest(authenticated, { now: () => 0 }, () => { throw new Error("observation unavailable"); }).outcome).toBe("result");
     console.info("U1B bounded evidence phases", { startIndex, phaseDurations });
@@ -434,7 +434,7 @@ describe("U1B sourced planning readiness", () => {
     }
     const mortgage = executeForecastWorkerRequest({ ...selection(0), operation: "mortgage_evidence", liabilityId: ids.mortgage, points: boundedEvidencePoints(result, { operation: "mortgage_evidence", startIndex: 0, liabilityId: ids.mortgage }).points }, clock);
     expect(mortgage.outcome).toBe("result");
-    if (mortgage.outcome === "result") expect(mortgage.window).toEqual(inspectMortgageWindow(result.points, ids.mortgage));
+    if (mortgage.outcome === "result") expect(mortgage.window).toEqual(inspectMortgageWindow(result.points, ids.mortgage, undefined, model));
     expect(executeForecastWorkerRequest({ ...selection(0), fingerprint: "wrong-source" }, clock).outcome).toBe("error");
     expect(executeForecastWorkerRequest({ ...selection(0), startIndex: -1 }, clock).outcome).toBe("error");
     const missing = { ...result, points: result.points.map(point => ({ ...point, traceRefs: [] })) };

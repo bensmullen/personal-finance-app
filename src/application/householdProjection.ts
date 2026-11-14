@@ -26,6 +26,7 @@ import {
   runHouseholdForecastSummary,
   replayHouseholdForecastWindow,
   compileHouseholdKernel,
+  applyHouseholdExecutionOverlay,
   type HouseholdForecastSummaryResult,
   type ExecutableHouseholdProjection,
 } from "../simulation/householdExecution.js";
@@ -34,10 +35,13 @@ import {
   createRunContext,
   runId,
   scenarioId,
+  type RunContext,
 } from "../simulation/run.js";
 import type { CalculationTraceRef } from "../lineage/index.js";
 import { mergeTraceRefs, createReplayTraceAnchor, resolveReplayTraceAnchors } from "../lineage/index.js";
-import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../simulation/r3/replayArtifact.js";
+import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact, registerModeledPayrollReplayAuthority, type ModeledPayrollReplayBasis } from "../simulation/r3/replayArtifact.js";
+import { registerModeledPayrollCompiler, readModeledIncomeBinding, modeledPayrollKey, withoutModeledPayroll, type ModeledPayrollBinding, type ModeledPayrollReference } from "../simulation/d2/integration/householdWages/modeledPayroll.js";
+import { immutableConfiguration } from "../simulation/r3/compiledHousehold.js";
 import { instant } from "../time/index.js";
 import { Currency, Money } from "../values/index.js";
 import {
@@ -51,7 +55,7 @@ import type {
 } from "./compiler/investments.js";
 import type { LiabilityExecutionProfile } from "./compiler/liabilities.js";
 import type { RetirementTerminationBinding } from "./compiler/cashFlow.js";
-import type { CapabilityDiagnostic } from "./compiler/types.js";
+import type { CapabilityDiagnostic, CompileResult } from "./compiler/types.js";
 import {
   compileExecutableScenario,
   type ExecutableScenarioIntent,
@@ -156,6 +160,117 @@ export interface HouseholdForecastRequest {
   readonly dataCutoff: string;
   readonly runIdentity: string;
 }
+
+const issuedForecastSalaries = new WeakMap<ModeledPayrollReference, ModeledPayrollBinding>();
+registerModeledPayrollCompiler("canonical-forecast/v1", reference => issuedForecastSalaries.get(reference));
+const issueForecastSalary = (binding: ModeledPayrollBinding): NonNullable<ExecutableHouseholdProjection["cashFlowInput"]>["incomes"][number] => {
+  const snapshot = immutableConfiguration(binding), key = modeledPayrollKey(snapshot);
+  const reference = immutableConfiguration<ModeledPayrollReference>({ version: "modeled-payroll/v1", issuer: "canonical-forecast/v1", key });
+  issuedForecastSalaries.set(reference, snapshot);
+  return { ...snapshot.stream, modeledPayroll: reference };
+};
+type ForecastTemplate = Pick<import("../simulation/run.js").RunContext, "asOf" | "dataCutoff" | "simulationStart" | "simulationEnd" | "baseCurrency">;
+function forecastExecutable(compiled: CompiledHouseholdProjection, model: PortableModelEnvelope,
+  compiler: HouseholdProjectionCompilerRequest, template: ForecastTemplate, runIdentity: string, resolved?: ResolvedScenario): ExecutableHouseholdProjection {
+  const executable = resolved === undefined ? compiled : {
+    ...compiled,
+    cashFlowInput: compiled.cashFlowInput === undefined ? undefined : !scenarioChangesDomain(resolved, scenarioKinds.cash)
+      ? compiled.cashFlowInput : applyVerticalSlice2Scenario(compiled.cashFlowInput, filteredScenario(resolved, scenarioKinds.cash), template),
+    investmentInput: compiled.investmentInput === undefined ? undefined : !scenarioChangesDomain(resolved, scenarioKinds.investments)
+      ? compiled.investmentInput : applyVerticalSlice3Scenario(compiled.investmentInput, filteredScenario(resolved, scenarioKinds.investments), template),
+    liabilityInput: compiled.liabilityInput === undefined ? undefined : !scenarioChangesDomain(resolved, scenarioKinds.liabilities)
+      ? compiled.liabilityInput : applyVerticalSlice4Scenario(compiled.liabilityInput, filteredScenario(resolved, scenarioKinds.liabilities), template),
+    scenarioIdentity: String(resolved.scenario.scenarioId),
+  };
+  if (!executable.cashFlowInput?.incomes.some(stream => stream.modeledPayroll !== undefined)) return executable;
+  const sourceFingerprint = modeledPayrollKey({ model, compiler, resolved, runIdentity, template: {
+    asOf: template.asOf, dataCutoff: template.dataCutoff, simulationStart: template.simulationStart,
+    simulationEnd: template.simulationEnd, baseCurrency: template.baseCurrency,
+  } });
+  return { ...executable, cashFlowInput: { ...executable.cashFlowInput, incomes: executable.cashFlowInput.incomes.map(stream => {
+    const binding = readModeledIncomeBinding(stream.modeledPayroll);
+    if (binding === undefined) return stream;
+    const bank = executable.reconciledOpeningState.accounts[stream.depositAccountId]!;
+    return issueForecastSalary({ ...binding, stream: withoutModeledPayroll(stream), householdId: executable.cashFlowInput!.householdId,
+      events: executable.cashFlowInput!.events.filter(event => event.targetId === stream.id),
+      bank: { id: bank.id, kind: bank.kind, ownerId: bank.ownerId }, start: template.simulationStart, end: template.simulationEnd,
+      asOf: template.asOf, scenarioId: executable.scenarioIdentity, sourceFingerprint, runId: runIdentity, dataCutoff: template.dataCutoff });
+  }) } };
+}
+interface ForecastPayrollPayload {
+  readonly modelFingerprint: string;
+  readonly request: HouseholdForecastRequest;
+  readonly resolved?: ResolvedScenario;
+  readonly contextFingerprint: string;
+  readonly manifest: readonly { readonly incomeId: string; readonly personId: string; readonly bankId: string;
+    readonly economics: string; readonly start: string; readonly end?: string; readonly reference: ModeledPayrollReference }[];
+}
+const payrollManifest = (executable: ExecutableHouseholdProjection): ForecastPayrollPayload["manifest"] =>
+  (executable.cashFlowInput?.incomes ?? []).filter(stream => stream.modeledPayroll !== undefined).map(stream => ({
+    incomeId: stream.id, personId: stream.ownerId, bankId: stream.depositAccountId, reference: stream.modeledPayroll!,
+    economics: modeledPayrollKey(withoutModeledPayroll(stream)), start: stream.start, ...(stream.end === undefined ? {} : { end: stream.end }),
+  })).sort((a, b) => a.incomeId.localeCompare(b.incomeId));
+const replayModelSignature = (value: ExecutableHouseholdProjection) => modeledPayrollKey({
+  cash: value.cashFlowInput, opening: value.reconciledOpeningState, scenario: value.scenarioIdentity, months: value.executionMonths,
+  investments: value.investmentInput, liabilities: value.liabilityInput, primitiveState: value.reconciledPrimitiveState,
+  scenarioBindings: value.scenarioBindings, standaloneAssets: value.standaloneAssets,
+  contentionPolicy: value.contentionPolicy, nonInvestmentPositionIds: value.nonInvestmentPositionIds,
+  participants: value.participants?.map(({ id, version, economicInputs, portableCodec }) => ({ id, version, economicInputs, portableCodec })),
+});
+// Only reconstructed signatures are cached, never a second model or per-month
+// histories. Every read recomputes the independent model fingerprint first.
+const requalifiedModels = new Map<string, string>();
+registerModeledPayrollReplayAuthority("application-household/v1", (basis, executable, context, independentSource) => {
+  const model = independentSource as PortableModelEnvelope;
+  const payload = basis.payload as ForecastPayrollPayload;
+  const mismatch = (): never => { throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: modeled salary source differs"); };
+  if (!model?.objects || !payload || !payload.request?.compiler ||
+    payload.modelFingerprint !== modeledPayrollKey(model) || payload.contextFingerprint !== modeledPayrollKey(context) ||
+    !Array.isArray(payload.manifest) || payload.manifest.length < 1 || payload.manifest.length > 1200 ||
+    canonicalSerialize(payload.manifest) !== canonicalSerialize(payrollManifest(executable)) ||
+    new Set(payload.manifest.map(row => row.incomeId)).size !== payload.manifest.length ||
+    context.runId !== payload.request.runIdentity || context.asOf !== `${payload.request.asOf}T00:00:00.000Z` ||
+    context.dataCutoff !== `${payload.request.dataCutoff}T00:00:00.000Z`) mismatch();
+  const key = modeledPayrollKey({ payload, context });
+  const signature = replayModelSignature(executable);
+  // A warm, still-owned kernel retains its exact compiler-issued object tokens.
+  // Only cold transports require a fresh independent model reconstruction.
+  const alreadyIssued = (executable.cashFlowInput?.incomes ?? []).every(stream =>
+    stream.modeledPayroll === undefined || issuedForecastSalaries.has(stream.modeledPayroll));
+  if (alreadyIssued && requalifiedModels.get(key) === signature) return executable;
+  if (payload.resolved !== undefined && canonicalSerialize(resolveScenario(payload.resolved.layers, payload.resolved.scenario.scenarioId)) !== canonicalSerialize(payload.resolved)) mismatch();
+  const compiled = compileHouseholdProjection(model, payload.request.compiler);
+  if (compiled.status !== "compiled") return mismatch();
+  const selected = boundary(payload.request.compiler);
+  if (!selected || context.simulationStart !== `${selected.simulationStart}T00:00:00.000Z` ||
+    context.simulationEnd !== `${selected.simulationEnd}T00:00:00.000Z` || context.baseCurrency.code !== selected.baseCurrency) mismatch();
+  const reconstructed = forecastExecutable(compiled.value, model, payload.request.compiler, context, payload.request.runIdentity, payload.resolved);
+  if (reconstructed.scenarioIdentity !== context.scenarioId || canonicalSerialize(payrollManifest(reconstructed)) !== canonicalSerialize(payload.manifest) ||
+    replayModelSignature(reconstructed) !== signature) mismatch();
+  const canonical = new Map((reconstructed.cashFlowInput?.incomes ?? []).filter(stream => stream.modeledPayroll !== undefined)
+    .map(stream => [stream.id, stream.modeledPayroll!] as const));
+  // The portable address is never independent authority. Only a token freshly
+  // issued by recompiling the separately supplied model can enter the restored
+  // immutable kernel. This shallow replacement does not duplicate economic data.
+  const restored = { ...executable, cashFlowInput: {
+    ...executable.cashFlowInput!, incomes: executable.cashFlowInput!.incomes.map(stream => {
+      if (stream.modeledPayroll === undefined) return stream;
+      const reference = canonical.get(stream.id);
+      if (reference === undefined) return mismatch();
+      if (canonicalSerialize(reference) !== canonicalSerialize(stream.modeledPayroll)) return mismatch();
+      return { ...stream, modeledPayroll: reference };
+    }),
+  } };
+  if (requalifiedModels.size >= 16) requalifiedModels.delete(requalifiedModels.keys().next().value!);
+  requalifiedModels.set(key, signature);
+  return restored;
+});
+
+/** Application-owned restore entry: the model is supplied independently of the
+ * portable proposal. Legacy artifacts do not require it. */
+export const restoreHouseholdForecastEvidence = (artifact: unknown, model?: PortableModelEnvelope,
+  observer?: import("../simulation/r3/replayArtifact.js").ReplayRestoreObserver) =>
+  restorePortableHouseholdReplayArtifact(artifact, observer, model);
 export interface HouseholdMoneyReadModel {
   readonly amount: string;
   readonly currency: string;
@@ -366,9 +481,15 @@ export const resolveHouseholdExplanation = (
     HouseholdExplanationReadModel["sources"][number]
   >();
   const unresolved = new Set<string>();
+  // In-process anchors can resolve through a private replay closure. Validate
+  // their independent model binding before that shortcut as well.
+  for (const ref of refs) if (ref.replayArtifact !== undefined) {
+    const address = ref.replayArtifact as { readonly basis: unknown };
+    restoreHouseholdForecastEvidence(address.basis, model);
+  }
   const resolvedRefs = resolveReplayTraceAnchors(refs, ref => {
     const address = ref.replayArtifact as { readonly basis: unknown; readonly start: string; readonly end: string };
-    const basis = restorePortableHouseholdReplayArtifact(address.basis);
+    const basis = restorePortableHouseholdReplayArtifact(address.basis, undefined, model);
     const replay = replayHouseholdForecastWindow(basis, { start: instant(address.start), end: instant(address.end) });
     const identity = `household:replay:${basis.runMetadata.inputFingerprint}:${address.start}:${address.end}`;
     if (identity !== ref.traceId) throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: explanation address differs from its artifacts");
@@ -467,6 +588,38 @@ export const resolveHouseholdExplanation = (
 };
 const boundary = (request: HouseholdProjectionCompilerRequest) =>
   request.investments ?? request.liabilities ?? request.cashFlow;
+
+export function compileHouseholdKernelForRun(
+  model: PortableModelEnvelope,
+  compiler: HouseholdProjectionCompilerRequest,
+  runContext: RunContext,
+): CompileResult<{ readonly executable: ExecutableHouseholdProjection; readonly kernel: ReturnType<typeof compileHouseholdKernel> }> {
+  const result = compileHouseholdProjection(model, compiler);
+  if (result.status !== "compiled") return result;
+  const selected = boundary(compiler)!;
+  try {
+    const context = createRunContext({ ...runContext, runId: runId(runContext.runId), scenarioId: scenarioId(runContext.scenarioId) });
+    if (result.value.scenarioIdentity !== context.scenarioId ||
+        context.simulationStart !== `${selected.simulationStart}T00:00:00.000Z` ||
+        context.simulationEnd !== `${selected.simulationEnd}T00:00:00.000Z` ||
+        context.baseCurrency.code !== selected.baseCurrency ||
+        [compiler.cashFlow?.asOf, compiler.investments?.asOf, compiler.liabilities?.asOf]
+          .some(asOf => asOf !== undefined && `${asOf}T00:00:00.000Z` !== context.asOf)) {
+      throw new ValidationError({
+        severity: "error", code: "HOUSEHOLD_RUN_CONTEXT_MISMATCH", entityType: "household_projection",
+        message: "Run context must match the compiled scenario, horizon, currency and asOf.",
+      });
+    }
+    const executable = forecastExecutable(result.value, model, compiler, context, context.runId);
+    const kernel = result.value.executionKernel === undefined
+      ? compileHouseholdKernel(executable, context.simulationStart)
+      : applyHouseholdExecutionOverlay(result.value.executionKernel, executable);
+    return { ...result, value: Object.freeze({ executable: kernel.executable, kernel }) };
+  } catch (error) {
+    if (error instanceof ValidationError) return { status: "invalid_model", diagnostics: error.issues };
+    throw error;
+  }
+}
 const shortfallDto = (
   value:
     | LiquidityShortfall
@@ -563,6 +716,7 @@ const toReadModel = (
   asOf: string,
   dataCutoff: string,
   performance?: PerformanceSession,
+  modeledPayroll?: ModeledPayrollReplayBasis,
 ): PersonalHouseholdForecastReadModel => {
   const opening = deriveHouseholdClosingMetrics(
     compiled.reconciledOpeningState,
@@ -612,8 +766,8 @@ const toReadModel = (
   });
   const paid = new Set<string>();
   const debtPayoffs: { loanId: string; scheduledAt: string }[] = [];
-  const replayBasis = performance === undefined ? createPortableHouseholdReplayArtifact(result, true)
-    : performance.measure("application.replay_artifact", () => createPortableHouseholdReplayArtifact(result, true));
+  const replayBasis = performance === undefined ? createPortableHouseholdReplayArtifact(result, true, undefined, modeledPayroll, model)
+    : performance.measure("application.replay_artifact", () => createPortableHouseholdReplayArtifact(result, true, undefined, modeledPayroll, model));
   const transport = createForecastDiagnosticTransport({ runId: String(result.runMetadata.runId), inputFingerprint: String(result.runMetadata.inputFingerprint) });
   const points = result.periods.map((period) => {
     const balances = period.debtBalances ?? [];
@@ -830,37 +984,6 @@ const executeInternal = (
       simulationEnd: instant(`${selected.simulationEnd}T00:00:00.000Z`),
       baseCurrency: Currency.of(selected.baseCurrency),
     };
-    const executable =
-      resolved === undefined
-        ? compiled
-        : Object.freeze({
-            ...compiled,
-            cashFlowInput:
-              compiled.cashFlowInput === undefined
-                ? undefined
-                : !scenarioChangesDomain(resolved, scenarioKinds.cash) ? compiled.cashFlowInput : applyVerticalSlice2Scenario(
-                    compiled.cashFlowInput,
-                    filteredScenario(resolved, scenarioKinds.cash),
-                    template,
-                  ),
-            investmentInput:
-              compiled.investmentInput === undefined
-                ? undefined
-                : !scenarioChangesDomain(resolved, scenarioKinds.investments) ? compiled.investmentInput : applyVerticalSlice3Scenario(
-                    compiled.investmentInput,
-                    filteredScenario(resolved, scenarioKinds.investments),
-                    template,
-                  ),
-            liabilityInput:
-              compiled.liabilityInput === undefined
-                ? undefined
-                : !scenarioChangesDomain(resolved, scenarioKinds.liabilities) ? compiled.liabilityInput : applyVerticalSlice4Scenario(
-                    compiled.liabilityInput,
-                    filteredScenario(resolved, scenarioKinds.liabilities),
-                    template,
-                  ),
-            scenarioIdentity: String(resolved.scenario.scenarioId),
-          });
     const compilerAsOf = [
       request.compiler.cashFlow?.asOf,
       request.compiler.investments?.asOf,
@@ -876,13 +999,21 @@ const executeInternal = (
       });
     const context = createRunContext({
       runId: runId(request.runIdentity),
-      scenarioId: scenarioId(executable.scenarioIdentity),
+      scenarioId: resolved?.scenario.scenarioId ?? scenarioId(compiled.scenarioIdentity),
       ...template,
     });
+    const executable = forecastExecutable(compiled, model, compiler, context, context.runId, resolved);
     const kernel = executable.executionKernel === undefined
       ? compileHouseholdKernel(executable, context.simulationStart)
       : executable.executionKernel;
     const result = runHouseholdForecastSummary({ kernel, overlay: executable, runContext: context }, observer);
+    const manifest = payrollManifest(executable);
+    const modeledPayroll: ModeledPayrollReplayBasis | undefined = manifest.length === 0 ? undefined : immutableConfiguration({
+      version: "modeled-payroll-replay/v1", issuer: "application-household/v1", payload: {
+        modelFingerprint: modeledPayrollKey(model), request: { ...request, compiler },
+        ...(resolved === undefined ? {} : { resolved }), contextFingerprint: modeledPayrollKey(context), manifest,
+      },
+    });
     return {
       compiled,
       executable,
@@ -896,6 +1027,7 @@ const executeInternal = (
         context.asOf,
         context.dataCutoff,
         performance,
+        modeledPayroll,
       )),
     };
   } catch (error) {
