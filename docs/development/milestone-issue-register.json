@@ -87,11 +87,12 @@
     },
     "FRAMEWORK_RELIABILITY": {
       "stage": "Engineering development-framework reliability",
-      "blocking_transition": "The merged #218/#231 framework preflight and Python compatibility remain complete; require #249's separate closed-session and worktree-recovery hook self-tests and selected green CI before declaring FRAMEWORK_RELIABILITY complete. No U1/D1/D2/R11 product blocking edge.",
+      "blocking_transition": "Engineering framework reliability now also includes #322's reviewed no-phantom-active-receipt/first-writer fencing and stale canonical crash-recovery fix, independently tested and merged before that engineering reliability gate is declared complete. Earlier #218/#231/#249 remain historical accepted gates. #322 is independent of U1/D1/D2/R11 product release gates and does not block #309 recovery/implementation.",
       "required_issue_numbers": [
         218,
         231,
-        249
+        249,
+        322
       ]
     },
     "CI_OPTIMIZATION": {
@@ -917,6 +918,20 @@
         "PFA-DET-023"
       ],
       "scope": "PM-approved narrow D2-D S2 #277 deferral only for positive custom T1A tax participant + compiler-issued interest portable cold replay. Planning issue #313 is NOT a V3 task. Independent original interest issuer/tax overlay capability, precise run/source admissibility, authored canonical model and v3 compact replay need future PM architecture approval; preserve all live forecast taxable interest and genuine portable alternate positive/negatives in #277."
+    },
+    {
+      "issue_number": 322,
+      "owner_stage": "engineering-framework-reliability-abandoned-receipt",
+      "blocking_gate": "FRAMEWORK_RELIABILITY",
+      "depends_on": [
+        249,
+        293
+      ],
+      "spec_requirement_ids": [
+        "PFA-PERF-019",
+        "PFA-UX-024"
+      ],
+      "scope": "PM-approved zero-stale-lock framework remediation for confirmed ACTIVE=True orphan receipts after Codex no-tool/BLOCKED/COMPLETE stops. Atomically separate pre-execution non-owning task admission and first actual writer claim; preserve active writer, hashed provenance, Stop/checkpoint, protected write and interrupted dirty state. Improve operator-only recovery from stale canonical checkout using verified bootstrap. Deterministic hook/concurrency/tooling tests. Follow up candidate #217 without conflating independent unresolved branch divergence."
     }
   ],
   "legacy_open_task_reconciliation": {
