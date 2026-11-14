@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { assertBalanced } from "../src/accounting/index.js";
 import { compileHouseholdTax, validateResidenceTaxPeriods, validateWorkTaxAllocations, resolveTaxEligibility } from "../src/application/compiler/tax.js";
 import { runHouseholdKernel, runCompiledHouseholdProjection, replayHouseholdForecastWindow, type HouseholdForecastSummaryResult, type CompiledHouseholdProjectionRunResult } from "../src/simulation/householdExecution.js";
@@ -36,11 +36,12 @@ describe("TB-1 household NIIT on a 2024 realized capital loss", () => {
   const federal = federal2024TaxCatalog.find(rule => rule.filingStatus === "single")!;
   const state = "US:FL";
   const start = "2024-01-01", end = "2025-01-01";
-  const basis = { "0": "25000", "-1000": "26000", "-20000": "45000" } as const;
+  const basis = { "1000": "24000", "0": "25000", "-1000": "26000", "-3000": "28000", "-20000": "45000" } as const;
   type Loss = keyof typeof basis;
 
-  const fixture = (loss: Loss, enabled: boolean) => {
+  const fixture = (loss: Loss, enabled: boolean, interestAmount = "40000", mixed = false, convert = false) => {
     const seed = taxHouseholdFixture({ months: 12, amount: "190000" });
+    const context = createRunContext({ ...seed.context, asOf: seed.context.simulationStart, dataCutoff: seed.context.simulationStart });
     const cashFlow = seed.compiled.cashFlowInput!;
     const wage = cashFlow.incomes[0]!;
     const householdId = String(seed.input.ownerId);
@@ -55,7 +56,8 @@ describe("TB-1 household NIIT on a 2024 realized capital loss", () => {
     const florida = taxRule(81, {
       jurisdiction: state,
       applicability: [{ fact: "eligibility", key: fullYearResidentEligibilityKey(state), equals: true }],
-      income: { ...federal.income!, ordinaryBrackets: [{ lower: money("0"), rate: Ratio.parse("0") }] },
+      income: { ...federal.income!, ordinaryBrackets: [{ lower: money("0"), rate: Ratio.parse("0") }],
+        preferentialBrackets: [{ lower: money("0"), rate: Ratio.parse("0") }] },
     });
     const admitted = compileHouseholdTax({
       modelId: domainId("model", "88000000-0000-4000-8000-000000000308"),
@@ -68,32 +70,57 @@ describe("TB-1 household NIIT on a 2024 realized capital loss", () => {
           tax_character: "ordinary", gross_or_net: "gross", frequency: "monthly", start_date: start, end_date: "2024-02-01",
           work_service_jurisdiction_allocations: [work] }],
       },
-    }, { asOf: start, simulationStart: start, simulationEnd: end, catalog: [enabled ? federal : withoutNiit, florida] });
+    }, { asOf: context.asOf.slice(0, 10), simulationStart: start, simulationEnd: end, catalog: [enabled ? federal : withoutNiit, florida] });
     if (admitted.status !== "compiled") throw new Error(JSON.stringify(admitted.diagnostics));
 
     const wrapper = domainId("account", "88000000-0000-4000-8000-000000000309");
     const holding = domainId("position", "88000000-0000-4000-8000-000000000310");
     const saleId = "88000000-0000-4000-8000-000000000311";
     const interestId = "88000000-0000-4000-8000-000000000312";
+    const traditional = domainId("account", "88000000-0000-4000-8000-000000000313");
+    const roth = domainId("account", "88000000-0000-4000-8000-000000000314");
+    const traditionalHolding = domainId("position", "88000000-0000-4000-8000-000000000315");
+    const rothHolding = domainId("position", "88000000-0000-4000-8000-000000000316");
+    const conversionId = "88000000-0000-4000-8000-000000000317";
     const saleTrace = `compiler:canonical:Event:${saleId}`;
     const interestTrace = `compiler:canonical:Event:${interestId}`;
     const taxFacts = { residenceJurisdictions: [state], workJurisdictions: [], eligibility: resolveTaxEligibility(eligibility, start) };
+    const retirementHoldings = convert ? [
+      { id: traditionalHolding, accountId: traditional, kind: "fund" as const, lots: [], afterTaxBasis: "0" },
+      { id: rothHolding, accountId: roth, kind: "fund" as const, lots: [], afterTaxBasis: "0" },
+    ] : [];
     const domains: DomainMechanicsInput = {
       currency: "USD",
       holdings: [{ id: holding, accountId: wrapper, kind: "equity",
-        lots: [{ id: "opening-lot", acquired: "2022-01-01", quantity: "1", basis: basis[loss] }] }],
+        lots: mixed
+          ? [{ id: "long-lot", acquired: "2022-01-01", quantity: "0.5", basis: "33500" },
+             { id: "short-lot", acquired: "2024-01-01", quantity: "0.5", basis: "11500" }]
+          : [{ id: "opening-lot", acquired: "2022-01-01", quantity: "1", basis: basis[loss] }] }, ...retirementHoldings],
       operations: [
         { id: saleId, at: "2024-02-10T00:00:00.000Z", order: 1, kind: "sale", holdingId: holding, quantity: "1",
           amount: "25000", taxFacts, sourceRefs: [saleTrace] },
         { id: interestId, at: "2024-02-11T00:00:00.000Z", order: 1, kind: "interest", cashAccountId: cashFlow.cashAccountId,
-          amount: "40000", taxFacts, sourceRefs: [interestTrace] },
+          amount: interestAmount, taxFacts, sourceRefs: [interestTrace] },
+        ...(convert ? [{ id: conversionId, at: "2024-02-12T00:00:00.000Z", order: 1, kind: "conversion" as const,
+          holdingId: traditionalHolding, destinationHoldingId: rothHolding, amount: "20000", taxFacts,
+          sourceRefs: [`compiler:canonical:Event:${conversionId}`] }] : []),
       ],
     };
     const opening = seed.compiled.reconciledOpeningState;
     const reconciledOpeningState = createAuthoritativeState({
       ...opening,
-      accounts: { ...opening.accounts, [wrapper]: { id: wrapper, kind: "brokerage", ownerId: wage.ownerId, cash: money("0") } },
-      positions: { [holding]: { id: holding, accountId: wrapper, quantity: quantity("1", SHARE), price: money("25000"), carryingValue: money("25000") } },
+      accounts: { ...opening.accounts,
+        [cashFlow.cashAccountId]: { ...opening.accounts[cashFlow.cashAccountId]!, kind: "checking" },
+        [wrapper]: { id: wrapper, kind: "brokerage", ownerId: wage.ownerId, cash: money("0") },
+        ...(convert ? {
+          [traditional]: { id: traditional, kind: "retirement", ownerId: wage.ownerId, cash: money("0") },
+          [roth]: { id: roth, kind: "retirement", ownerId: wage.ownerId, cash: money("0") },
+        } : {}) },
+      positions: { [holding]: { id: holding, accountId: wrapper, quantity: quantity("1", SHARE), price: money("25000"), carryingValue: money("25000") },
+        ...(convert ? {
+          [traditionalHolding]: { id: traditionalHolding, accountId: traditional, quantity: quantity("1", SHARE), price: money("20000"), carryingValue: money("20000") },
+          [rothHolding]: { id: rothHolding, accountId: roth, quantity: quantity("0", SHARE), price: money("20000"), carryingValue: money("0") },
+        } : {}) },
     });
     const payrollWithholding: PayrollWithholdingElection[] = ["US:FEDERAL", state].map(jurisdiction => ({
       id: `tb1-zero-withholding:${jurisdiction}`, version: "payroll-withholding/v1", incomeId: wage.id, ownerId: wage.ownerId,
@@ -101,6 +128,10 @@ describe("TB-1 household NIIT on a 2024 realized capital loss", () => {
       userConfirmed: true, provenance: "Synthetic zero-remittance election for this single paycheck",
       calculation: { kind: "fixed", amount: money("0") },
     }));
+    const employer = employerWage(context, {
+      householdId, personId: wage.ownerId, incomeId: wage.id, bankAccountId: cashFlow.cashAccountId, bankOwner: "person",
+      employerId, firstPayday: "2024-01-15", endDate: "2024-02-01", gross: "190000", elections: payrollWithholding,
+    });
     const input: HouseholdTaxInput = {
       ...admitted.value, simulationStart: seed.context.simulationStart,
       fundingPolicy: seed.input.fundingPolicy!, refundAccountId: cashFlow.cashAccountId,
@@ -112,7 +143,7 @@ describe("TB-1 household NIIT on a 2024 realized capital loss", () => {
     let annualEconomics: readonly RecognizedTaxEconomics[] | undefined;
     const kernel = compileHouseholdKernel({
       ...seed.compiled, reconciledOpeningState,
-      cashFlowInput: { ...cashFlow, incomes: [{ ...wage, end: instant("2024-02-01T00:00:00.000Z"), payrollWithholding }] },
+      cashFlowInput: { ...cashFlow, incomes: [employer.income] },
       participants: [createDomainMechanicsParticipant(domains), {
         ...tax,
         observe(descriptor, facts, runtime) {
@@ -126,7 +157,7 @@ describe("TB-1 household NIIT on a 2024 realized capital loss", () => {
       }],
       nonInvestmentPositionIds: taxCreditPositionIds(input),
     }, seed.context.simulationStart);
-    const run = runHouseholdKernel({ kernel, runContext: seed.context, resultTier: "detail" });
+    const run = runHouseholdKernel({ kernel, runContext: context, resultTier: "detail" });
     const { liabilityId, creditPositionId } = taxBalanceIds("US:FEDERAL", "2024");
     const journals = run.periods.flatMap(period => period.transactions);
     const final = journals.find(tx => tx.type === "tax_final_settlement" && tx.legs.some(leg => leg.type === "liability" && leg.entityId === liabilityId));
@@ -138,18 +169,19 @@ describe("TB-1 household NIIT on a 2024 realized capital loss", () => {
   };
 
   it.each([
+    ["1000", "59972.70", "61150.70", "1178.00"],
     ["0", "59822.70", "60962.70", "1140.00"],
     ["-1000", "59502.70", "60604.70", "1102.00"],
-    ["-20000", "58862.70", "59242.70", "380.00"],
-  ] as const)("admits and posts the same sources with %s realized gain/loss", (loss, withoutNiit, withNiit, observedNiit) => {
+    ["-3000", "58862.70", "59888.70", "1026.00"],
+    ["-20000", "58862.70", "59888.70", "1026.00"],
+  ] as const)("admits and posts the same sources with %s realized gain/loss", (loss, withoutNiit, withNiit, expectedNiit) => {
     const on = fixture(loss, true), off = fixture(loss, false);
     // Rev. Proc. 2023-34 single brackets on $215,400 / $214,400 / $212,400
-    // of taxable income, plus $10,453.20 Social Security and $2,755 Medicare.
+    // of ordinary taxable income, plus $10,453.20 Social Security and $2,755
+    // Medicare. The $1,000 long-term gain adds $150 of preferential tax.
     expect(off.liability.toJSON()).toEqual(money(withoutNiit).toJSON());
     expect(on.liability.toJSON()).toEqual(money(withNiit).toJSON());
-    // For the $20,000 loss the current signed-gain path supplies $210,000 MAGI
-    // and $20,000 NII. Its $10,000 threshold excess yields $380 at 3.8%.
-    expect(on.liability.minus(off.liability).toJSON()).toEqual(money(observedNiit).toJSON());
+    expect(on.liability.minus(off.liability).toJSON()).toEqual(money(expectedNiit).toJSON());
     for (const result of [on, off]) {
       const { input, run, journals, final, bank, liability, liabilityId, creditPositionId } = result;
       expect(input.incomes).toEqual([expect.objectContaining({ id: result.wageId, incomeType: "salary", grossOrNet: "gross",
@@ -211,18 +243,35 @@ describe("TB-1 household NIIT on a 2024 realized capital loss", () => {
     }
   });
 
-  describe("capital loss above the ordinary deduction limit", () => {
-    let niit: ReturnType<typeof money>;
-    beforeAll(() => {
-      const on = fixture("-20000", true), off = fixture("-20000", false);
-      niit = on.liability.minus(off.liability);
-    });
+  it("caps the loss at $3,000 when determining 2024 NIIT", () => {
+    const on = fixture("-20000", true), off = fixture("-20000", false);
+    // IRC §1211(b) and Form 8960: MAGI $227,000, excess over $200,000
+    // threshold $27,000, NII $37,000. The smaller base times 3.8% is $1,026.
+    expect(on.liability.minus(off.liability).toJSON()).toEqual(money("1026.00").toJSON());
+  });
 
-    it.fails("TB-1 temporary witness: caps the loss at $3,000 when determining 2024 NIIT", () => {
-      // IRC §1211(b) and Form 8960: MAGI $227,000, excess over $200,000
-      // threshold $27,000, NII $37,000. The smaller base times 3.8% is $1,026.
-      expect(niit.toJSON()).toEqual(money("1026.00").toJSON());
-    });
+  it("offsets a short-term gain against a long-term loss before applying the annual cap", () => {
+    const on = fixture("-20000", true, "40000", true), off = fixture("-20000", false, "40000", true);
+    const sale = on.annualEconomics.find(entry => entry.sourceId === on.domains.operations[0]!.id)!;
+    expect(sale.income.shortTermGains.equals(money("1000"))).toBe(true);
+    expect(sale.income.longTermGains.equals(money("-21000"))).toBe(true);
+    expect(off.liability.equals(money("58862.70"))).toBe(true);
+    expect(on.liability.equals(money("59888.70"))).toBe(true);
+  });
+
+  it.each([["1", "0"], ["12999", "0"], ["13000", "0"], ["13001", "0.04"]] as const)(
+    "computes the NIIT threshold after the allowable loss with $%s of interest", (interest, expectedNiit) => {
+      const on = fixture("-20000", true, interest), off = fixture("-20000", false, interest);
+      expect(on.liability.minus(off.liability).equals(money(expectedNiit))).toBe(true);
+    },
+  );
+
+  it("includes a taxable retirement conversion in MAGI and limits NIIT to investment income", () => {
+    const on = fixture("-20000", true, "13000", false, true), off = fixture("-20000", false, "13000", false, true);
+    const conversion = on.annualEconomics.find(entry => entry.sourceId === on.domains.operations[2]!.id)!;
+    expect(conversion.income.traditionalDistributions.equals(money("20000"))).toBe(true);
+    // MAGI is $220,000 and net investment income is $10,000.
+    expect(on.liability.minus(off.liability).equals(money("380"))).toBe(true);
   });
 });
 
