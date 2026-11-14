@@ -1836,7 +1836,7 @@ const validatePayrollHealthPosting = (state: AuthoritativeState, proof: D2Posted
       !total("cash", "debit").plus(contributions).plus(withholding).plus(d.employeeAmount).equals(d.gross))
     d2Invalid("Payroll health signed gross/contribution/credit/expense/cash reconciliation failed");
 };
-const requalifyPayrollHealthPosting = (proof: D2PostedTransactionProof, context: D2SettlementSourceContext): PayrollHealthDeductionEvidence => {
+export const requalifyPayrollHealthPosting = (proof: D2PostedTransactionProof, context: D2SettlementSourceContext): PayrollHealthDeductionEvidence => {
   if (proof.registration.kind !== "payroll_health_deduction") return d2Invalid("Missing original payroll health posting");
   const d = proof.registration.deduction, qualified = qualifyPayrollHealthSource(d.source, context);
   if (qualified.status !== "qualified") throw new Error(`PAYROLL_HEALTH_SOURCE_INCOMPLETE: ${qualified.reason}`);
