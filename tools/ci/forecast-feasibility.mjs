@@ -49,22 +49,33 @@ if (args[0] === '--probe' && args.length === 3) {
     equality = digest(result) === digest(repeated) ? 'equal' : 'different';
     // Existing R3 reference contract, scoped to compiled deterministic kernel.
     // Application tax participants and worker transport remain separate evidence.
-    const { compileHouseholdProjection } = await import('../../src/application/compiler/householdProjection.ts');
+    const { compileHouseholdKernelForRun } = await import('../../src/application/householdProjection.ts');
+    const { selectScenario } = await import('../../src/application/compiler/scenarioSelection.ts');
     const { runHouseholdKernel } = await import('../../src/simulation/householdExecution.ts');
     const { runCompiledHouseholdProjection: referenceRun } = await import('../../src/simulation/r3/referenceHouseholdExecution.ts');
     const { summarizeHouseholdPeriod } = await import('../../src/simulation/r3/forecastSummary.ts');
     const { createRunContext, runId, scenarioId, canonicalSerialize } = await import('../../src/simulation/run.ts');
     const { instant } = await import('../../src/time/index.ts');
     const { Currency } = await import('../../src/values/index.ts');
-    const compiled = compileHouseholdProjection(model, compiler);
-    if (compiled.status !== 'compiled' || !compiled.value.executionKernel) throw new Error('Reference fixture did not compile');
-    const kernel = compiled.value.executionKernel;
-    const runContext = createRunContext({ runId: runId(request.runIdentity), scenarioId: scenarioId(kernel.executable.scenarioIdentity),
+    const selected = selectScenario(model, {
+      capabilityName: 'household_projection', executionLabel: 'Forecast feasibility',
+      scenarioId: compiler.cashFlow.scenarioId ?? compiler.investments.scenarioId ?? compiler.liabilities.scenarioId,
+      simulationStart: start, simulationEnd: end,
+    });
+    if (selected.status !== 'compiled' || !selected.value.object) {
+      throw new Error(`Reference fixture requires a canonical root Scenario (${selected.status}): ${JSON.stringify(selected.diagnostics)}`);
+    }
+    const runContext = createRunContext({ runId: runId(request.runIdentity), scenarioId: scenarioId(selected.value.id),
       asOf: instant(`${request.asOf}T00:00:00.000Z`), dataCutoff: instant(`${request.dataCutoff}T00:00:00.000Z`),
-      simulationStart: instant(`${start}T00:00:00.000Z`), simulationEnd: instant(`${end}T00:00:00.000Z`),
+      simulationStart: instant(`${start}T00:00:00.000Z`), simulationEnd: instant(endInstant),
       baseCurrency: Currency.of(compiler.cashFlow.baseCurrency) });
+    const compiled = compileHouseholdKernelForRun(model, compiler, runContext);
+    if (compiled.status !== 'compiled') {
+      throw new Error(`Reference fixture did not compile for its run (${compiled.status}): ${JSON.stringify(compiled.diagnostics)}`);
+    }
+    const { executable, kernel } = compiled.value;
     const summary = runHouseholdKernel({ kernel, runContext });
-    const reference = referenceRun({ compiled: kernel.executable, runContext });
+    const reference = referenceRun({ compiled: executable, runContext });
     const select = run => ({ status: run.status, requestedHorizon: run.requestedHorizon,
       reachedThrough: run.reachedThrough, state: run.state, primitiveState: run.primitiveState,
       runMetadata: run.runMetadata, diagnostics: run.diagnostics, periods: run.periods });
