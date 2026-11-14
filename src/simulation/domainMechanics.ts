@@ -75,9 +75,12 @@ export const executeDomainOperation = (opening: OperationState, input: DomainMec
   const lots = { ...prior.lots }, basis = { ...prior.basis }, receipts = { ...prior.receipts };
   const retirementMovement = ["conversion", "direct_rollover", "mixed_rollover", "indirect_distribution"].includes(operation.kind);
   const holding = input.holdings.find(item => item.id === operation.holdingId);
+  const position = holding === undefined ? undefined : state.positions[holding.id];
   const sourceAccountId = holding?.accountId;
   if (retirementMovement && input.holdings.filter(item => item.accountId === sourceAccountId && state.positions[item.id]?.quantity.amount.isPositive()).length !== 1)
     fail("DOMAIN_RETIREMENT_ALLOCATION_UNSUPPORTED", "Retirement movement requires one eligible owned source holding; multi-holding allocation is unavailable.");
+  if (operation.kind === "indirect_distribution" && position && !Object.hasOwn(state.accounts, position.accountId))
+    fail("DOMAIN_RETIREMENT_SOURCE_ACCOUNT_REQUIRED", "The owned source holding requires an existing account.");
   const basisContributionIds = new Set(prior.basisContributionIds ?? []);
   const indirectSourceBasis = (id: string) =>
     participantBasis(holding?.afterTaxBasis === undefined ? undefined : basis[id], currency);
@@ -103,7 +106,6 @@ export const executeDomainOperation = (opening: OperationState, input: DomainMec
   }
   const transactions: AccountingTransaction[] = [], taxEconomics: RecognizedTaxEconomics[] = [], taxDiagnostics: TaxCapabilityDiagnostic[] = [];
   const traces = (operation.sourceRefs ?? ["compiler:canonical:Event:" + operation.id]).map(ref => calculationTraceRef(calculationTraceId(ref)));
-  const position = holding === undefined ? undefined : state.positions[holding.id];
   const cash = (id: string | undefined, bank = false) => {
     const account = id === undefined ? undefined : state.accounts[id];
     if (!account || bank && account.kind !== "checking" && account.kind !== "savings") return fail("DOMAIN_FUNDING_ACCOUNT_UNSUPPORTED", "Select an explicit checking or savings account for personally funded operations.");

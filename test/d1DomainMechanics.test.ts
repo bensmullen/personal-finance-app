@@ -128,13 +128,11 @@ describe("Participant-received employer-plan distribution basis eligibility", ()
     expect(before.runtime).toBeUndefined();
   });
 
-  it("reports the missing source account before classifying source basis", () => {
+  it.each(["0.01", "0"])("rejects a missing source account without mutation with source basis $%s", basis => {
     const before = openingPlan();
     delete before.state.accounts[wrapper];
     const snapshot = JSON.stringify(before.state);
-    expect(() => executeDomainOperation(before, plan("0.01"), distribution)).toThrow(expect.objectContaining({
-      issues: [expect.objectContaining({ code: "STATE_TARGET_NOT_FOUND", entityType: "position", relatedIds: [wrapper] })],
-    }));
+    expect(() => executeDomainOperation(before, plan(basis), distribution)).toThrow(rejection("DOMAIN_RETIREMENT_SOURCE_ACCOUNT_REQUIRED"));
     expect(JSON.stringify(before.state)).toBe(snapshot);
     expect(before.runtime).toBeUndefined();
   });
