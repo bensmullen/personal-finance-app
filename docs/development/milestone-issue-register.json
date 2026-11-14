@@ -135,6 +135,13 @@
       "required_issue_numbers": [
         306
       ]
+    },
+    "T1A_DEFERRED_PORTABLE_INTEREST_REPLAY": {
+      "stage": "Deferred T1A custom-tax/interest portable replay authority design (planning; not Codex-authorized)",
+      "blocking_transition": "Before any #313 implementation, settle independent interest original/publisher vs canonical application-issued tax-plan replay authority, approve the source/cutoff/run interface and paths, and review #277 merged S2 receipts. Preserve all mandatory native interest/tax execution and source-backed alternate replay under D2 #277/#149. This gate does not itself approve deferral of any other R5/private-alpha requirement.",
+      "required_issue_numbers": [
+        313
+      ]
     }
   },
   "issues": [
@@ -897,6 +904,19 @@
         "PFA-PERF-019"
       ],
       "scope": "Dependent protected manual feasibility/reference parity caller in tools/ci/forecast-feasibility.mjs, framework-only #306 after original product #277 publishes context-qualified run source. Stays BLOCKED until exact product API/SHA and independent audit. Framework PR #307 only governs reviewer caller-census policy, not this protected implementation."
+    },
+    {
+      "issue_number": 313,
+      "owner_stage": "T1A-deferred-custom-interest-portable-replay",
+      "blocking_gate": "T1A_DEFERRED_PORTABLE_INTEREST_REPLAY",
+      "depends_on": [
+        277
+      ],
+      "spec_requirement_ids": [
+        "PFA-TAX-015",
+        "PFA-DET-023"
+      ],
+      "scope": "PM-approved narrow D2-D S2 #277 deferral only for positive custom T1A tax participant + compiler-issued interest portable cold replay. Planning issue #313 is NOT a V3 task. Independent original interest issuer/tax overlay capability, precise run/source admissibility, authored canonical model and v3 compact replay need future PM architecture approval; preserve all live forecast taxable interest and genuine portable alternate positive/negatives in #277."
     }
   ],
   "legacy_open_task_reconciliation": {
