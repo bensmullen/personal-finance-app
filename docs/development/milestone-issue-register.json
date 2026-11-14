@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "as_of": "2026-11-13",
+  "as_of": "2026-11-14",
   "authority": "Roadmap issue allocation only. Financial meaning remains in controlled specifications; GitHub is authoritative for current issue state.",
   "lifecycle": "Every new non-learning product, bug, milestone or framework issue must be registered at creation and linked to an owner stage and first mandatory closeout gate. Deferred means explicitly gated, not forgotten. Closing or moving an issue requires reconciliation here and in roadmap. U1 handoff completed: #94 is superseded by #120 after PR #98 merged; only #120 holds final U1/D1 owner acceptance. #94 technical closeout is not U1 UAT approval; all historical #94 dependency edges now point to #120. D2 parallel reallocation 2026-10-17: #103's unimplemented retirement distribution/RMD scope is consolidated into #146; backend #146/#147/#148 may overlap U1 #120 after approved financial contracts and #149 shared interface freeze. #149 alone owns deferred cross-domain/UI seams and final D2-D acceptance. #114 is merged preparation, not D2 functionality. U1B-C #142 closed after PR #157 merged; U1B-D #161 newly allocated to its own stage, implementation sequential after merged registration PR, not blocked by final #120 UAT. U1B-E requires separate later authorization.",
   "stage_gates": {
@@ -121,8 +121,8 @@
       ]
     },
     "FINANCIAL_AUDIT_REPRO": {
-      "stage": "Phase 1 financial semantic defect reproduction, independently scoped CI-backed tests",
-      "blocking_transition": "Complete three independent reproduction/falsification reviews and triage their CI-backed findings; no automatic D2/R5/UAT gate change and no repair permission or merge of temporary expected-failure tests.",
+      "stage": "Phase 1 confirmed financial-defect reproduction and PM-approved bounded repairs",
+      "blocking_transition": "Independently close reproduction review, carry approved #309 and #310 financial engine repairs to ordinary passing regression tests and selected exact-head CI, and retain #308's NIIT finding pending separate PM tax repair authorization. This is an investigation/repair queue, not a new automatic D2/U1/R5 closeout gate. Temporary it.fails tests must not merge unchanged.",
       "required_issue_numbers": [
         308,
         309,
@@ -858,7 +858,7 @@
         "PFA-TAX-003",
         "PFA-TAX-004"
       ],
-      "scope": "CI-backed test-only NIIT capital-loss MAGI reproduction/falsification under test/t1aTaxIntegration.test.ts; source audit #296/PR #302. No production change or authorized repair; acceptance evidence reviewed externally."
+      "scope": "Confirmed 2024 NIIT MAGI $380 vs independently expected $1,026 after $20k net capital loss, with passing control years and exact-head CI in PR #312. Production tax repair NOT approved in this two-repair wave; original #308 remains owner pending PM tax decision and removal of temporary it.fails."
     },
     {
       "issue_number": 309,
@@ -870,7 +870,7 @@
         "PFA-DET-010",
         "PFA-INV-001"
       ],
-      "scope": "CI-backed test-only zero-return 0.004 USD per-unit/1000-share valuation reproduction/falsification under test/verticalSlice3.test.ts; source audit #297/PR #304. No production change or authorized repair."
+      "scope": "PM-approved bounded sub-cent unit-quote valuation production repair in existing PR #316: preserve exact economic quote/value across zero/nonzero returns and canonical compiler, avoid premature 2dp per-unit rounding, convert temporary expected-failure to passing regression, no generic P23/r3 frozen reference or active D2-owned writes without reviewer escalation."
     },
     {
       "issue_number": 310,
@@ -882,7 +882,7 @@
         "PFA-DET-010",
         "PFA-INV-022"
       ],
-      "scope": "CI-backed test-only positive-after-tax-basis rounding eligibility reproduction/falsification in test/d1DomainMechanics.test.ts; source audit #297/PR #304. No production change or authorized repair."
+      "scope": "PM-approved bounded indirect-rollover pre-tax-only eligibility production repair in existing PR #315: reject any positive source basis before cent rounding and before journal/receipt/tax mutation; preserve admitted zero-basis, direct/mixed rollover, negative/idempotency cases; convert temporary expected-failure to passing regression."
     },
     {
       "issue_number": 306,
