@@ -5,7 +5,8 @@ import { createAuthoritativeState } from "../src/state/index.js";
 import { createPrimitiveRuntimeStateStore } from "../src/simulation/period.js";
 import { executeDomainOperation, domainCashAccesses, longTermHolding, type DomainHolding, type DomainMechanicsInput, type DomainOperation } from "../src/simulation/domainMechanics.js";
 import type { OperationState } from "../src/simulation/r3/operations.js";
-import { decimal, money, quantity, SHARE, USD } from "../src/values/index.js";
+import { taxBalanceIds } from "../src/simulation/tax/contracts.js";
+import { decimal, money, quantity, RoundingPolicy, SHARE, USD } from "../src/values/index.js";
 import { instant } from "../src/time/index.js";
 
 const id = (suffix: number) => `d1b10000-0000-4000-8000-${String(suffix).padStart(12, "0")}`;
@@ -29,6 +30,147 @@ const taxes = (candidate: ReturnType<typeof executeDomainOperation>) => Object.f
 const statements = (candidate: ReturnType<typeof executeDomainOperation>) => Object.fromEntries(["income", "expense", "gain", "loss"].map(type => [type,
   (candidate.facts.transactions ?? []).flatMap(tx => tx.legs).filter(leg => leg.type === type).reduce((sum, leg) => sum.plus(leg.posting === (type === "expense" || type === "loss" ? "debit" : "credit") ? leg.amount.amount : leg.amount.amount.negated()), decimal("0")).toString()]));
 const balanced = (candidate: ReturnType<typeof executeDomainOperation>) => { for (const tx of candidate.facts.transactions ?? []) assertBalanced(tx); };
+
+describe("Participant-received employer-plan distribution basis eligibility", () => {
+  const distribution = operation("indirect_distribution", { cashAccountId: bank });
+  const openingPlan = () => {
+    const before = opening();
+    before.state.accounts[wrapper] = { ...before.state.accounts[wrapper]!, kind: "retirement" };
+    return before;
+  };
+  const plan = (afterTaxBasis: string) => input({ ...holding(), afterTaxBasis });
+  const rejection = (code: string) => expect.objectContaining({
+    issues: [expect.objectContaining({ code, entityType: "domain_mechanics" })],
+  });
+  const expectDistribution = (before: OperationState, configuration: DomainMechanicsInput, result: ReturnType<typeof executeDomainOperation>) => {
+    const { creditPositionId } = taxBalanceIds("US:FEDERAL", "2026");
+    expect(amounts(result)).toEqual({ bank: "10080", wrapper: "0", units: "9", carrying: "900", netWorth: "11000" });
+    expect(result.state.accounts[bank]!.cash.minus(before.state.accounts[bank]!.cash).equals(money("80", USD))).toBe(true);
+    expect(result.state.positions[creditPositionId]?.carryingValue.equals(money("20", USD))).toBe(true);
+    expect(result.state.positions[position]!.carryingValue.equals(money("900", USD))).toBe(true);
+    expect(result.state.positions[position]!.accountId).toBe(wrapper);
+    expect(result.state.accounts[wrapper]!.ownerId).toBe(person);
+    expect(result.state.accounts[bank]!.ownerId).toBe(person);
+    expect(JSON.stringify(result.state.contributions)).toBe(JSON.stringify(before.state.contributions));
+    expect(result.facts.taxEconomics).toHaveLength(1);
+    expect(result.facts.taxEconomics?.[0]?.income.traditionalDistributions.equals(money("100", USD))).toBe(true);
+    expect(result.facts.transactions).toHaveLength(1);
+    balanced(result);
+    expect([...result.state.identities.postedTransactionIds]).toEqual([result.facts.transactions![0]!.id]);
+    const runtime = result.runtime?.domainMechanics as { receipts: Readonly<Record<string, unknown>>; completedOperationIds: readonly string[] };
+    expect(runtime).toMatchObject({
+      basis: { [position]: "0" },
+      receipts: { [distribution.id]: { at: distribution.at, gross: "100", received: "80", accountId: bank } },
+      completedOperationIds: [distribution.id],
+    });
+    expect(Object.keys(runtime.receipts)).toEqual([distribution.id]);
+    expect(Object.isFrozen(runtime.receipts[distribution.id])).toBe(true);
+
+    const replay = executeDomainOperation(result, configuration, distribution);
+    expect(replay.facts).toEqual({});
+    expect(replay.state).toBe(result.state);
+    expect(replay.runtime).toBe(result.runtime);
+    expect(JSON.stringify(before.state)).toBe(JSON.stringify(openingPlan().state));
+    expect(before.runtime).toBeUndefined();
+  };
+
+  it("settles explicitly pre-tax principal as $80 cash and a $20 federal credit once", () => {
+    const before = openingPlan(), configuration = plan("0");
+    expectDistribution(before, configuration, executeDomainOperation(before, configuration, distribution));
+  });
+
+  it.each([
+    ["nonzero recovered cent", "0.10", "100", "DOMAIN_INDIRECT_AFTER_TAX_UNSUPPORTED"],
+    ["full-value distribution with positive basis", "0.01", "1000", "DOMAIN_INDIRECT_AFTER_TAX_UNSUPPORTED"],
+    ["insufficient owned value", "0", "1000.01", "DOMAIN_RETIREMENT_OWNED_VALUE_REQUIRED"],
+    ["negative basis", "-0.01", "100", "DOMAIN_RETIREMENT_BASIS_INVALID"],
+    ["malformed basis", "unknown", "100", "DOMAIN_RETIREMENT_BASIS_INVALID"],
+  ])("rejects %s without mutating opening state", (_label, basis, amount, code) => {
+    const before = openingPlan();
+    before.state.contingentPositions = { [position]: { positionId: domainId("position", position), quantity: quantity("5", SHARE), carryingValue: money("500", USD) } };
+    const snapshot = JSON.stringify(before.state);
+    expect(() => executeDomainOperation(before, plan(basis), { ...distribution, amount })).toThrow(rejection(code));
+    expect(JSON.stringify(before.state)).toBe(snapshot);
+    expect(before.runtime).toBeUndefined();
+  });
+
+  it("rejects a missing runtime basis entry without mutating state or recording a receipt", () => {
+    const configuration = plan("0");
+    const runtime = () => ({
+      domainMechanics: {
+        lots: { [position]: configuration.holdings[0]!.lots },
+        basis: { [destination]: "0", [roth]: "0" },
+        receipts: {},
+      },
+    });
+    const before = { ...openingPlan(), runtime: runtime() };
+    expect(() => executeDomainOperation(before, configuration, distribution)).toThrow(rejection("DOMAIN_RETIREMENT_BASIS_REQUIRED"));
+    expect(JSON.stringify(before.state)).toBe(JSON.stringify(openingPlan().state));
+    expect(before.runtime).toEqual(runtime());
+  });
+
+  it("requires explicit opening source basis even with no runtime basis map", () => {
+    const source: DomainHolding = { id: position, accountId: wrapper, kind: "equity", lots: holding().lots };
+    const before = openingPlan();
+    expect(() => executeDomainOperation(before, input(source), distribution)).toThrow(rejection("DOMAIN_RETIREMENT_BASIS_REQUIRED"));
+    expect(before.runtime).toBeUndefined();
+  });
+
+  it("includes committed after-tax contributions in source eligibility", () => {
+    const before = openingPlan();
+    before.state.contributions = { ...before.state.contributions, current: {
+      id: "current", at: instant("2026-01-05T00:00:00.000Z"), personId: person, accountId: wrapper,
+      character: "after_tax_401k", amount: money("0.01", USD), buckets: [],
+    } };
+    const snapshot = JSON.stringify(before.state);
+    expect(() => executeDomainOperation(before, plan("0"), distribution)).toThrow(rejection("DOMAIN_INDIRECT_AFTER_TAX_UNSUPPORTED"));
+    expect(JSON.stringify(before.state)).toBe(snapshot);
+    expect(before.runtime).toBeUndefined();
+  });
+
+  it.each(["0.01", "0"])("rejects a missing source account without mutation with source basis $%s", basis => {
+    const before = openingPlan();
+    delete before.state.accounts[wrapper];
+    const snapshot = JSON.stringify(before.state);
+    expect(() => executeDomainOperation(before, plan(basis), distribution)).toThrow(rejection("DOMAIN_RETIREMENT_SOURCE_ACCOUNT_REQUIRED"));
+    expect(JSON.stringify(before.state)).toBe(snapshot);
+    expect(before.runtime).toBeUndefined();
+  });
+
+  it("rejects $0.01 in source basis before rounding its $0.001 allocation and leaves no replayable receipt (#310)", () => {
+    const before = openingPlan(), configuration = plan("0.01");
+    const original = { ...distribution, sourceRefs: ["compiler:canonical:Event:" + distribution.id] };
+    const fairValue = before.state.positions[position]!.price.times(before.state.positions[position]!.quantity.amount);
+    const fraction = decimal(original.amount).dividedBy(fairValue.amount, new RoundingPolicy(18, "half_even"));
+    const allocatedBasis = money(configuration.holdings[0]!.afterTaxBasis!, USD).times(fraction);
+    expect(allocatedBasis.equals(money("0.001", USD))).toBe(true);
+    expect(allocatedBasis.round(new RoundingPolicy(2, "half_even")).equals(money("0", USD))).toBe(true);
+
+    const stateSnapshot = JSON.stringify(before.state);
+    const inputSnapshot = JSON.stringify({ configuration, original });
+    const creditId = taxBalanceIds("US:FEDERAL", "2026").creditPositionId;
+    for (const opening of [before, { ...before, runtime: { domainMechanics: {
+      lots: { [position]: configuration.holdings[0]!.lots },
+      basis: { [position]: "0.01" },
+      receipts: {},
+    } } }]) {
+      const runtimeSnapshot = JSON.stringify(opening.runtime);
+      const attempt = () => executeDomainOperation(opening, configuration, original);
+      expect(attempt).toThrow(rejection("DOMAIN_INDIRECT_AFTER_TAX_UNSUPPORTED"));
+      expect(attempt).toThrow(rejection("DOMAIN_INDIRECT_AFTER_TAX_UNSUPPORTED"));
+      expect(() => executeDomainOperation(opening, configuration, operation("indirect_deposit", {
+        id: id(11), linkedOperationId: original.id, destinationHoldingId: destination,
+      }))).toThrow(rejection("DOMAIN_ROLLOVER_RECEIPT_REQUIRED"));
+      expect(JSON.stringify(opening.runtime)).toBe(runtimeSnapshot);
+    }
+    expect(JSON.stringify(before.state)).toBe(stateSnapshot);
+    expect(JSON.stringify({ configuration, original })).toBe(inputSnapshot);
+    expect(before.state.positions[creditId]).toBeUndefined();
+    expect(before.state.accounts[bank]!.cash.equals(money("10000", USD))).toBe(true);
+    expect(before.state.identities.postedTransactionIds).toHaveLength(0);
+    expect(before.state.identities.recognitionIds).toHaveLength(0);
+  });
+});
 
 describe("D1-B independent financial effects (opening bank 10000, wrapper 0, holding 1000)", () => {
   it.each([
@@ -58,6 +200,10 @@ describe("D1-B independent financial effects (opening bank 10000, wrapper 0, hol
     expect(result.state.positions[destination]!.carryingValue.amount.toString()).toBe(kind === "mixed_rollover" ? "400" : "500");
     expect(result.state.positions[roth]!.carryingValue.amount.toString()).toBe(kind === "mixed_rollover" ? "100" : "0");
     expect(taxes(result)).toEqual(kind === "conversion" ? { traditionalDistributions: "400" } : {});
+    expect(result.runtime?.domainMechanics).toMatchObject({ basis: {
+      [position]: "100", [destination]: kind === "conversion" ? "500" : kind === "direct_rollover" ? "100" : "0",
+      [roth]: kind === "mixed_rollover" ? "100" : "0",
+    } });
     expect(result.state.contributions).toEqual(before.state.contributions); expect(statements(result)).toEqual({ income: "0", expense: "0", gain: "0", loss: "0" }); balanced(result);
   });
   it("preserves 20% withholding as a credit and redeposits gross principal using explicit replacement cash", () => {
