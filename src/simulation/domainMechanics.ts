@@ -44,9 +44,20 @@ interface DomainRuntime {
 const fail = (code: string, message: string): never => { throw new ValidationError({ severity: "error", code, message, entityType: "domain_mechanics" }); };
 const precision = new RoundingPolicy(18, "half_even");
 const q = (value: string) => Quantity.parse(value, SHARE);
-const runtimeFor = (opening: OperationState, input: DomainMechanicsInput): DomainRuntime => (opening.runtime?.domainMechanics as DomainRuntime | undefined) ?? {
+const openingRuntime = (input: DomainMechanicsInput): DomainRuntime => ({
   lots: Object.fromEntries(input.holdings.map(item => [item.id, item.lots])),
   basis: Object.fromEntries(input.holdings.map(item => [item.id, item.afterTaxBasis ?? "0"])), receipts: {},
+});
+const participantBasis = (value: string | undefined, currency: Currency): Money => {
+  if (value === undefined) return fail("DOMAIN_RETIREMENT_BASIS_REQUIRED", "Previously taxed basis must be explicitly established.");
+  let basis: Money;
+  try {
+    basis = Money.parse(value, currency);
+  } catch {
+    return fail("DOMAIN_RETIREMENT_BASIS_INVALID", "Previously taxed basis must be a nonnegative exact amount.");
+  }
+  if (basis.isNegative()) return fail("DOMAIN_RETIREMENT_BASIS_INVALID", "Previously taxed basis must be a nonnegative exact amount.");
+  return basis;
 };
 /** A holding period must exceed one calendar year; exactly one year is short-term. */
 export const longTermHolding = (acquired: string, disposed: string): boolean =>
@@ -57,15 +68,19 @@ export const executeDomainOperation = (opening: OperationState, input: DomainMec
   const currency = Currency.of(input.currency), zero = Money.zero(currency), rounding = new RoundingPolicy(currency.minorUnitScale, "half_even");
   const at = instant(operation.at), amount = Money.parse(operation.amount, currency);
   if (amount.isNegative() || !amount.amount.fitsScale(currency.minorUnitScale)) fail("DOMAIN_AMOUNT_INVALID", "Use nonnegative money at cash settlement precision.");
-  const state = cloneAuthoritativeState(opening.state), prior = runtimeFor(opening, input);
+  const state = cloneAuthoritativeState(opening.state);
+  const prior = (opening.runtime?.domainMechanics as DomainRuntime | undefined) ?? openingRuntime(input);
   if (prior.completedOperationIds?.includes(operation.id) || state.identities.postedTransactionIds.some(id => id.startsWith("domain:" + operation.id + ":")))
     return { ...opening, facts: {} };
   const lots = { ...prior.lots }, basis = { ...prior.basis }, receipts = { ...prior.receipts };
   const retirementMovement = ["conversion", "direct_rollover", "mixed_rollover", "indirect_distribution"].includes(operation.kind);
-  const sourceAccountId = input.holdings.find(item => item.id === operation.holdingId)?.accountId;
+  const holding = input.holdings.find(item => item.id === operation.holdingId);
+  const sourceAccountId = holding?.accountId;
   if (retirementMovement && input.holdings.filter(item => item.accountId === sourceAccountId && state.positions[item.id]?.quantity.amount.isPositive()).length !== 1)
     fail("DOMAIN_RETIREMENT_ALLOCATION_UNSUPPORTED", "Retirement movement requires one eligible owned source holding; multi-holding allocation is unavailable.");
   const basisContributionIds = new Set(prior.basisContributionIds ?? []);
+  const indirectSourceBasis = (id: string) =>
+    participantBasis(holding?.afterTaxBasis === undefined ? undefined : basis[id], currency);
   for (const contribution of Object.values(state.contributions ?? {})) {
     if (contribution.source === "opening" || basisContributionIds.has(contribution.id)) continue;
     const destinations = input.holdings.filter(item => item.accountId === contribution.accountId && state.positions[item.id]?.quantity.amount.isPositive());
@@ -80,12 +95,14 @@ export const executeDomainOperation = (opening: OperationState, input: DomainMec
       added = contribution.amount.minus(contribution.eligibleDeduction!);
     }
     const destination = destinations[0]!;
-    basis[destination.id] = Money.parse(basis[destination.id] ?? "0", currency).plus(added).amount.toString();
+    const existingBasis = operation.kind === "indirect_distribution" && destination.id === operation.holdingId
+      ? indirectSourceBasis(destination.id)
+      : Money.parse(basis[destination.id] ?? "0", currency);
+    basis[destination.id] = existingBasis.plus(added).amount.toString();
     basisContributionIds.add(contribution.id);
   }
   const transactions: AccountingTransaction[] = [], taxEconomics: RecognizedTaxEconomics[] = [], taxDiagnostics: TaxCapabilityDiagnostic[] = [];
   const traces = (operation.sourceRefs ?? ["compiler:canonical:Event:" + operation.id]).map(ref => calculationTraceRef(calculationTraceId(ref)));
-  const holding = input.holdings.find(item => item.id === operation.holdingId);
   const position = holding === undefined ? undefined : state.positions[holding.id];
   const cash = (id: string | undefined, bank = false) => {
     const account = id === undefined ? undefined : state.accounts[id];
@@ -223,23 +240,28 @@ export const executeDomainOperation = (opening: OperationState, input: DomainMec
       const target = requirePosition();
       const fairValue = target.price.times(target.quantity.amount).round(rounding);
       if (!amount.isPositive() || amount.compare(fairValue) > 0) fail("DOMAIN_RETIREMENT_OWNED_VALUE_REQUIRED", "Only eligible owned and vested retirement value can move.");
+      const openingBasis = operation.kind === "indirect_distribution"
+        ? indirectSourceBasis(target.id)
+        : Money.parse(basis[target.id] ?? fail("DOMAIN_RETIREMENT_BASIS_REQUIRED", "Previously taxed basis must be explicitly established."), currency);
+      // A positive transfer out of positive owned value allocates a positive share
+      // of any positive basis, even when that share would round to zero.
+      if (operation.kind === "indirect_distribution" && openingBasis.isPositive())
+        fail("DOMAIN_INDIRECT_AFTER_TAX_UNSUPPORTED", "The participant-received floor accepts entirely pre-tax employer-plan value.");
       const fraction = amount.amount.dividedBy(fairValue.amount, precision);
       const units = amount.equals(fairValue) ? target.quantity : q(amount.amount.dividedBy(target.price.amount, precision).toString());
       const carrying = amount.equals(fairValue) ? target.carryingValue : target.carryingValue.times(fraction).round(rounding);
-      const openingBasis = Money.parse(basis[target.id] ?? fail("DOMAIN_RETIREMENT_BASIS_REQUIRED", "Previously taxed basis must be explicitly established."), currency);
       const proRataBasis = openingBasis.times(fraction).round(rounding);
       const recovered = proRataBasis.compare(amount) > 0 ? amount : proRataBasis;
       const taxable = amount.minus(recovered);
       basis[target.id] = openingBasis.minus(recovered).amount.toString();
       if (operation.kind === "indirect_distribution") {
-        if (!recovered.isZero()) fail("DOMAIN_INDIRECT_AFTER_TAX_UNSUPPORTED", "The participant-received floor accepts entirely pre-tax employer-plan value.");
         const destination = cash(operation.cashAccountId, true), withheld = amount.times(decimal("0.20")).round(rounding), received = amount.minus(withheld);
         const creditId = taxBalanceIds("US:FEDERAL", at.slice(0, 4)).creditPositionId, unit = Unit.of("usd_tax_credit");
         state.positions[creditId] ??= { id: creditId, accountId: destination.id, quantity: Quantity.zero(unit), price: Money.parse("1", currency), carryingValue: zero };
         const valuation = amount.minus(carrying);
         post("distribution", [cashLeg(destination.id, received, "debit", true), { type: "asset", posting: "debit", amount: withheld, entityId: creditId, quantity: Quantity.parse(withheld.amount.toString(), unit) }, assetLeg(target.id, carrying, units, "credit"),
           { type: valuation.isNegative() ? "loss" : "gain", posting: valuation.isNegative() ? "debit" : "credit", amount: valuation.isNegative() ? valuation.negated() : valuation }]);
-        receipts[operation.id] = { at, gross: amount.amount.toString(), received: received.amount.toString(), accountId: destination.id };
+        receipts[operation.id] = Object.freeze({ at, gross: amount.amount.toString(), received: received.amount.toString(), accountId: destination.id });
         tax("traditionalDistributions", amount);
         taxDiagnostics.push(taxDiagnostic("indirect_rollover_pending", "Taxation is incomplete until an eligible deposit is completed within 60 days; an unreplaced amount may incur additional tax.", undefined, operation.id));
       } else {
@@ -288,7 +310,7 @@ export const createDomainMechanicsParticipant = (configuration: DomainMechanicsI
   return Object.freeze({ id: "domain_mechanics", version: "d1b-v1", portableCodec: "domain-mechanics/v1", economicInputs,
     observe: (_descriptor, facts, runtime) => {
       if (!facts.acquiredLots?.length) return runtime;
-      const prior = (runtime.domainMechanics as DomainRuntime | undefined) ?? { lots: Object.fromEntries(input.holdings.map(item => [item.id, item.lots])), basis: Object.fromEntries(input.holdings.map(item => [item.id, item.afterTaxBasis ?? "0"])), receipts: {} };
+      const prior = (runtime.domainMechanics as DomainRuntime | undefined) ?? openingRuntime(input);
       const lots = { ...prior.lots };
       for (const lot of facts.acquiredLots) if (input.holdings.some(item => item.id === lot.holdingId) && !lots[lot.holdingId]?.some(item => item.id === lot.id))
         lots[lot.holdingId] = [...(lots[lot.holdingId] ?? []), { id: lot.id, acquired: lot.acquired, quantity: lot.quantity, basis: lot.basis }];
