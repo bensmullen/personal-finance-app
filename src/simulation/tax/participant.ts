@@ -7,7 +7,7 @@ import { createFactProvenance } from "../../model/provenance.js";
 import { resolveTaxCoreRule, taxCatalogFingerprint } from "../../rules/tax/catalog.js";
 import { applyTaxCoreRule } from "../../rules/tax/calculator.js";
 import { recognizeTaxLegalBases } from "../../rules/tax/recognition.js";
-import type { TaxIncomeFacts, TaxJurisdictionFacts } from "../../rules/tax/contracts.js";
+import type { TaxCoreRule, TaxIncomeFacts, TaxJurisdictionFacts } from "../../rules/tax/contracts.js";
 import { applySettlement, claimId, createObligation, createSettlement, createSettlementProposal, recognitionId, settlementId, settlementProposalId } from "../../semantics/index.js";
 import { applyAccountingTransactionAtomically, authoritativeClaimHistory, createIndexedRecognitionFact, registerAuthoritativeIdentity,
   payrollHealthPostingEvidence, type AuthoritativeState, type D2SettlementSourceContext, type PayrollHealthDeductionEvidence } from "../../state/index.js";
@@ -27,6 +27,26 @@ const creditUnit = Unit.of("usd_tax_credit");
 const zero = () => Money.zero(USD);
 export const emptyTaxIncome = (): TaxIncomeFacts => Object.freeze({ wages: zero(), taxableInterest: zero(), ordinaryDividends: zero(), qualifiedDividends: zero(), shortTermGains: zero(), longTermGains: zero(), traditionalContributions: zero(), eligibleTraditionalDeduction: zero(), traditionalDistributions: zero(), traditionalDistributionBasisRecovered: zero(), rothContributions: zero(), rothDistributions: zero(), taxableRothDistributions: zero() });
 const sumIncome = (inputs: readonly TaxIncomeFacts[]): TaxIncomeFacts => Object.freeze(Object.fromEntries(Object.keys(emptyTaxIncome()).map(key => [key, inputs.reduce((sum, input) => sum.plus(input[key as keyof TaxIncomeFacts]), zero())])) as unknown as TaxIncomeFacts);
+
+function niitBases(rule: TaxCoreRule, income: TaxIncomeFacts) {
+  // Cross-character offsets preserve the signed total. Ordinary tax still
+  // nets each character separately to determine the preferential base.
+  let capital = income.shortTermGains.plus(income.longTermGains);
+  if (capital.isNegative()) {
+    if (rule.income?.basis !== "recognized_income") {
+      throw new ValidationError({ severity: "error", code: "NIIT_CAPITAL_LOSS_BASE_UNSUPPORTED",
+        message: "NIIT on a net capital loss requires a recognized-income rule with an annual capital-loss deduction limit.", entityType: "tax_execution" });
+    }
+    const floor = rule.income.capitalLossDeductionLimit.negated();
+    if (capital.compare(floor) < 0) capital = floor;
+  }
+  const investment = income.taxableInterest.plus(income.ordinaryDividends).plus(income.qualifiedDividends).plus(capital);
+  const magi = investment.plus(income.wages).plus(income.traditionalDistributions)
+    .minus(income.traditionalDistributionBasisRecovered).plus(income.taxableRothDistributions)
+    .minus(income.eligibleTraditionalDeduction);
+  return { modifiedAdjustedGrossIncome: magi.isNegative() ? zero() : magi, netInvestmentIncome: investment.isNegative() ? zero() : investment };
+}
+
 interface TaxYearRuntime {
   readonly payrollEvidence?: readonly PayrollWithholdingEvidence[];
   readonly paymentTraceRefs?: Readonly<Record<string, RecognizedTaxEconomics["traceRefs"]>>;
@@ -379,12 +399,9 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
                 if (hsa.compare(wagesBefore) > 0) throw new ValidationError({ severity: "error", code: "PAYROLL_HSA_EMPLOYEE_BASE_INVALID", message: "Employee HSA exclusions exceed this employee's wages.", entityType: "tax_execution" });
                 wages.set(employee, wagesBefore.minus(hsa));
               }
-              const gross = income.wages.plus(income.taxableInterest).plus(income.ordinaryDividends).plus(income.qualifiedDividends).plus(income.shortTermGains).plus(income.longTermGains)
-                .plus(income.traditionalDistributions).minus(income.traditionalDistributionBasisRecovered).plus(income.taxableRothDistributions);
-              const nii = income.taxableInterest.plus(income.ordinaryDividends).plus(income.qualifiedDividends).plus(income.shortTermGains).plus(income.longTermGains);
               const application = applyTaxCoreRule(resolved, { income, ...legalBases, withholding: zero(), estimatedPayments: zero(), priorPaymentCredit: zero(),
                 ...(resolved.rule.payroll === undefined ? {} : { employeeWages: [...wages].map(([employeeKey, amount]) => ({ employeeKey, wages: amount })) }),
-                ...(resolved.rule.niit === undefined ? {} : { modifiedAdjustedGrossIncome: gross.compare(income.eligibleTraditionalDeduction) < 0 ? zero() : gross.minus(income.eligibleTraditionalDeduction), netInvestmentIncome: nii.isNegative() ? zero() : nii }),
+                ...(resolved.rule.niit === undefined ? {} : niitBases(resolved.rule, income)),
                 ...(resolved.rule.periodicEmployeeTax === undefined ? {} : { periodicWages: { unit: resolved.rule.periodicEmployeeTax.unit,
                   wages: health.some(h => h.required)
                     ? group.entries.reduce((sum, entry, index) => sum.plus((healthBase(index, "periodic") ?? entry.income.wages).times(decimal(entry.allocation))), zero())
