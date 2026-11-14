@@ -4,11 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { compileModeledIncomeFixture } from "../../../fixtures/modeledIncome.js";
 import { accountingTransactionId } from "../../../../src/accounting/index.js";
 import { domainId, idempotencyKey } from "../../../../src/identity/index.js";
 import { createAuthoritativeState, cloneAuthoritativeState } from "../../../../src/state/index.js";
 import { instant } from "../../../../src/time/index.js";
-import { money, Rate, rateConvention, USD } from "../../../../src/values/index.js";
+import { money, USD } from "../../../../src/values/index.js";
 import { attachRetirementCash, type RetirementCashInput } from "../../../../src/simulation/d2/integration/retirementCash/index.js";
 import { evaluateWithdrawalRmd } from "../../../../src/simulation/d2/retirement/withdrawalRmd/index.js";
 import type { WithdrawalCash, WithdrawalRequest } from "../../../../src/simulation/d2/retirement/withdrawals/index.js";
@@ -245,13 +246,14 @@ describe("#149 source-qualified cash-only retirement execution", () => {
     // A real VS2 income stream exposes its CASH resource to prepare(), rather
     // than relying on participant observer order to establish contention.
     const payday = instant("2026-06-15T00:00:00.000Z");
+    const wages = compileModeledIncomeFixture(f.context, 1, {
+      householdId: ids.household, personId: ids.person, accountId: ids.bank, accountType: "checking",
+      incomes: [{ id: uuid(41), type: "salary", amount: "100", startDate: payday.slice(0, 10) }],
+    });
     const kernel = applyHouseholdExecutionOverlay(attached.kernel, { cashFlowInput: {
       householdId: ids.household, ownerId: ids.person, cashAccountId: ids.bank,
       expensePayableLiabilityId: domainId("liability", uuid(40)), baseCurrency: USD, expenses: [], events: [],
-      incomes: [{ id: domainId("income", uuid(41)), ownerId: ids.person, baseMonthlyAmount: money("100"), start: payday,
-        recurrence: { kind: "utc_monthly", anchor: payday, invalidDayPolicy: "skip" }, depositAccountId: ids.bank,
-        growthRate: Rate.fromDecimal("0", rateConvention.effectiveAnnual()), growthBaseAt: payday,
-        primitiveIds: { growth: domainId("primitive-instance", uuid(42)), recurrence: domainId("primitive-instance", uuid(43)) } }],
+      incomes: wages.incomes,
     } });
     const out = runHouseholdKernel({ kernel, runContext: f.context, resultTier: "detail" });
     expect(out.periods).toEqual([]);

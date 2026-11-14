@@ -219,8 +219,11 @@ describe("original-backed same-event physical settlement", () => {
     const restored = restorePortableHouseholdReplayArtifact(JSON.parse(JSON.stringify(artifact)));
     expect(replayHouseholdForecastWindow(restored, selected).periods).toEqual(detail.periods.slice(-1));
     expect(artifact.encoded).not.toContain("publisher-original-payload");
+    const cached = restorePortableHouseholdReplayArtifact(artifact);
+    expect(restorePortableHouseholdReplayArtifact(artifact)).toBe(cached);
     control.missing = true;
     expect(() => restorePortableHouseholdReplayArtifact(artifact)).toThrow();
+    expect(() => restorePortableHouseholdReplayArtifact({ ...artifact })).toThrow();
     resetSources();
     const directory = mkdtempSync(join(tmpdir(), "pfm-original-ssa-"));
     try {

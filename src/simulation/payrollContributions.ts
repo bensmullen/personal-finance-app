@@ -10,6 +10,10 @@ import { decideContribution, recordContribution, employerContributionCandidate, 
 import { contributionPolicyAt, projectedContributionDiagnostics } from "./contributionProjection.js";
 import { taxBalanceIds, type TaxCapabilityDiagnostic, type PayrollWithholdingElection, type PayrollWithholdingEvidence } from "./tax/contracts.js";
 import { canonicalSerialize } from "./run.js";
+import { applyHouseholdDomainTransactionAtomically, type HouseholdBankEventContext } from "../state/index.js";
+import { qualifyHouseholdWage, type HouseholdWageSourceRef, type WageStreamOriginal } from "./d2/integration/householdWages/index.js";
+import type { Period } from "../time/index.js";
+import { assertModeledPayrollOccurrence, type ModeledPayrollOccurrence } from "./d2/integration/householdWages/modeledPayroll.js";
 
 export interface PayrollContributionAllocation {
   readonly id: string;
@@ -31,12 +35,36 @@ const percent = (rate: string) => {
 export const payrollContributionCandidate = (opening: AuthoritativeState, input: {
   readonly id: string; readonly incomeId: string; readonly at: Instant; readonly gross: Money; readonly depositAccountId: AccountId;
   readonly allocations: readonly PayrollContributionAllocation[];
+  readonly householdId?: string;
   readonly ownerId?: string;
   readonly occurrenceId?: string;
   readonly withholding?: readonly PayrollWithholdingElection[];
   readonly taxCreditAccountId?: AccountId;
   readonly healthPremium?: { readonly source: PayrollHealthSourceBinding; readonly context: D2SettlementSourceContext };
+  readonly modeledPayroll?: ModeledPayrollOccurrence;
+  readonly runContext?: import("./run.js").RunContext;
+  readonly householdWage?: { readonly source: HouseholdWageSourceRef; readonly stream: WageStreamOriginal; readonly context: HouseholdBankEventContext; readonly period: Period };
 }) => {
+  // Contribution-only paychecks obey the same recipient boundary as withholding.
+  if (input.modeledPayroll !== undefined) {
+    assertModeledPayrollOccurrence(input.modeledPayroll, opening.accounts[input.depositAccountId], input);
+    if (input.healthPremium !== undefined || input.householdWage !== undefined) return invalid("HOUSEHOLD_PAYROLL_HEALTH_REQUIRES_S4");
+  }
+  // Person-to-Person salary deposits remain supported for existing D1 family HSA.
+  // Only Household-owned BANK income requires independently qualified D2 wage
+  // or a compiler-issued modeled payroll witness.
+  const householdId = input.householdId ?? input.householdWage?.context.householdId ??
+    input.modeledPayroll?.householdId;
+  const receivingOwner = opening.accounts[input.depositAccountId]?.ownerId;
+  if (input.householdWage === undefined && input.modeledPayroll === undefined && input.ownerId !== undefined &&
+    // Direct callers with no authenticated Household context must not infer
+    // whether a mismatched bank belongs to another Person or the Household.
+    (householdId === undefined ? receivingOwner !== input.ownerId : receivingOwner === householdId))
+    return invalid(input.healthPremium === undefined ? "HOUSEHOLD_BANK_INCOME_REQUIRES_QUALIFIED_ORIGINAL" : "HOUSEHOLD_PAYROLL_HEALTH_REQUIRES_S4");
+  if (input.gross.isPositive() && input.householdWage === undefined && input.modeledPayroll === undefined && input.healthPremium === undefined)
+    return invalid("INCOME_REQUIRES_QUALIFIED_ORIGINAL");
+  if (input.householdWage !== undefined && (input.healthPremium !== undefined ||
+    opening.d2PostedTransactions?.[accountingTransactionId(input.id)]?.registration.kind === "payroll_health_deduction")) return invalid("HOUSEHOLD_PAYROLL_HEALTH_REQUIRES_S4");
   const healthQualification = input.healthPremium === undefined ? undefined : qualifyPayrollHealthSource(input.healthPremium.source, input.healthPremium.context);
   if (healthQualification?.status === "incomplete") return invalid(`Payroll health source incomplete: ${healthQualification.reason}`);
   const health = healthQualification?.deduction;
@@ -81,7 +109,10 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
   const elections = (input.withholding ?? []).filter(item => item.start <= input.at && (item.end === undefined || input.at < item.end));
   const creditUnit = Unit.of("usd_tax_credit");
   const bank = candidate.accounts[input.depositAccountId];
-  if (elections.length && (!input.ownerId || !input.occurrenceId || !bank || bank.ownerId !== input.ownerId || !["cash", "checking", "savings"].includes(bank.kind) || input.gross.currency.code !== "USD")) return invalid("Withholding requires a source-owned USD receiving bank and occurrence identity");
+  if (elections.length && (!input.ownerId || !input.occurrenceId || !bank ||
+    (input.householdWage === undefined && input.modeledPayroll === undefined && bank.ownerId !== input.ownerId) ||
+    !["cash", "checking", "savings"].includes(bank.kind) || input.gross.currency.code !== "USD"))
+    return invalid("Withholding requires a source-owned USD receiving bank and occurrence identity");
   if (new Set(elections.map(item => item.jurisdiction)).size !== elections.length) return invalid("Conflicting active withholding elections");
   const creditAccountId = input.taxCreditAccountId ?? input.depositAccountId;
   if (elections.length && (!candidate.accounts[creditAccountId] || input.taxCreditAccountId === undefined && Object.values(candidate.accounts).filter(account => ["cash", "checking", "savings"].includes(account.kind)).length > 1)) return invalid("Multiple receiving banks require the shared tax credit account binding");
@@ -121,7 +152,23 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
     ...(net.isPositive() ? [{ type: "cash" as const, posting: "debit" as const, amount: net, accountId: input.depositAccountId, cashFlowClass: "operating" as const }] : []),
     { type: "income" as const, posting: "credit" as const, amount: input.gross },
   ].map(createAccountingLeg) });
-  if (health === undefined) applyAccountingTransactionAtomically(candidate, transaction);
+  if (input.householdWage !== undefined) {
+    const { source, context, period } = input.householdWage;
+    const stream = input.householdWage.stream;
+    const run = input.runContext;
+    if (run === undefined || run.runId !== context.runId || run.asOf !== context.asOf || run.dataCutoff !== context.dataCutoff ||
+        period.start < run.simulationStart || period.end > run.simulationEnd ||
+        input.householdId !== context.householdId || context.personId !== input.ownerId ||
+        context.bankAccountId !== input.depositAccountId || context.eventAt !== input.at || context.eventId !== input.id || !input.occurrenceId)
+      return invalid("Household wage context differs from the actual paycheck");
+    if (canonicalSerialize(stream.payrollContributions ?? []) !== canonicalSerialize(input.allocations) ||
+        canonicalSerialize(stream.payrollWithholding ?? []) !== canonicalSerialize(input.withholding ?? []) ||
+        stream.payrollTaxCreditAccountId !== input.taxCreditAccountId)
+      return invalid("Household wage elections differ from the original paycheck");
+    const evidence = qualifyHouseholdWage(source, context, { stream, incomeId: input.incomeId, occurrenceId: input.occurrenceId, period, gross: input.gross, transaction });
+    applyHouseholdDomainTransactionAtomically(candidate, transaction, evidence);
+  }
+  else if (health === undefined) applyAccountingTransactionAtomically(candidate, transaction);
   else applyPayrollHealthTransactionAtomically(candidate, transaction, health, input.healthPremium!.context);
   const transactions = [transaction];
   for (const allocation of employers) {

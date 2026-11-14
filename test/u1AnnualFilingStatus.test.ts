@@ -7,6 +7,8 @@ import { contributionPolicyAt } from "../src/simulation/contributionProjection.j
 import { createHouseholdTaxParticipant } from "../src/simulation/tax/participant.js";
 import { runHouseholdKernel, replayHouseholdForecastWindow } from "../src/simulation/householdExecution.js";
 import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../src/simulation/r3/replayArtifact.js";
+import { restoreHouseholdForecastEvidence } from "../src/application/householdProjection.js";
+import { applicationReplayArtifact } from "./fixtures/applicationReplay.js";
 import { compileHouseholdKernel } from "../src/simulation/r3/compiledHousehold.js";
 import { portableHouseholdParticipant, restoreHouseholdParticipant } from "../src/simulation/r3/participantCodec.js";
 import type { HouseholdTaxInput } from "../src/simulation/tax/contracts.js";
@@ -99,12 +101,13 @@ describe("U1 one annual household filing authority", () => {
     if (compiled.status !== "compiled") throw new Error(JSON.stringify(compiled.diagnostics));
     expect(compiled.value.participants![0]!.portableCodec).toBe("household-tax/v2");
     const summary = runHouseholdKernel({ kernel: compiled.value.executionKernel!, runContext: d1IntegratedRunContext() });
-    const restored = restorePortableHouseholdReplayArtifact(structuredClone(createPortableHouseholdReplayArtifact(summary)));
+    const artifact = structuredClone(applicationReplayArtifact(model, d1IntegratedCompilerRequest(), d1IntegratedRunContext()));
+    const restored = restoreHouseholdForecastEvidence(artifact, structuredClone(model));
     const rerun = runHouseholdKernel({ kernel: restored.replay.kernel, runContext: restored.replay.runContext });
     expect(canonicalSerialize(rerun.state)).toBe(canonicalSerialize(summary.state));
     expect(rerun.periods).toEqual(summary.periods);
     expect(replayHouseholdForecastWindow(restored, summary.periods[0]!.period)).toEqual(replayHouseholdForecastWindow(summary, summary.periods[0]!.period));
-    const legacy = taxHouseholdFixture();
+    const legacy = taxHouseholdFixture({ employerOriginal: true });
     expect(createHouseholdTaxParticipant(legacy.input).portableCodec).toBe("household-tax/v1");
     const oldRun = runHouseholdKernel({ kernel: legacy.kernel, runContext: legacy.context });
     const oldRestored = restorePortableHouseholdReplayArtifact(structuredClone(createPortableHouseholdReplayArtifact(oldRun)));
