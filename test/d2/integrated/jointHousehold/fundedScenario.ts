@@ -26,13 +26,13 @@ function scope<T>(value: T, date: string): T {
   return visit(value) as T;
 }
 
-export function fundedHousehold({ months = 2, second = true, deferred = false } = {}) {
+export function fundedHousehold({ months = 2, second = true, deferred = false, wageDay = "05" } = {}) {
   const medical = medicalSource(), card = cardSource();
   // Literal documentary balances from the dated truth table, not prior runs.
   const fsa = { ...medical, deposit: { ...medical.deposit, bankCashBefore: money(deferred ? "1200" : second ? "1900" : "1700") } };
   publishers.fsa = () => fsa;
   publishers.card = () => ({ ...card, payment: { ...card.payment, bankCashBefore: money(deferred ? "1400" : second ? "2100" : "1900") } });
-  const s = combinedScenario({ months, fsa });
+  const s = combinedScenario({ months, fsa, wageDay });
   const horizon = { start: s.context.simulationStart, end: s.context.simulationEnd };
   const documentary = fixture(1, undefined, "2026-01");
   const plan = (label: string, date: string, amount: string, ira: string, bank: string, previous?: RetirementRawSource): RetirementRawSource => {

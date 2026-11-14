@@ -16,6 +16,8 @@ import { createAuthoritativeState } from "../src/state/index.js";
 import { instant } from "../src/time/index.js";
 import { Quantity, Rate, RoundingPolicy, SHARE, USD, money, rateConvention, ratePeriod } from "../src/values/index.js";
 import { createDomainMechanicsParticipant } from "../src/simulation/domainMechanics.js";
+import { compileModeledIncomeFixture } from "./fixtures/modeledIncome.js";
+import { runCompiledHouseholdProjection as runReferenceHouseholdProjection } from "../src/simulation/r3/referenceHouseholdExecution.js";
 
 const ids = {
   household: domainId("household", "93000000-0000-4000-8000-000000000001"), owner: domainId("person", "93000000-0000-4000-8000-000000000002"),
@@ -30,10 +32,18 @@ const ids = {
 const scenario = "93000000-0000-4000-8000-000000000007";
 const start = instant("2026-01-01T00:00:00.000Z"); const end = instant("2026-02-01T00:00:00.000Z");
 const primitive = (suffix: string) => domainId("primitive-instance", `93000000-0000-4000-8001-${suffix.padStart(12, "0")}`);
-const cashFlow: VerticalSlice2Input = { householdId: ids.household, ownerId: ids.owner, cashAccountId: ids.cash, expensePayableLiabilityId: ids.payable, baseCurrency: USD, sameInstantCashFlowOrder: "income_before_expense", expenses: [], events: [], incomes: [{ id: ids.income, ownerId: ids.owner, depositAccountId: ids.cash, baseMonthlyAmount: money("100"), start, recurrence: { kind: "utc_monthly", anchor: instant("2026-01-15T00:00:00.000Z"), invalidDayPolicy: "skip" }, growthRate: Rate.fromDecimal("0", rateConvention.effectiveAnnual()), growthBaseAt: instant("2026-01-15T00:00:00.000Z"), primitiveIds: { growth: primitive("1"), recurrence: primitive("2") } }] };
-const opening = () => createAuthoritativeState({ accounts: { [ids.cash]: { id: ids.cash, kind: "brokerage", ownerId: ids.owner, cash: money("10") } }, positions: { [ids.position]: { id: ids.position, accountId: ids.cash, quantity: Quantity.parse("5", SHARE), price: money("10"), carryingValue: money("50") } }, liabilities: { [ids.payable]: { id: ids.payable, balance: money("0") } } });
+const cashFlow: VerticalSlice2Input = { householdId: ids.household, ownerId: ids.owner, cashAccountId: ids.cash, expensePayableLiabilityId: ids.payable, baseCurrency: USD, sameInstantCashFlowOrder: "income_before_expense", expenses: [], events: [], incomes: [] };
+const opening = () => createAuthoritativeState({ accounts: { [ids.cash]: { id: ids.cash, kind: "checking", ownerId: ids.owner, cash: money("10") } }, positions: { [ids.position]: { id: ids.position, accountId: ids.cash, quantity: Quantity.parse("5", SHARE), price: money("10"), carryingValue: money("50") } }, liabilities: { [ids.payable]: { id: ids.payable, balance: money("0") } } });
 const context = (months = 1) => createRunContext({ runId: runId("93000000-0000-4000-8000-000000000008"), scenarioId: scenarioId(scenario), asOf: instant("2025-12-31T00:00:00.000Z"), dataCutoff: instant("2025-12-31T00:00:00.000Z"), simulationStart: start, simulationEnd: months === 1 ? end : instant("2026-03-01T00:00:00.000Z"), baseCurrency: USD });
-const compiled = (lateFailure = false, withAsset = false): CompiledHouseholdProjection => ({ cashFlowInput: cashFlow, ...(lateFailure ? { liabilityInput: { householdId: ids.household, ownerId: ids.owner, baseCurrency: USD, loans: [{ id: ids.loan, principalLiabilityId: ids.missingPrincipal, interestPayableLiabilityId: ids.missingInterest, primitiveIds: { schedule: primitive("20"), amortization: primitive("21"), accrual: primitive("22") } } as never] } } : {}), reconciledOpeningState: opening(), reconciledPrimitiveState: createPrimitiveRuntimeStateStore(), standaloneAssets: withAsset ? [{ id: ids.standaloneAsset, value: money("7") }] : [], scenarioIdentity: scenario, executionMonths: 1, contentionPolicy: { id: "pr20-order", version: "1", rules: [] }, diagnostics: [], scenarioBindings: { cashFlow: { incomeIds: {}, expenseIds: {}, accountIds: {}, retirementEvents: {} } } });
+const modeledCashFlow = (startDate = "2026-01-15", retirementBindings?: Parameters<typeof compileModeledIncomeFixture>[2]["retirementBindings"], months = 1): VerticalSlice2Input => {
+  const authored = compileModeledIncomeFixture(context(months), months, {
+    householdId: ids.household, personId: ids.owner, accountId: ids.cash, accountType: "checking",
+    incomes: [{ id: ids.income, type: "salary", amount: "100", startDate }],
+    ...(retirementBindings === undefined ? {} : { retirementBindings }),
+  });
+  return { ...authored, expensePayableLiabilityId: ids.payable };
+};
+const compiled = (lateFailure = false, withAsset = false): CompiledHouseholdProjection => ({ cashFlowInput: modeledCashFlow(), ...(lateFailure ? { liabilityInput: { householdId: ids.household, ownerId: ids.owner, baseCurrency: USD, loans: [{ id: ids.loan, principalLiabilityId: ids.missingPrincipal, interestPayableLiabilityId: ids.missingInterest, primitiveIds: { schedule: primitive("20"), amortization: primitive("21"), accrual: primitive("22") } } as never] } } : {}), reconciledOpeningState: opening(), reconciledPrimitiveState: createPrimitiveRuntimeStateStore(), standaloneAssets: withAsset ? [{ id: ids.standaloneAsset, value: money("7") }] : [], scenarioIdentity: scenario, executionMonths: 1, contentionPolicy: { id: "pr20-order", version: "1", rules: [] }, diagnostics: [], scenarioBindings: { cashFlow: { incomeIds: {}, expenseIds: {}, accountIds: {}, retirementEvents: {} } } });
 
 describe("compiled household execution", () => {
   it("compares late-horizon warning growth exactly with work proportional to distinct diagnostics, not catalog copies", () => {
@@ -211,7 +221,7 @@ describe("compiled household execution", () => {
     const at = (day: string) => instant(`2026-01-${day}T00:00:00.000Z`);
     const runChronology = (incomeAt: string, debtAt: string) => runCompiledHouseholdProjection({ runContext: context(), compiled: {
       ...compiled(), reconciledOpeningState: startState,
-      cashFlowInput: { ...cashFlow, incomes: [{ ...cashFlow.incomes[0]!, recurrence: { kind: "utc_monthly", anchor: at(incomeAt), invalidDayPolicy: "skip" }, growthBaseAt: at(incomeAt) }] },
+      cashFlowInput: modeledCashFlow(at(incomeAt).slice(0, 10)),
       investmentInput,
       liabilityInput: { ...liabilityInput, loans: [{ ...liabilityInput.loans[0]!, paymentSchedule: { kind: "utc_monthly", anchor: at(debtAt), invalidDayPolicy: "skip" } }] },
     } });
@@ -351,6 +361,7 @@ describe("compiled household execution", () => {
     const oneMonth = runCompiledHouseholdProjection({ runContext: context(), compiled: { ...compiled(), reconciledOpeningState } });
     const twoMonths = runCompiledHouseholdProjection({ runContext: context(2), compiled: {
       ...compiled(), executionMonths: 2,
+      cashFlowInput: modeledCashFlow("2026-01-15", undefined, 2),
       reconciledOpeningState,
       investmentInput: { householdId: ids.household, ownerId: ids.owner, baseCurrency: USD, valuationAccountingPolicy: "economic_only", ruleCatalog: [], purchases: [], fees: [], returns: [], transfers: [{ id: ids.transfer, sourceAccountId: ids.cash, destinationAccountId: ids.savings, amount: money("300"), eligibilitySchedule: { kind: "explicit_instants", instants: [instant("2026-02-05T00:00:00.000Z")] }, executionTiming: "end_of_period", order: 1, schedulePrimitiveId: primitive("112") }] },
     } });
@@ -391,21 +402,25 @@ describe("compiled household execution", () => {
 
   it("commits a staged termination runtime even when it suppresses every occurrence", () => {
     const termination = domainId("event", "93000000-0000-4000-8000-000000000013");
-    const terminationPrimitive = primitive("30");
-    const input: VerticalSlice2Input = {
-      ...cashFlow,
-      incomes: [{ ...cashFlow.incomes[0]!, terminationEventId: termination, primitiveIds: { ...cashFlow.incomes[0]!.primitiveIds, termination: terminationPrimitive } }],
-      events: [{ id: termination, targetId: ids.income, kind: "termination", effectiveAt: start }],
-    };
+    const input = modeledCashFlow("2026-01-15", [
+      { incomeId: ids.income, terminationEventId: termination, baselineDate: start.slice(0, 10) },
+    ]);
+    const terminationPrimitive = input.incomes[0]!.primitiveIds.termination!;
     const unrelated = primitive("23");
-    const result = runCompiledHouseholdProjection({ runContext: context(), compiled: {
+    const request = { runContext: context(), compiled: {
       ...compiled(),
       cashFlowInput: input,
       reconciledPrimitiveState: createPrimitiveRuntimeStateStore({
         [unrelated]: { primitiveId: "P23", state: { evaluations: 1, lastClosingValue: money("1") } },
       }),
-    } });
+    } };
+    const result = runCompiledHouseholdProjection(request);
+    const reference = runReferenceHouseholdProjection(request);
     expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+    expect(reference.status, JSON.stringify(reference.diagnostics)).toBe("completed");
+    expect(reference.periods[0]!.transactions).toEqual(result.periods[0]!.transactions);
+    expect(reference.state).toEqual(result.state);
+    expect(reference.primitiveState).toEqual(result.primitiveState);
     expect(result.periods[0]!.transactions).toHaveLength(0);
     expect(result.primitiveState[terminationPrimitive]?.primitiveId).toBe("P30");
     expect(result.primitiveState[unrelated]?.primitiveId).toBe("P23");
@@ -413,19 +428,72 @@ describe("compiled household execution", () => {
   });
 
   it("commits activation runtime and lineage before executing the activated occurrence", () => {
-    const activation = domainId("event", "93000000-0000-4000-8000-000000000023");
-    const activationPrimitive = primitive("113");
-    const input: VerticalSlice2Input = {
-      ...cashFlow,
-      incomes: [{ ...cashFlow.incomes[0]!, activationEventId: activation, primitiveIds: { ...cashFlow.incomes[0]!.primitiveIds, activation: activationPrimitive } }],
-      events: [{ id: activation, targetId: ids.income, kind: "activation", effectiveAt: start }],
-    };
-    const result = runCompiledHouseholdProjection({ runContext: context(), compiled: { ...compiled(), cashFlowInput: input } });
+    const runContext = context();
+    const canonicalEvent = "93000000-0000-4000-8000-000000000023";
+    const input = compileModeledIncomeFixture(runContext, 1, {
+      householdId: ids.household, personId: ids.owner, accountId: ids.cash, accountType: "checking",
+      incomes: [{ id: ids.income, type: "salary", amount: "100", startDate: start.slice(0, 10), jobChangeEventId: canonicalEvent }],
+    });
+    const activation = input.incomes[0]!.activationEventId!;
+    const activationPrimitive = input.incomes[0]!.primitiveIds.activation!;
+    const request = { runContext, compiled: {
+      ...compiled(), cashFlowInput: input,
+      reconciledOpeningState: createAuthoritativeState({
+        accounts: { [ids.cash]: { id: ids.cash, ownerId: ids.owner, kind: "checking", cash: money("10") } },
+        liabilities: { [input.expensePayableLiabilityId]: { id: input.expensePayableLiabilityId, balance: money("0") } },
+      }),
+    } };
+    const result = runCompiledHouseholdProjection(request);
+    const reference = runReferenceHouseholdProjection(request);
     expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+    expect(reference.status, JSON.stringify(reference.diagnostics)).toBe("completed");
     expect(result.periods[0]!.transactions).toHaveLength(1);
+    expect(result.periods[0]!.transactions[0]!.legs).toHaveLength(2);
+    expect(result.periods[0]!.statements.income).toEqual(money("100"));
+    expect(result.periods[0]!.cash).toEqual(money("110"));
     expect(result.primitiveState[activationPrimitive]?.primitiveId).toBe("P27");
     expect(result.periods[0]!.traceRefs.some((ref) => ref.traceId.includes(`event:${activation}`))).toBe(true);
+    expect(result.periods[0]!.traceRefs.some((ref) => ref.traceId.includes(`compiler:canonical:Event:${canonicalEvent}`))).toBe(true);
+    expect(reference.periods[0]!.transactions).toEqual(result.periods[0]!.transactions);
+    expect(reference.periods[0]!.traceRefs).toEqual(result.periods[0]!.traceRefs);
+    expect(reference.primitiveState[activationPrimitive]).toEqual(result.primitiveState[activationPrimitive]);
+
+    const alteredInput = { ...input, events: input.events.map(event => ({
+      ...event, effectiveAt: instant("2026-01-02T00:00:00.000Z"),
+    })) };
+    for (const rejected of [
+      runCompiledHouseholdProjection({ ...request, compiled: { ...request.compiled, cashFlowInput: alteredInput } }),
+      runReferenceHouseholdProjection({ ...request, compiled: { ...request.compiled, cashFlowInput: alteredInput } }),
+    ]) {
+      expect(rejected.status).toBe("incomplete");
+      expect(rejected.periods).toHaveLength(0);
+      expect(rejected.primitiveState[activationPrimitive]).toBeUndefined();
+      expect(rejected.state).toEqual(request.compiled.reconciledOpeningState);
+    }
   });
+
+  it.each([["2025-12-15", "100"], ["2026-02-01", "0"]])(
+    "qualifies salary linked to a job change outside the run on %s",
+    (startDate, expectedIncome) => {
+      const runContext = context();
+      const authored = compileModeledIncomeFixture(runContext, 1, {
+        householdId: ids.household, personId: ids.owner, accountId: ids.cash, accountType: "checking",
+        incomes: [{ id: ids.income, type: "salary", amount: "100", startDate,
+          jobChangeEventId: "93000000-0000-4000-8000-000000000023" }],
+      });
+      expect(authored.events).toEqual([]);
+      expect(authored.incomes[0]!.activationEventId).toBeUndefined();
+      const request = { runContext, compiled: {
+        ...compiled(), cashFlowInput: { ...authored, expensePayableLiabilityId: ids.payable },
+      } };
+      const result = runCompiledHouseholdProjection(request);
+      const reference = runReferenceHouseholdProjection(request);
+      expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+      expect(reference.status, JSON.stringify(reference.diagnostics)).toBe("completed");
+      expect(result.periods[0]!.statements.income).toEqual(money(expectedIncome));
+      expect(reference.periods[0]!.transactions).toEqual(result.periods[0]!.transactions);
+    },
+  );
 
   it("commits staged P23/P26 runtime only through executed valuations across periods", () => {
     const compounding = primitive("50");
@@ -470,7 +538,8 @@ describe("compiled household execution", () => {
   it("canonicalizes irrelevant input ordering but fingerprints contention policy identity", () => {
     const base = compiled();
     const forward = runCompiledHouseholdProjection({ runContext: context(), compiled: base });
-    const reordered = runCompiledHouseholdProjection({ runContext: context(), compiled: { ...base, cashFlowInput: { ...cashFlow, incomes: [...cashFlow.incomes].reverse(), expenses: [...cashFlow.expenses].reverse(), events: [...cashFlow.events].reverse() } } });
+    const cash = base.cashFlowInput!;
+    const reordered = runCompiledHouseholdProjection({ runContext: context(), compiled: { ...base, cashFlowInput: { ...cash, incomes: [...cash.incomes].reverse(), expenses: [...cash.expenses].reverse(), events: [...cash.events].reverse() } } });
     expect(reordered.state).toEqual(forward.state);
     expect(reordered.runMetadata.inputFingerprint).toBe(forward.runMetadata.inputFingerprint);
     const changedPolicy = runCompiledHouseholdProjection({ runContext: context(), compiled: { ...base, contentionPolicy: { id: "different-policy", version: "1", rules: [] } } });

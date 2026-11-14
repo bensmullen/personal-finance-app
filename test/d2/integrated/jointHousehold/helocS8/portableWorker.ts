@@ -13,6 +13,8 @@ if (!path) throw new Error("S8_4_PAYLOAD_MISSING");
 // The artifact never supplies a document, approval, quote or source catalog.
 const s = jointHeloc({ months: 25, payments: 13 }), first = s.pairs[0]!;
 const mode = process.env.PFM_S8_HELOC_MODE ?? "present";
+if (mode === "changed_employer") s.wages.source.mode = "changed";
+if (mode === "missing_wage_bank") s.wages.source.mode = "bank_missing";
 if (mode === "withdrawn") archive.delete(first.issuer.sourceId);
 if (mode === "version") archive.set(first.issuer.sourceId, { ...first.issuer, version: "changed/v2" });
 if (mode === "bank_absent") debits.clear();
@@ -23,7 +25,7 @@ const { artifact, selected } = JSON.parse(readFileSync(path, "utf8"));
 let restored: ReturnType<typeof restorePortableHouseholdReplayArtifact>;
 try { restored = restorePortableHouseholdReplayArtifact(artifact); }
 catch (error) {
-  if (mode === "present") throw error;
+  if (mode === "present" || !(error instanceof Error) || !error.message.includes("HOUSEHOLD_REPLAY_BASIS_MISMATCH")) throw error;
   process.stdout.write(JSON.stringify({ rejected: true, issuerRead: reads.issuer > 0, bankRead: reads.bank > 0 }));
   process.exit(0);
 }
@@ -34,4 +36,5 @@ if (canonicalSerialize(out.state) !== canonicalSerialize(twice.state) || canonic
   throw new Error("S8_4_REPLAY_CHANGED");
 process.stdout.write(JSON.stringify({ state: canonicalSerialize(out.state), periods: canonicalSerialize(out.periods),
   issuerRead: reads.issuer > 0, bankRead: reads.bank > 0, cardRead: sourceReads.card > 0,
-  fsaRead: sourceReads.fsa > 0, retirementRead: retirementReads > 0 }));
+  fsaRead: sourceReads.fsa > 0, retirementRead: retirementReads > 0,
+  wageRead: s.wages.reads.employer > 0 && s.wages.reads.bank > 0 }));

@@ -26,6 +26,8 @@ import {
 import { CURRENT_RUN_VERSIONS } from "../model/version.js";
 import { normalizeContributionLimitRuleIds } from "./compiler/contributionBindings.js";
 import { createRunContext, runId, scenarioId } from "../simulation/run.js";
+import { selectScenario } from "./compiler/scenarioSelection.js";
+import { qualifyCashFlowScenario } from "./compiler/cashFlow.js";
 import {
   compareVerticalSlice2Scenarios,
   compareVerticalSlice3Scenarios,
@@ -1035,8 +1037,28 @@ export const runPersonalForecast = (
   try {
     const currency = Currency.of(request.baseCurrency);
     const start = iso(request.simulationStart);
+    const selected = selectScenario(draft, {
+      capabilityName: "cash_flow_forecast", executionLabel: "Cash-flow",
+      simulationStart: request.simulationStart, simulationEnd: request.simulationEnd,
+      ...(request.scenarioId === undefined ? {} : { scenarioId: request.scenarioId }),
+    });
+    if (selected.status !== "compiled") return deepFreeze({
+      ...unavailableForecast(request, selected.diagnostics.map(value => value.message).join("; ")),
+      diagnostics: selected.diagnostics,
+    });
+    const runContext = createRunContext({
+      runId: runId(cryptoSafeRunId(draft.modelId)),
+      scenarioId: scenarioId(selected.value.id),
+      asOf: iso(request.asOf),
+      dataCutoff: iso(request.dataCutoff),
+      simulationStart: start,
+      simulationEnd: iso(request.simulationEnd),
+      baseCurrency: currency,
+    });
     const compilation = compileCashFlow(draft, {
       baseCurrency: request.baseCurrency,
+      asOf: request.asOf,
+      runContext,
       simulationStart: request.simulationStart,
       simulationEnd: request.simulationEnd,
       sameInstantCashFlowOrder: request.sameInstantCashFlowOrder,
@@ -1060,15 +1082,6 @@ export const runPersonalForecast = (
         diagnostics: compilation.diagnostics,
       });
     }
-    const runContext = createRunContext({
-      runId: runId(cryptoSafeRunId(draft.modelId)),
-      scenarioId: scenarioId(compilation.value.scenarioIdentity),
-      asOf: iso(request.asOf),
-      dataCutoff: iso(request.dataCutoff),
-      simulationStart: start,
-      simulationEnd: iso(request.simulationEnd),
-      baseCurrency: currency,
-    });
     const result = runVerticalSlice2({
       runContext,
       openingState: compilation.value.openingState,
@@ -1245,6 +1258,7 @@ export const comparePersonalScenarios = (
     if (comparisonRequest.scope === "cash_flow") {
       const compiled = compileCashFlow(draft, {
         ...common,
+        asOf: request.asOf,
         sameInstantCashFlowOrder: request.sameInstantCashFlowOrder,
         ...(request.cashFlowExecutionAccountId === undefined
           ? {}
@@ -1285,7 +1299,7 @@ export const comparePersonalScenarios = (
         openingState: compiled.value.openingState,
         input: compiled.value.input,
         months: executionMonths,
-      });
+      }, (resolved, runContext) => qualifyCashFlowScenario(compiled.value.input, resolved, runContext));
     } else if (comparisonRequest.scope === "investments") {
       if (!request.executionOwnerId)
         return unavailable(
