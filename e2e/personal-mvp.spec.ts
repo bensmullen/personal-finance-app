@@ -31,7 +31,7 @@ import {
   type JsonObject,
 } from "../src/application/personalMvp.js";
 import { GOLDEN_HOUSEHOLD_IDS, createGoldenHouseholdForecastRequest } from "../src/application/goldenHousehold.js";
-import { compileHouseholdProjection } from "../src/application/compiler/householdProjection.js";
+import { compileHouseholdKernelForRun } from "../src/application/householdProjection.js";
 import { runHouseholdKernel } from "../src/simulation/householdExecution.js";
 import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import { instant } from "../src/time/index.js";
@@ -237,10 +237,11 @@ test("D1-B normal investment controls persist a bank-funded operation without co
   const primitive = (restored.objects.PrimitiveInstance ?? []).find(item => typeof item === "object" && item !== null && !Array.isArray(item) && typeof item.parameters === "object" && item.parameters !== null && !Array.isArray(item.parameters) && item.parameters.adapter === "d1-domain-operation/v1") as JsonObject;
   expect(primitive.parameters).toMatchObject({ kind: "purchase", amount: "100", cashAccountId: GOLDEN_HOUSEHOLD_IDS.checking, holdingId: cryptoId, quantity: "1" });
   const golden = createGoldenHouseholdForecastRequest().compiler;
-  const compiled = compileHouseholdProjection(restored, { ...golden, cashFlow: { ...golden.cashFlow!, simulationEnd: "2026-02-01", months: 1 }, investments: { ...golden.investments!, simulationEnd: "2026-02-01", months: 1, purchaseInstructions: [] }, liabilities: { ...golden.liabilities!, simulationEnd: "2026-02-01", months: 1 } });
+  const runContext = createRunContext({ runId: runId("d1b90000-0000-4000-8000-000000000002"), scenarioId: scenarioId(GOLDEN_HOUSEHOLD_IDS.rootScenario), asOf: instant("2026-01-01T00:00:00.000Z"), dataCutoff: instant("2026-01-01T00:00:00.000Z"), simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-02-01T00:00:00.000Z"), baseCurrency: USD });
+  const compiled = compileHouseholdKernelForRun(restored, { ...golden, cashFlow: { ...golden.cashFlow!, simulationEnd: "2026-02-01", months: 1 }, investments: { ...golden.investments!, simulationEnd: "2026-02-01", months: 1, purchaseInstructions: [] }, liabilities: { ...golden.liabilities!, simulationEnd: "2026-02-01", months: 1 } }, runContext);
   expect(compiled.status, JSON.stringify(compiled)).toBe("compiled");
   if (compiled.status !== "compiled") throw new Error("Exported user operation did not compile");
-  const result = runHouseholdKernel({ kernel: compiled.value.executionKernel!, resultTier: "detail", runContext: createRunContext({ runId: runId("d1b90000-0000-4000-8000-000000000002"), scenarioId: scenarioId(GOLDEN_HOUSEHOLD_IDS.rootScenario), asOf: instant("2026-01-01T00:00:00.000Z"), dataCutoff: instant("2026-01-01T00:00:00.000Z"), simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-02-01T00:00:00.000Z"), baseCurrency: USD }) });
+  const result = runHouseholdKernel({ kernel: compiled.value.kernel, resultTier: "detail", runContext });
   expect(result.state.positions[cryptoId]!.quantity.amount.toString()).toBe("1");
   expect(result.state.positions[cryptoId]!.carryingValue.amount.toString()).toBe("100");
   const purchase = result.periods.flatMap(period => period.transactions).find(tx => tx.type === "purchase" && tx.id.startsWith("domain:"));

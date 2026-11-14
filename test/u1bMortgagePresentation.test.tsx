@@ -8,9 +8,9 @@ import { createGoldenHouseholdDraft } from "../src/application/personalMvp.js";
 import { createGoldenHouseholdForecastRequest, GOLDEN_HOUSEHOLD_IDS as ids } from "../src/application/goldenHousehold.js";
 import { formatExactMoney } from "../ui/entityPresentation.js";
 
-function window() {
+function window(model = createGoldenHouseholdDraft()) {
   const request = createGoldenHouseholdForecastRequest();
-  const result = runPersonalHouseholdForecast(createGoldenHouseholdDraft(), { ...request, compiler: { ...request.compiler,
+  const result = runPersonalHouseholdForecast(model, { ...request, compiler: { ...request.compiler,
     cashFlow: { ...request.compiler.cashFlow!, simulationEnd: "2027-02-01", months: 13 },
     investments: { ...request.compiler.investments!, simulationEnd: "2027-02-01", months: 13 },
     liabilities: { ...request.compiler.liabilities!, simulationEnd: "2027-02-01", months: 13 } } });
@@ -52,7 +52,8 @@ describe("U1B-D exact mortgage presentation", () => {
     expect(late.rows).toHaveLength(1);
   });
   it("provides discrete month controls, distinct paid categories and an exact accessible table", () => {
-    const data = inspectMortgageWindow(window().points.slice(0, 12), ids.mortgage), selected = data.rows[1]!;
+    const model = createGoldenHouseholdDraft();
+    const data = inspectMortgageWindow(window(model).points.slice(0, 12), ids.mortgage, undefined, model), selected = data.rows[1]!;
     const before = JSON.stringify(data);
     const html = renderToStaticMarkup(<MortgageAmortization window={data} selectedStart={selected.start} selectMonth={() => {}} loanName="Example mortgage" />);
     for (const label of ["Interest paid", "Scheduled principal paid", "Extra principal paid", "Ending modeled loan principal", "Scheduled due (not paid)", "Interest accrued (not paid)", "Cumulative paid from forecast start", "Posted transaction evidence"])
@@ -69,7 +70,8 @@ describe("U1B-D exact mortgage presentation", () => {
     expect(JSON.stringify(data)).toBe(before);
   });
   it("labels a late partial window honestly and cannot continue full cumulatives across missing principal coverage", () => {
-    const data = inspectMortgageWindow(window().points.slice(12), ids.mortgage);
+    const model = createGoldenHouseholdDraft();
+    const data = inspectMortgageWindow(window(model).points.slice(12), ids.mortgage, undefined, model);
     const render = (value = data) => renderToStaticMarkup(<MortgageAmortization window={value} selectedStart={value.rows[0]!.start} selectMonth={() => {}} loanName="Example mortgage" />);
     expect(render()).toContain("Window-to-date paid");
     expect(render()).toContain("Full forecast cumulative amounts are unavailable");

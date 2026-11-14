@@ -33,9 +33,9 @@ function evidence(overrides: Partial<MonthlyEvidenceDetail> = {}): MonthlyEviden
 }
 const render = (detail = evidence()) => renderToStaticMarkup(React.createElement(CashAllocation, { draft, detail, review: noop, setup: noop }));
 
-function postedMonth(point: HouseholdForecastPoint) {
+function postedMonth(point: HouseholdForecastPoint, model: PersonalDraft) {
   const address = point.traceRefs.find(ref => ref.replayArtifact !== undefined)!.replayArtifact as { basis: unknown; start: string; end: string };
-  const basis = restorePortableHouseholdReplayArtifact(address.basis);
+  const basis = restorePortableHouseholdReplayArtifact(address.basis, undefined, model);
   return { basis, transactions: householdEvidenceMonth(basis, address.start, address.end).flatMap(period => period.transactions) };
 }
 
@@ -170,7 +170,7 @@ describe("Cash payroll credit classification from authentic committed replay", (
     expect(category.incomeIds).toEqual(expect.arrayContaining([golden.income, incomeId]));
     expect(category.holdingIds).toEqual([]);
     expect(category.accountIds).toEqual([]);
-    const { transactions } = postedMonth(forecast.points[0]!);
+    const { transactions } = postedMonth(forecast.points[0]!, model);
     for (const id of category.sourceIds) {
       const [transactionId, index] = id.split(":leg:");
       const leg = transactions.find(tx => tx.id === transactionId)!.legs[Number(index)]!;
@@ -193,7 +193,7 @@ describe("Cash payroll credit classification from authentic committed replay", (
     if (forecast.status === "unavailable") throw new Error("Expected supported domains alongside salary source limitations");
     const before = JSON.stringify({ model, forecast });
     const point = forecast.points[0]!;
-    const { transactions } = postedMonth(point);
+    const { transactions } = postedMonth(point, model);
     const salary = transactions.filter(tx => tx.type === "income" || tx.type === "payroll_income");
     expect(salary).toHaveLength(grossOrNet === "gross" ? 1 : 0);
     const postedDeposits = salary.flatMap(tx => tx.legs).reduce((sum, leg) =>

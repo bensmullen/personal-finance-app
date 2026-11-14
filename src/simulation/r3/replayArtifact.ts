@@ -1,17 +1,19 @@
 import { Currency, DecimalAmount, Money, Percentage, Quantity, Rate, Ratio, RoundingPolicy, Unit, type RateConvention, type RoundingMode } from "../../values/index.js";
-import { exportHouseholdReplayCheckpointRoots, registerHouseholdReplayCheckpoints, householdReplayCheckpointSelection, type HouseholdReplayCheckpoint, type HouseholdForecastSummaryResult, type ExecutableHouseholdProjection } from "../householdExecution.js";
+import { exportHouseholdReplayCheckpointRoots, registerHouseholdReplayCheckpoints, registerRestoredReplayAdmission, householdReplayCheckpointSelection, householdReplayTerminalRoot, type HouseholdReplayCheckpoint, type HouseholdForecastSummaryResult, type ExecutableHouseholdProjection } from "../householdExecution.js";
 import { assertD2PostedTransactionHistoryPreserved, assertD2SettlementReceiptHistoryPreserved, createAuthoritativeState,
   authoritativeCheckpointDelta, restoreAuthoritativeCheckpointDelta, requalifyD2SettlementReceiptHistory,
   assertSsaMedicarePaymentHistoryPreserved,
   assertRetirementDistributionHistoryPreserved, requalifyRetirementDistributionHistory,
   type AuthoritativeCheckpointDelta, type AuthoritativeState } from "../../state/index.js";
-import { createInputFingerprint } from "../run.js";
+import { canonicalSerialize, createInputFingerprint } from "../run.js";
 import { TaxEconomicLedger } from "../tax/economics.js";
 import { TaxDiagnosticLedger } from "../tax/diagnostics.js";
 import type { RecognizedTaxEconomics, TaxCapabilityDiagnostic } from "../tax/contracts.js";
 import type { RunContext, RunMetadata } from "../run.js";
 import type { HouseholdForecastSummaryPeriod } from "./forecastSummary.js";
 import { compileHouseholdKernel } from "./compiledHousehold.js";
+import { householdExecutionMetrics } from "./metrics.js";
+import type { Instant } from "../../time/index.js";
 import { portableHouseholdParticipant, restoreHouseholdParticipant, type PortableHouseholdParticipant } from "./participantCodec.js";
 // Composition boundary: domain codecs register factories; replay dispatch stays generic.
 import "../tax/replayCodec.js";
@@ -19,6 +21,31 @@ import "../workplaceEvents.js";
 import "../domainMechanics.js";
 import "../mortgageLifecycle.js";
 import { validateSsaMedicareSourceHistory } from "../d2/integration/ssaMedicare/index.js";
+
+/** One bounded application proposal per run. Its encoded digest is not trust. */
+export interface ModeledPayrollReplayBasis {
+  readonly version: "modeled-payroll-replay/v1";
+  readonly issuer: string;
+  readonly payload: unknown;
+}
+type ModelRequalifier = (basis: ModeledPayrollReplayBasis, executable: ExecutableHouseholdProjection,
+  context: RunContext, independentSource: unknown) => ExecutableHouseholdProjection;
+const modelRequalifiers = new Map<string, ModelRequalifier>();
+export function registerModeledPayrollReplayAuthority(issuer: "application-household/v1", requalify: ModelRequalifier): void {
+  if (issuer !== "application-household/v1" || modelRequalifiers.has(issuer)) throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: duplicate or unsupported model issuer");
+  modelRequalifiers.set(issuer, requalify);
+}
+function qualifyModelBasis(basis: ModeledPayrollReplayBasis | undefined, executable: ExecutableHouseholdProjection,
+  context: RunContext, independentSource: unknown): ExecutableHouseholdProjection {
+  const modeled = executable.cashFlowInput?.incomes.some(stream => stream.modeledPayroll !== undefined);
+  if (!basis && !modeled) return executable;
+  const authority = basis?.version === "modeled-payroll-replay/v1" ? modelRequalifiers.get(basis.issuer) : undefined;
+  if (!basis || !modeled || !authority || independentSource === undefined)
+    throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: independent authored model is required");
+  if (canonicalSerialize(basis).length > 262144)
+    throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: model proposal exceeds bounded replay extension");
+  return authority(basis, executable, context, independentSource);
+}
 
 type Wire = null | boolean | number | string | { readonly kind: string; readonly value: unknown };
 interface EncodingGraph { readonly identities: Map<object, Wire>; readonly content: Map<string, Wire>; readonly active: Set<object>; encodedValues: number }
@@ -107,30 +134,64 @@ const decode = (wire: Wire, references = new Map<number, unknown>()): unknown =>
 };
 
 interface CheckpointDelta extends Omit<HouseholdReplayCheckpoint, "state">, AuthoritativeCheckpointDelta {}
+const encodeStateDelta = (state: AuthoritativeState, before: AuthoritativeState,
+  observe?: (visited: number, changed: number) => void, observeEquality?: () => void): AuthoritativeCheckpointDelta =>
+  authoritativeCheckpointDelta(state, before, (a, b) => {
+    observeEquality?.();
+    return JSON.stringify(encode(a)) === JSON.stringify(encode(b));
+  }, observe);
+
+const assertSourceHistoryPreserved = (before: AuthoritativeState, after: AuthoritativeState): void => {
+  assertD2PostedTransactionHistoryPreserved(before, after);
+  assertD2SettlementReceiptHistoryPreserved(before, after);
+  assertRetirementDistributionHistoryPreserved(before, after);
+  assertSsaMedicarePaymentHistoryPreserved(before, after);
+};
+
+const assertSourceFrontier = (records: AuthoritativeCheckpointDelta["records"], context: RunContext, end: Instant,
+  opening?: AuthoritativeState): void => {
+  const mismatch = (): never => { throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: invalid committed source frontier"); };
+  const rows = <K extends "d2PostedTransactions" | "d2SettlementReceipts" | "ssaMedicarePayments" | "retirementDistributionAllocations">(key: K) =>
+    Object.entries(records[key]?.set ?? {}).filter(([id]) => !Object.hasOwn(opening?.[key] ?? {}, id))
+      .map(([, row]) => row) as NonNullable<AuthoritativeState[K]>[keyof NonNullable<AuthoritativeState[K]>][];
+  for (const proof of rows("d2PostedTransactions")) {
+    if (proof.transaction.date >= end) mismatch();
+    if (proof.registration.kind === "household_domain") {
+      const event = proof.registration.evidence.context;
+      if (event.runId !== context.runId || event.asOf !== context.asOf || event.dataCutoff !== context.dataCutoff ||
+          event.eventAt < context.simulationStart) mismatch();
+    }
+  }
+  for (const receipt of rows("d2SettlementReceipts"))
+    if (receipt.originalTransaction.date >= end || receipt.paymentTransaction.date >= end) mismatch();
+  for (const payment of rows("ssaMedicarePayments"))
+    if (payment.transaction.date >= end) mismatch();
+  for (const distribution of rows("retirementDistributionAllocations"))
+    if (distribution.effectiveAt >= end) mismatch();
+};
+
 /** Sparse state changes, never transaction history or repeated identity prefixes. */
 const checkpointDeltas = (checkpoints: readonly HouseholdReplayCheckpoint[], observe?: (visited: number, changed: number) => void,
   observeEquality?: () => void): readonly CheckpointDelta[] => {
   let before = createAuthoritativeState();
   return checkpoints.map(({ state, ...checkpoint }) => {
-    const delta = authoritativeCheckpointDelta(state, before, (a, b) => {
-      observeEquality?.(); return JSON.stringify(encode(a)) === JSON.stringify(encode(b));
-    }, observe);
+    const delta = encodeStateDelta(state, before, observe, observeEquality);
     before = state;
     return { ...checkpoint, ...delta };
   });
 };
 const restoreCheckpointDeltas = (deltas: readonly CheckpointDelta[], opening: AuthoritativeState,
-  observe?: (visited: number, changed: number) => void): readonly HouseholdReplayCheckpoint[] => {
+  context: RunContext, observe?: (visited: number, changed: number) => void): readonly HouseholdReplayCheckpoint[] => {
   if (!Array.isArray(deltas)) throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: checkpoint data missing");
   let before = createAuthoritativeState();
   let receiptHistory = opening;
   const checkpoints = deltas.map(({ records, identities, ...checkpoint }) => {
     if (!records || !identities) throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: malformed checkpoint");
     before = restoreAuthoritativeCheckpointDelta(before, { records, identities }, observe);
-    assertD2PostedTransactionHistoryPreserved(receiptHistory, before);
-    assertD2SettlementReceiptHistoryPreserved(receiptHistory, before);
-    assertRetirementDistributionHistoryPreserved(receiptHistory, before);
-    assertSsaMedicarePaymentHistoryPreserved(receiptHistory, before);
+    assertSourceHistoryPreserved(receiptHistory, before);
+    // The first delta is relative to an empty state and includes opening
+    // history. Check the frontier of newly committed records only.
+    assertSourceFrontier(records, context, checkpoint.at, opening);
     receiptHistory = before;
     return { ...checkpoint, state: before };
   });
@@ -194,31 +255,50 @@ const elapsed = (before: number | undefined, after: number | undefined): number 
   before !== undefined && after !== undefined && after >= before ? after - before : undefined;
 /** One shared opening/configuration artifact per forecast; never a detailed history warehouse. */
 export const createPortableHouseholdReplayArtifact = (forecast: HouseholdForecastSummaryResult, retainPrivateBasis = false,
-  observe?: (measurement: ReplayExportMeasurement) => void): PortableHouseholdReplayArtifact => {
+  observe?: (measurement: ReplayExportMeasurement) => void, modeledPayroll?: ModeledPayrollReplayBasis,
+  independentSource?: unknown): PortableHouseholdReplayArtifact => {
+  qualifyModelBasis(modeledPayroll, forecast.replay.kernel.executable, forecast.replay.runContext, independentSource);
   const { executionKernel: _kernel, participants, ...base } = forecast.replay.kernel.executable;
   const executable = { ...base, ...(participants === undefined ? {} : { participants: participants.map(portableHouseholdParticipant) }) };
   const graph: EncodingGraph = { identities: new Map<object, Wire>(), content: new Map<string, Wire>(), active: new Set<object>(), encodedValues: 0 };
   let visited = 0, changed = 0, comparisons = 0, materialized = 0;
   const work = (nodes: number, rows: number) => { visited += nodes; changed += rows; };
-  const checkpoints = checkpointDeltas(exportHouseholdReplayCheckpointRoots(forecast, work, () => { materialized++; }), work, () => { comparisons++; });
+  const roots = exportHouseholdReplayCheckpointRoots(forecast, work, () => { materialized++; });
+  const checkpoints = checkpointDeltas(roots, work, () => { comparisons++; });
+  const terminal = householdReplayTerminalRoot(forecast);
+  const terminalDelta = encodeStateDelta(terminal,
+    roots.at(-1)?.state ?? forecast.replay.kernel.executable.reconciledOpeningState, work, () => { comparisons++; });
   const encoded = JSON.stringify(encode({ executable, runContext: forecast.replay.runContext,
     runMetadata: forecast.runMetadata, periods: forecast.periods,
-    checkpoints }, graph));
+    checkpoints, terminalDelta, ...(modeledPayroll === undefined ? {} : { modeledPayroll }) }, graph));
   // Change detection, like the run fingerprint; this is not authentication.
   const integrity = createInputFingerprint({ runContext: forecast.replay.runContext, openingState: encoded });
   const artifact = Object.freeze({ version: "household-replay/v3" as const, encoded, integrity });
   // The creating worker already owns the exact committed kernel/checkpoints.
-  // Retaining that immutable basis avoids decoding/requalifying all 649 months
-  // merely to inspect twelve. Transported artifacts still take the full verifier.
+  // Retaining that immutable basis avoids decoding all 649 months merely to
+  // inspect twelve. The committed terminal state also covers publications
+  // consumed after the last retained replay checkpoint.
   // Only the application reader may retain its private, unexposed execution.
   // Ordinary exported artifacts continue to restore the serialized snapshot.
-  if (retainPrivateBasis) restoredArtifacts.set(artifact, { version: artifact.version, encoded, integrity, forecast });
+  if (retainPrivateBasis) restoredArtifacts.set(artifact, {
+    version: artifact.version, encoded, integrity, forecast, modeledPayroll,
+    sourceHistoryState: terminal,
+  });
   try { observe?.({ checkpointCount: checkpoints.length, checkpointIndexNodesVisited: visited, checkpointRecordChanges: changed,
     checkpointEqualityComparisons: comparisons, encodedValues: graph.encodedValues, encodedBytes: new TextEncoder().encode(encoded).byteLength,
     materializedCheckpointStates: materialized }); } catch { /* Measurement only. */ }
   return artifact;
 };
-const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObserver, timings: RestoreTimings = {}, sample: () => void = () => {}): Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods"> => {
+function requalifyReplaySources(state: AuthoritativeState, context: RunContext): void {
+  validateSsaMedicareSourceHistory(state, context.dataCutoff);
+  requalifyD2SettlementReceiptHistory(state, context);
+  requalifyRetirementDistributionHistory(state, context);
+}
+
+const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObserver, timings: RestoreTimings = {}, sample: () => void = () => {}, independentSource?: unknown): {
+  forecast: Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods">; modeledPayroll?: ModeledPayrollReplayBasis;
+  sourceHistoryState: AuthoritativeState;
+} => {
   const supplied = artifact as PortableHouseholdReplayArtifact | undefined;
   if ((supplied?.version !== "household-replay/v1" && supplied?.version !== "household-replay/v2" && supplied?.version !== "household-replay/v3") || typeof supplied.encoded !== "string")
     throw new Error("HOUSEHOLD_REPLAY_ARTIFACT_UNAVAILABLE: original execution artifacts are required");
@@ -233,7 +313,8 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
   const wire = measure("decodeMs", () => JSON.parse(supplied.encoded) as Wire);
   const decodeStarted = safeNow(observer);
   const restored = decode(wire) as {
-    executable: Omit<ExecutableHouseholdProjection, "participants"> & { readonly participants?: readonly PortableHouseholdParticipant[] }; runContext: RunContext; runMetadata: RunMetadata; periods: readonly HouseholdForecastSummaryPeriod[]; checkpoints?: readonly CheckpointDelta[];
+    executable: Omit<ExecutableHouseholdProjection, "participants"> & { readonly participants?: readonly PortableHouseholdParticipant[] }; runContext: RunContext; runMetadata: RunMetadata; periods: readonly HouseholdForecastSummaryPeriod[]; checkpoints?: readonly CheckpointDelta[]; modeledPayroll?: ModeledPayrollReplayBasis;
+    terminalDelta?: AuthoritativeCheckpointDelta;
   };
   try { observer?.phase?.("decoded"); } catch { /* Observation is optional. */ }
   const decodeDuration = elapsed(decodeStarted, safeNow(observer));
@@ -246,28 +327,50 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
   try { observer?.phase?.("integrity_validated"); } catch { /* Observation is optional. */ }
   const { participants, ...base } = restored.executable;
   const executable = measure("participantRestoreMs", () => ({ ...base, ...(participants === undefined ? {} : { participants: participants.map(restoreHouseholdParticipant) }) }));
+  if (restored.modeledPayroll !== undefined && supplied.version !== "household-replay/v3")
+    throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: modeled payroll requires the v3 extension");
+  // Recompile against the separately supplied model before kernel activation or
+  // checkpoint registration, even when a matching issuer is already warm.
+  // Decoded objects are immutable; attach only independently recompiled model
+  // payroll references to a fresh executable before kernel/checkpoint admission.
+  const admittedExecutable = qualifyModelBasis(restored.modeledPayroll, executable, restored.runContext, independentSource);
   try { observer?.phase?.("participants_restored"); } catch { /* Observation is optional. */ }
   const qualify = (state: AuthoritativeState) => {
-    measure("sourceRequalificationMs", () => {
-      validateSsaMedicareSourceHistory(state, restored.runContext.dataCutoff);
-      requalifyD2SettlementReceiptHistory(state, restored.runContext);
-      requalifyRetirementDistributionHistory(state, restored.runContext);
-    });
+    measure("sourceRequalificationMs", () => requalifyReplaySources(state, restored.runContext));
     try { observer?.phase?.("source_requalified"); } catch { /* Observation is optional. */ }
   };
-  if (supplied.version !== "household-replay/v3") qualify(executable.reconciledOpeningState);
-  const kernel = measure("kernelCompileMs", () => compileHouseholdKernel(executable, restored.runContext.simulationStart));
+  let sourceHistoryState = admittedExecutable.reconciledOpeningState;
+  if (supplied.version !== "household-replay/v3") qualify(sourceHistoryState);
+  const kernel = measure("kernelCompileMs", () => compileHouseholdKernel(admittedExecutable, restored.runContext.simulationStart));
   try { observer?.phase?.("kernel_compiled"); } catch { /* Observation is optional. */ }
   const forecast = Object.freeze({ runMetadata: restored.runMetadata, periods: restored.periods,
     replay: Object.freeze({ kernel, runContext: restored.runContext }) });
   if (supplied.version === "household-replay/v3") {
-    const checkpoints = measure("checkpointRestoreValidationMs", () => restoreCheckpointDeltas(restored.checkpoints!, executable.reconciledOpeningState, (nodes, rows) => {
+    const observeChanges = (nodes: number, rows: number) => {
       timings.checkpointIndexNodesVisited = (timings.checkpointIndexNodesVisited ?? 0) + nodes;
       timings.checkpointRecordChanges = (timings.checkpointRecordChanges ?? 0) + rows;
-    }));
-    // Append-only admission proves that this union contains every inherited
-    // and new proof. Independently requalify it once before registration.
-    qualify(checkpoints.at(-1)?.state ?? executable.reconciledOpeningState);
+    };
+    const checkpoints = measure("checkpointRestoreValidationMs", () =>
+      restoreCheckpointDeltas(restored.checkpoints!, admittedExecutable.reconciledOpeningState, restored.runContext, observeChanges));
+    const terminalDelta = restored.terminalDelta;
+    if (terminalDelta === undefined)
+      throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: terminal source history missing");
+    sourceHistoryState = measure("checkpointRestoreValidationMs", () => {
+      const boundary = checkpoints.at(-1)?.state ?? sourceHistoryState;
+      const terminal = restoreAuthoritativeCheckpointDelta(boundary, terminalDelta, observeChanges);
+      assertSourceHistoryPreserved(boundary, terminal);
+      const closing = restored.periods.at(-1);
+      assertSourceFrontier(terminalDelta.records, restored.runContext, closing?.period.end ?? restored.runContext.simulationStart);
+      if (closing !== undefined) {
+        const metrics = householdExecutionMetrics(terminal, restored.runContext.baseCurrency, admittedExecutable);
+        if (!metrics.cash.equals(closing.cash) || !metrics.investmentValue.equals(closing.investmentValue) ||
+            !metrics.totalAssets.equals(closing.assets) || !metrics.totalLiabilities.equals(closing.liabilities) ||
+            !metrics.netWorth.equals(closing.netWorth))
+          throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: terminal state differs from committed summary");
+      }
+      return terminal;
+    });
+    qualify(sourceHistoryState);
     measure("checkpointRestoreValidationMs", () => registerHouseholdReplayCheckpoints(forecast, checkpoints, counts => {
       timings.checkpointDiagnosticKeysComputed = counts.diagnosticKeysComputed;
       timings.checkpointDiagnosticOccurrencesCompared = counts.diagnosticOccurrencesCompared;
@@ -286,7 +389,8 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
       }
     } catch { /* Measurement is optional. */ } });
   }
-  return forecast;
+  bindReplayAdmission(forecast.replay, restored.modeledPayroll, sourceHistoryState, independentSource);
+  return { forecast, sourceHistoryState, ...(restored.modeledPayroll === undefined ? {} : { modeledPayroll: restored.modeledPayroll }) };
 };
 
 // A transported result shares one attachment across all months. Revalidating
@@ -298,8 +402,17 @@ const restoredArtifacts = new WeakMap<object, {
   readonly encoded: string;
   readonly integrity: string | undefined;
   readonly forecast: Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods">;
+  readonly sourceHistoryState: AuthoritativeState;
+  readonly modeledPayroll?: ModeledPayrollReplayBasis | undefined;
 }>();
-export const restorePortableHouseholdReplayArtifact = (artifact: unknown, observer?: ReplayRestoreObserver): Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods"> => {
+function bindReplayAdmission(replay: HouseholdForecastSummaryResult["replay"], basis: ModeledPayrollReplayBasis | undefined,
+  sourceHistoryState: AuthoritativeState, independentSource: unknown): void {
+  registerRestoredReplayAdmission(replay, () => {
+    qualifyModelBasis(basis, replay.kernel.executable, replay.runContext, independentSource);
+    requalifyReplaySources(sourceHistoryState, replay.runContext);
+  });
+}
+export const restorePortableHouseholdReplayArtifact = (artifact: unknown, observer?: ReplayRestoreObserver, independentSource?: unknown): Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods"> => {
   try { observer?.phase?.("restore_started"); } catch { /* Observation is optional. */ }
   const before = safeNow(observer), heapBefore = observer ? heapSample() : undefined;
   let peak = heapBefore;
@@ -319,13 +432,19 @@ export const restorePortableHouseholdReplayArtifact = (artifact: unknown, observ
     const supplied = artifact as PortableHouseholdReplayArtifact | undefined;
     const cached = typeof artifact === "object" && artifact !== null ? restoredArtifacts.get(artifact) : undefined;
     if (cached && supplied?.version === cached.version && supplied.encoded === cached.encoded && supplied.integrity === cached.integrity) {
+      qualifyModelBasis(cached.modeledPayroll, cached.forecast.replay.kernel.executable, cached.forecast.replay.runContext, independentSource);
+      const sourceStarted = safeNow(observer);
+      requalifyReplaySources(cached.sourceHistoryState, cached.forecast.replay.runContext);
+      bindReplayAdmission(cached.forecast.replay, cached.modeledPayroll, cached.sourceHistoryState, independentSource);
+      const sourceRequalificationMs = elapsed(sourceStarted, safeNow(observer));
       try { observer?.phase?.("restore_warm"); } catch { /* Observation is optional. */ }
-      report("warm", cached.forecast); return cached.forecast;
+      report("warm", cached.forecast, sourceRequalificationMs === undefined ? {} : { sourceRequalificationMs });
+      return cached.forecast;
     }
     const timings: RestoreTimings = {};
-    const forecast = restorePortableArtifact(artifact, observer, timings, sample);
+    const { forecast, modeledPayroll, sourceHistoryState } = restorePortableArtifact(artifact, observer, timings, sample, independentSource);
     if (typeof artifact === "object" && artifact !== null && supplied) restoredArtifacts.set(artifact, {
-      version: supplied.version, encoded: supplied.encoded, integrity: supplied.integrity, forecast,
+      version: supplied.version, encoded: supplied.encoded, integrity: supplied.integrity, forecast, modeledPayroll, sourceHistoryState,
     });
     report("cold", forecast, timings);
     return forecast;

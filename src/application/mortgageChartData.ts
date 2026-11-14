@@ -1,4 +1,6 @@
 import type { HouseholdForecastPoint, PersonalHouseholdForecastReadModel } from "./householdProjection.js";
+import { restoreHouseholdForecastEvidence } from "./householdProjection.js";
+import type { PortableModelEnvelope } from "../model/modelVersion.js";
 import { restorePortableHouseholdReplayArtifact, type PortableHouseholdReplayArtifact, type ReplayRestoreObserver } from "../simulation/r3/replayArtifact.js";
 import { replayHouseholdForecastWindow, householdReplayCheckpointSelection } from "../simulation/householdExecution.js";
 import { instant } from "../time/index.js";
@@ -74,8 +76,8 @@ export function householdEvidenceProof(points: readonly HouseholdForecastPoint[]
   return (points[0]?.traceRefs.find(ref => ref.replayArtifact !== undefined)?.replayArtifact as { basis?: HouseholdEvidenceProof } | undefined)?.basis;
 }
 
-export function householdEvidenceSelectionMeasurements(proof: HouseholdEvidenceProof, selection: HouseholdEvidenceSelection, selectedMonths: number) {
-  const basis = restorePortableHouseholdReplayArtifact(proof);
+export function householdEvidenceSelectionMeasurements(proof: HouseholdEvidenceProof, selection: HouseholdEvidenceSelection, selectedMonths: number, model?: PortableModelEnvelope) {
+  const basis = restoreHouseholdForecastEvidence(proof, model);
   const start = basis.periods[selection.startIndex]?.period.start;
   if (!start || selectedMonths < 1 || selectedMonths > 12) throw new Error("Unavailable evidence selection");
   return Object.freeze({ startIndex: selection.startIndex, selectedMonths, ...householdReplayCheckpointSelection(basis, start) });
@@ -84,7 +86,7 @@ export function householdEvidenceSelectionMeasurements(proof: HouseholdEvidenceP
 /** Explicit engineering-validation seam: transport a v3 proof cold, then restore
  * the identical object warm. It never runs another full-horizon forecast and
  * never returns/logs catalogs, personal facts or checkpoint state. */
-export function measureHouseholdCheckpointRestoration(proof: HouseholdEvidenceProof, now: () => number): {
+export function measureHouseholdCheckpointRestoration(proof: HouseholdEvidenceProof, now: () => number, model?: PortableModelEnvelope): {
   readonly cold: import("../simulation/r3/replayArtifact.js").ReplayRestoreMeasurement;
   readonly warm: import("../simulation/r3/replayArtifact.js").ReplayRestoreMeasurement;
   readonly cloneMs: number;
@@ -94,8 +96,8 @@ export function measureHouseholdCheckpointRestoration(proof: HouseholdEvidencePr
   const cloneMs = now() - started;
   const measurements: import("../simulation/r3/replayArtifact.js").ReplayRestoreMeasurement[] = [];
   const observer = { now, includeCheckpointBytes: true, record: (measurement: import("../simulation/r3/replayArtifact.js").ReplayRestoreMeasurement) => { measurements.push(measurement); } };
-  restorePortableHouseholdReplayArtifact(transported, observer);
-  restorePortableHouseholdReplayArtifact(transported, observer);
+  restoreHouseholdForecastEvidence(transported, model, observer);
+  restoreHouseholdForecastEvidence(transported, model, observer);
   if (measurements[0]?.cache !== "cold" || measurements[1]?.cache !== "warm") throw new Error("Independent cold/warm restore measurement unavailable");
   return Object.freeze({ cold: measurements[0], warm: measurements[1], cloneMs });
 }
@@ -119,10 +121,10 @@ export function boundedEvidencePoints(source: PersonalHouseholdForecastReadModel
  * Call in the worker; application readers retain ownership of financial replay. */
 export function restoreHouseholdEvidencePoints(basis: HouseholdEvidenceProof, selection: HouseholdEvidenceSelection,
   points: readonly HouseholdForecastPoint[], fingerprint: string, catalogs?: ForecastCatalogTable,
-  observation?: HouseholdEvidenceObserver): readonly HouseholdForecastPoint[] {
+  observation?: HouseholdEvidenceObserver, model?: PortableModelEnvelope): readonly HouseholdForecastPoint[] {
   if (!Number.isSafeInteger(selection.startIndex) || selection.startIndex < 0 || points.length < 1 ||
     points.length > (selection.operation === "monthly_evidence" ? 1 : 12)) throw new Error("Unavailable evidence window");
-  const original = restorePortableHouseholdReplayArtifact(basis, observation);
+  const original = restoreHouseholdForecastEvidence(basis, model, observation);
   const source = { runId: String(original.runMetadata.runId), inputFingerprint: String(original.runMetadata.inputFingerprint) };
   if (catalogs) {
     evidencePhase(observation, "catalog_validation_started");
@@ -228,7 +230,7 @@ export function liabilityBalanceCoordinates(rows: LiabilityBalanceWindow["rows"]
 
 /** Reads one explicit viewport. All financial amounts come from committed replay. */
 export function inspectMortgageWindow(points: readonly HouseholdForecastPoint[], liabilityId: string,
-  observation?: HouseholdEvidenceObserver): MortgageWindow {
+  observation?: HouseholdEvidenceObserver, model?: PortableModelEnvelope): MortgageWindow {
   if (points.length < 1 || points.length > 12) throw new Error("Select between one and twelve modeled months.");
   const addresses = points.map((point, index) => {
     const ref = point.traceRefs.find(value => value.replayArtifact !== undefined);
@@ -240,7 +242,7 @@ export function inspectMortgageWindow(points: readonly HouseholdForecastPoint[],
   const artifact = addresses[0]!.address.basis;
   if (addresses.some(({ address }) => address.basis.version !== artifact.version || address.basis.encoded !== artifact.encoded || address.basis.integrity !== artifact.integrity))
     throw new Error("Mortgage evidence belongs to different forecast sources.");
-  const basis = restorePortableHouseholdReplayArtifact(artifact, observation);
+  const basis = restoreHouseholdForecastEvidence(artifact, model, observation);
   const fingerprint = String(basis.runMetadata.inputFingerprint);
   if (addresses.some(({ address, traceId }) => traceId !== `household:replay:${fingerprint}:${address.start}:${address.end}`))
     throw new Error("Mortgage evidence identity does not match this forecast.");
@@ -331,15 +333,17 @@ export function mortgageBarCoordinates(rows: readonly MortgageMonth[]) {
 /** Instance belongs to one current result/model. UI drops it on pending or stale. */
 export class MortgageWindowCache {
   readonly #windows = new Map<string, MortgageWindow>();
-  constructor(readonly forecast: PersonalHouseholdForecastReadModel) {}
+  constructor(readonly forecast: PersonalHouseholdForecastReadModel, readonly model?: PortableModelEnvelope) {}
   get(liabilityId: string, startIndex: number): MortgageWindow {
     if (!Number.isSafeInteger(startIndex) || startIndex < 0) throw new Error("Select a supported mortgage window.");
     if (this.forecast.status === "unavailable") throw new Error(this.forecast.message);
     const points = this.forecast.points.slice(startIndex, startIndex + 12);
+    const proof = householdEvidenceProof(points);
+    if (proof) restoreHouseholdForecastEvidence(proof, this.model);
     const key = `${liabilityId}:${points[0]?.periodStart}:${points.at(-1)?.periodEnd}`;
     const cached = this.#windows.get(key);
     if (cached) return cached;
-    const result = inspectMortgageWindow(points, liabilityId);
+    const result = inspectMortgageWindow(points, liabilityId, undefined, this.model);
     if (this.#windows.size >= 4) this.#windows.delete(this.#windows.keys().next().value!);
     this.#windows.set(key, result);
     return result;

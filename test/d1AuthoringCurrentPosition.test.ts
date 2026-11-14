@@ -18,7 +18,39 @@ const change = (model: PersonalDraft, collection: string, id: string, patch: Rec
   }) },
 });
 
+const jobChangeDraft = () => change(
+  createGoldenHouseholdDraft(), "Event", ids.retirementEvent,
+  { event_type: "job_change", start_date: "2026-01-02" },
+);
+
 describe("D1-A current-position economic meaning", () => {
+  it.each([
+    ["2026-01-01", "0", "0"],
+    ["2026-01-02", "9000", "9000"],
+    ["2026-01-03", "9000", "4200"],
+  ])("uses the authored salary activation as of %s", (asOf, income, cashFlow) => {
+    const current = getCurrentPosition(jobChangeDraft(), { ...boundary, asOf });
+    expect(current.status).toBe("complete");
+    expect(current.monthlyIncome?.exact).toBe(income);
+    expect(current.monthlyCashFlow?.exact).toBe(cashFlow);
+    expect(current.cash?.exact).toBe("35000");
+  });
+
+  it.each<Record<string, JsonValue>>([
+    { enabled: false }, { trigger_type: "conditional" }, { start_date: "2026-01-03" },
+    { scenario_id: ids.income }, { precedence: 1 }, { duration_days: 1 },
+    { effect_ids: [ids.income] }, { dependencies: [ids.income] },
+  ])("preserves independent totals for an invalid job change %j", patch => {
+    const current = getCurrentPosition(change(jobChangeDraft(), "Event", ids.retirementEvent, patch), boundary);
+    expect(current.status).toBe("partial");
+    expect(current.monthlyIncome).toBeUndefined();
+    expect(current.monthlyCashFlow).toBeUndefined();
+    expect(current.monthlySpending?.exact).toBe("4800");
+    expect(current.cash?.exact).toBe("35000");
+    expect(current.netWorth?.exact).toBe("309330.29");
+    expect(current.diagnostics).toContainEqual(expect.objectContaining({ capability: "monthly_income" }));
+  });
+
   it("keeps current salary usable with a valid future scheduled retirement", () => {
     const current = getCurrentPosition(createGoldenHouseholdDraft(), boundary);
     expect(current.status).toBe("complete");

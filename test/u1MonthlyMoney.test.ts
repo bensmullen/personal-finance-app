@@ -45,11 +45,12 @@ describe("U1 monthly committed evidence", () => {
     expect(inspectMonthlyMoney(result.points[0]!, model)).toEqual(month);
   });
   it("keeps period identity, different months and unsupported evidence boundaries explicit", () => {
-    const result = runPersonalHouseholdForecast(createGoldenHouseholdDraft(), createGoldenHouseholdForecastRequest());
+    const model = createGoldenHouseholdDraft();
+    const result = runPersonalHouseholdForecast(model, createGoldenHouseholdForecastRequest());
     if (result.status === "unavailable") throw new Error("Golden household must run");
     const first = result.points[0]!, second = result.points[1]!;
-    expect(inspectMonthlyMoney(first).mortgages[0]?.date.slice(0, 7)).toBe(first.periodStart.slice(0, 7));
-    expect(inspectMonthlyMoney(second).mortgages[0]?.date.slice(0, 7)).toBe(second.periodStart.slice(0, 7));
+    expect(inspectMonthlyMoney(first, model).mortgages[0]?.date.slice(0, 7)).toBe(first.periodStart.slice(0, 7));
+    expect(inspectMonthlyMoney(second, model).mortgages[0]?.date.slice(0, 7)).toBe(second.periodStart.slice(0, 7));
     expect(() => inspectMonthlyMoney({ ...first, traceRefs: [] })).toThrow("unavailable");
     expect(() => inspectMonthlyMoney({ ...first, periodStart: second.periodStart })).toThrow("selected period");
   });

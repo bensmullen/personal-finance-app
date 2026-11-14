@@ -10,7 +10,8 @@ import { authorDomainOperation, type PersonalDraft } from "../src/application/pe
 import { deriveHouseholdClosingMetrics } from "../src/simulation/householdProjection.js";
 import { replayHouseholdForecastWindow, runHouseholdKernel } from "../src/simulation/householdExecution.js";
 import { summarizeHouseholdPeriod } from "../src/simulation/r3/forecastSummary.js";
-import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../src/simulation/r3/replayArtifact.js";
+import { restoreHouseholdForecastEvidence } from "../src/application/householdProjection.js";
+import { applicationReplayArtifact } from "./fixtures/applicationReplay.js";
 import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import { instant } from "../src/time/index.js";
 import { taxBalanceIds } from "../src/simulation/tax.js";
@@ -82,16 +83,15 @@ describe("D1-C bounded Golden Household integration", () => {
   });
 
   it("restores D1 domain, workplace and tax replay after a genuinely fresh codec module boundary", async () => {
-    const compiled = compile(), runContext = d1IntegratedRunContext();
+    const model = createD1IntegratedHousehold(), request = d1IntegratedCompilerRequest();
+    const compiled = compile(model, request), runContext = d1IntegratedRunContext();
     const baseline = runHouseholdKernel({ kernel: compiled.executionKernel!, runContext, resultTier: "detail" });
     const summary = runHouseholdKernel({ kernel: compiled.executionKernel!, runContext });
     expect(compiled.participants?.map(participant => participant.portableCodec)).toContain("domain-mechanics/v1");
-    const artifact = JSON.parse(JSON.stringify(createPortableHouseholdReplayArtifact(summary)));
+    const artifact = JSON.parse(JSON.stringify(applicationReplayArtifact(model, request, runContext)));
     vi.resetModules();
-    // Only the replay composition boundary is loaded before restore. No compiler
-    // or fixture import can prepopulate this new module's codec registry.
-    const freshReplay = await import("../src/simulation/r3/replayArtifact.js");
-    const restored = freshReplay.restorePortableHouseholdReplayArtifact(artifact);
+    const freshReplay = await import("../src/application/householdProjection.js");
+    const restored = freshReplay.restoreHouseholdForecastEvidence(artifact, structuredClone(model));
     const freshExecution = await import("../src/simulation/householdExecution.js");
     const freshSerialize = (await import("../src/simulation/run.js")).canonicalSerialize;
     const rerun = freshExecution.runHouseholdKernel({ kernel: restored.replay.kernel, runContext: restored.replay.runContext, resultTier: "detail" });
@@ -219,7 +219,8 @@ describe("D1-C bounded Golden Household integration", () => {
     expect(compiled.reconciledOpeningState.contributions === undefined || Object.keys(compiled.reconciledOpeningState.contributions).length === 0).toBe(true);
     expect(detail(restored)).toEqual(baseline);
     const summary = runHouseholdKernel({ kernel: compiled.executionKernel!, runContext: d1IntegratedRunContext() });
-    const replay = restorePortableHouseholdReplayArtifact(JSON.parse(JSON.stringify(createPortableHouseholdReplayArtifact(summary))));
+    const artifact = JSON.parse(JSON.stringify(applicationReplayArtifact(restored, d1IntegratedCompilerRequest(), d1IntegratedRunContext())));
+    const replay = restoreHouseholdForecastEvidence(artifact, structuredClone(restored));
     expect(replay.runMetadata).toEqual(summary.runMetadata);
     expect(replayHouseholdForecastWindow(replay, baseline.periods[0]!.period).periods).toEqual(baseline.periods);
     const rerun = runHouseholdKernel({ kernel: replay.replay.kernel, runContext: replay.replay.runContext, resultTier: "detail" });

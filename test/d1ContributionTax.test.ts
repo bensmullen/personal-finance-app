@@ -12,19 +12,26 @@ import { syntheticPayroll } from "./fixtures/t1aTaxRules.js";
 import { instant } from "../src/time/index.js";
 import { money, Quantity, SHARE } from "../src/values/index.js";
 import type { PayrollContributionAllocation } from "../src/simulation/payrollContributions.js";
+import { employerWage } from "./fixtures/employerWage.js";
 
 const start = instant("2026-01-01T00:00:00.000Z"), until = instant("2027-01-01T00:00:00.000Z");
 const accountId = domainId("account", "d1c60000-0000-4000-8000-000000000001"), positionId = domainId("position", "d1c60000-0000-4000-8000-000000000002");
 const policy = (character: ContributionPolicy["character"]): ContributionPolicy => ({ character, personId: ids.person, householdId: ids.household, excessPolicy: "reject", facts: { taxYear: 2026, ageAtYearEnd: 36, taxableCompensation: money("1000"), eligiblePlanCompensation: money("1000"), workplacePlanCovered: false, filingStatus: "single", hsaCoverage: "self", hsaFullYearEligible: true }, limits: (character === "traditional_ira" ? ["ira_shared" as const] : character.endsWith("_hsa") ? ["hsa_individual" as const] : character === "after_tax_401k" || character === "employer_401k" ? ["401k_additions" as const] : ["401k_additions" as const, "401k_elective" as const]).map((kind, index) => ({ kind, ruleId: `d1c60000-0000-4000-8000-${String(index + 3).padStart(12, "0")}`, target: { targetType: "person", targetId: ids.person }, bucketKey: kind === "401k_additions" ? "401k_additions:sponsor" : kind, includedCharacters: contributionCharacters(kind) })) });
-const fixture2026 = (months = 1, payment = false) => {
+const fixture2026 = (months = 1, payment = false, allocation?: PayrollContributionAllocation) => {
   const fixture = taxHouseholdFixture({ months });
-  const income = fixture.compiled.cashFlowInput!.incomes[0]!;
   const input = { ...fixture.input, simulationStart: start, catalog: [{ ...fixture.input.catalog[0]!, effectiveFrom: start, effectiveUntil: until }], incomes: [{ ...fixture.input.incomes[0]!, start: "2026-01-01" }], payments: payment ? [{ id: "jan-payment", jurisdiction: "US:FEDERAL", at: instant("2026-01-20T00:00:00.000Z"), amount: money("150"), kind: "withholding" as const }] : [], settlements: [{ id: "final", jurisdiction: "US:FEDERAL", taxYear: "2026", at: instant("2026-12-31T23:59:59.999Z") }] };
   const context = { ...fixture.context, simulationStart: start, simulationEnd: instant(months === 1 ? "2026-02-01T00:00:00.000Z" : "2026-03-01T00:00:00.000Z") };
+  const wage = employerWage(context, {
+    householdId: ids.household, personId: ids.person, bankAccountId: ids.cash, bankOwner: "person",
+    incomeId: ids.income, employerId: "Synthetic employer", gross: "1000", firstPayday: "2026-01-15", endDate: "2026-02-01",
+    ...(allocation === undefined ? {} : { allocations: [allocation],
+      employeeDeductions: allocation.policy.character.startsWith("employer_") ? [] : [{ positionId, amount: "100" }] }),
+  });
   const opening = cloneAuthoritativeState(fixture.compiled.reconciledOpeningState);
+  opening.accounts[ids.cash] = { ...opening.accounts[ids.cash]!, kind: "checking" };
   opening.accounts[accountId] = { id: accountId, ownerId: ids.person, kind: "retirement", cash: money("0") };
   opening.positions[positionId] = { id: positionId, accountId, quantity: Quantity.parse("0", SHARE), price: money("100"), carryingValue: money("0") };
-  const compiled = { ...fixture.compiled, reconciledOpeningState: opening, participants: [createHouseholdTaxParticipant(input)], nonInvestmentPositionIds: taxCreditPositionIds(input), cashFlowInput: { ...fixture.compiled.cashFlowInput!, incomes: [{ ...income, start, end: instant("2026-02-01T00:00:00.000Z"), growthBaseAt: instant("2026-01-15T00:00:00.000Z"), recurrence: { ...income.recurrence, anchor: instant("2026-01-15T00:00:00.000Z") } }] } };
+  const compiled = { ...fixture.compiled, reconciledOpeningState: opening, participants: [createHouseholdTaxParticipant(input)], nonInvestmentPositionIds: taxCreditPositionIds(input), cashFlowInput: { ...fixture.compiled.cashFlowInput!, incomes: [wage.income] } };
   return { input, context, compiled };
 };
 
@@ -70,10 +77,10 @@ describe("D1 committed contribution tax integration", () => {
     expect(Object.values(detail.state.contributions!)).toHaveLength(1);
   });
   it.each([["traditional_401k", "166.5"], ["roth_401k", "176.5"], ["after_tax_401k", "176.5"], ["employee_hsa", "158.85"], ["employer_401k", "176.5"], ["employer_hsa", "176.5"]] as const)("keeps %s tax character distinct from compensation recognition", (character, expectedTax) => {
-    const fixture = fixture2026();
     const allocation: PayrollContributionAllocation = { id: "allocation", priority: 10, accountId, positionId, policy: policy(character), calculation: { kind: "fixed", amount: money("100") }, vestedFraction: "1" };
+    const fixture = fixture2026(1, false, allocation);
     const tax = createHouseholdTaxParticipant({ ...fixture.input, catalog: [{ ...fixture.input.catalog[0]!, payroll: syntheticPayroll }] });
-    const compiled = { ...fixture.compiled, participants: [tax], cashFlowInput: { ...fixture.compiled.cashFlowInput, incomes: fixture.compiled.cashFlowInput.incomes.map(income => ({ ...income, payrollContributions: [allocation] })) } };
+    const compiled = { ...fixture.compiled, participants: [tax] };
     const result = runHouseholdKernel({ kernel: compileHouseholdKernel(compiled, start), runContext: fixture.context, resultTier: "detail" });
     expect(result.status, JSON.stringify(result.diagnostics)).toBe("incomplete");
     expect(result.outputCapabilities?.cash?.diagnostics).toContainEqual(expect.objectContaining({ category: "wage_gross_to_net_withholding" }));

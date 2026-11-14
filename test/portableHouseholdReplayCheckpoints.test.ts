@@ -4,12 +4,14 @@ import { createGoldenHouseholdDraft } from "../src/application/personalMvp.js";
 import { createGoldenHouseholdForecastRequest, GOLDEN_HOUSEHOLD_IDS as ids } from "../src/application/goldenHousehold.js";
 import { runHouseholdKernel, replayHouseholdForecastWindow, exportHouseholdReplayCheckpoints, registerHouseholdReplayCheckpoints } from "../src/simulation/householdExecution.js";
 import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../src/simulation/r3/replayArtifact.js";
+import { restoreHouseholdForecastEvidence } from "../src/application/householdProjection.js";
 import { canonicalSerialize, createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import { instant } from "../src/time/index.js";
 import { USD } from "../src/values/index.js";
 import { PerformanceRegistry, type PerformanceObserver } from "../src/diagnostics/performance.js";
 import { createD1IntegratedHousehold, d1IntegratedCompilerRequest } from "./fixtures/d1IntegratedHousehold.js";
 import { taxHouseholdFixture } from "./fixtures/t1aTaxHouseholds.js";
+import { applicationReplayArtifact } from "./fixtures/applicationReplay.js";
 
 function fixture(months = 36, integrated = false) {
   const end = new Date(Date.UTC(2026, months, 1)).toISOString().slice(0, 10);
@@ -18,16 +20,18 @@ function fixture(months = 36, integrated = false) {
     cashFlow: { ...base.cashFlow!, simulationEnd: end, months },
     investments: { ...base.investments!, simulationEnd: end, months },
     liabilities: { ...base.liabilities!, simulationEnd: end, months } };
-  const compiled = compileHouseholdProjection(integrated ? createD1IntegratedHousehold({ projectAnnualFacts: true }) : createGoldenHouseholdDraft(), compiler);
+  const model = integrated ? createD1IntegratedHousehold({ projectAnnualFacts: true }) : createGoldenHouseholdDraft();
+  const compiled = compileHouseholdProjection(model, compiler);
   if (compiled.status !== "compiled") throw new Error(JSON.stringify(compiled));
   const runContext = createRunContext({ runId: runId("d1610000-0000-4000-8000-000000000001"), scenarioId: scenarioId(ids.rootScenario),
     asOf: instant("2026-01-01T00:00:00.000Z"), dataCutoff: instant("2026-01-01T00:00:00.000Z"),
     simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant(`${end}T00:00:00.000Z`), baseCurrency: USD });
   const request = { kernel: compiled.value.executionKernel!, runContext };
-  return { source: runHouseholdKernel(request), detail: () => runHouseholdKernel({ ...request, resultTier: "detail" }) };
+  return { source: runHouseholdKernel(request), detail: () => runHouseholdKernel({ ...request, resultTier: "detail" }),
+    model, artifact: () => applicationReplayArtifact(model, compiler, runContext) };
 }
-const transported = (source: ReturnType<typeof fixture>["source"]) =>
-  restorePortableHouseholdReplayArtifact(structuredClone(JSON.parse(JSON.stringify(createPortableHouseholdReplayArtifact(source)))));
+const transported = (f: ReturnType<typeof fixture>) =>
+  restoreHouseholdForecastEvidence(JSON.parse(JSON.stringify(f.artifact())), structuredClone(f.model));
 function meter() {
   const registry = new PerformanceRegistry(); let tick = 0;
   const observer: PerformanceObserver = { clock: { now: () => ++tick }, sink: registry,
@@ -37,7 +41,7 @@ function meter() {
 
 describe("portable sparse household replay checkpoints", () => {
   it("round-trips late one and twelve month windows with the same settled detail and bounded actual work", () => {
-    const { source, detail } = fixture(); const original = detail(), restored = transported(source);
+    const f = fixture(), { source, detail } = f; const original = detail(), restored = transported(f);
     expect(restored).not.toBe(source);
     for (const [start, length] of [[25, 1], [23, 12], [24, 12], [0, 1], [25, 1]] as const) {
       const window = { start: source.periods[start]!.period.start, end: source.periods[start + length - 1]!.period.end };
@@ -53,7 +57,7 @@ describe("portable sparse household replay checkpoints", () => {
     }
   });
   it("transports domain and tax runtime using supported value constructors", () => {
-    const { source, detail } = fixture(24, true), restored = transported(source);
+    const f = fixture(24, true), { source, detail } = f, restored = transported(f);
     expect(exportHouseholdReplayCheckpoints(source)).toHaveLength(source.periods.filter((period, index) =>
       (index + 1) % 12 === 0 && period.period.end < source.replay.runContext.simulationEnd).length);
     // The integrated fixture can stop before its requested end. A checkpoint
@@ -67,7 +71,7 @@ describe("portable sparse household replay checkpoints", () => {
     expect(replay.outputCapabilities).toEqual(selected.outputCapabilities);
   });
   it.each([13, 24, 36])("preserves T1A canonical state, tax runtime and ordered evidence through %s months", months => {
-    const tax = taxHouseholdFixture({ months });
+    const tax = taxHouseholdFixture({ months, employerOriginal: true });
     const source = runHouseholdKernel({ kernel: tax.kernel, runContext: tax.context });
     expect(source.periods, JSON.stringify(source.diagnostics)).toHaveLength(months);
     const restored = restorePortableHouseholdReplayArtifact(structuredClone(createPortableHouseholdReplayArtifact(source)));
@@ -110,12 +114,12 @@ describe("portable sparse household replay checkpoints", () => {
     }
   });
   it("rejects missing, corrupt, truncated, unknown-version and mismatched checkpoint evidence", () => {
-    const { source } = fixture(); const artifact = createPortableHouseholdReplayArtifact(source);
+    const f = fixture(), { source } = f, artifact = f.artifact();
     for (const bad of [null, {}, { ...artifact, version: "unknown" }, { ...artifact, integrity: undefined },
       { ...artifact, encoded: artifact.encoded.slice(0, -10) },
       { ...artifact, encoded: artifact.encoded.replace("2026-01-01", "2025-01-01") }])
-      expect(() => restorePortableHouseholdReplayArtifact(bad)).toThrow();
-    const checkpoints = exportHouseholdReplayCheckpoints(source), target = transported(source);
+      expect(() => restoreHouseholdForecastEvidence(bad, f.model)).toThrow();
+    const checkpoints = exportHouseholdReplayCheckpoints(source), target = transported(f);
     for (const bad of [[], [...checkpoints].reverse(), checkpoints.slice(1),
       checkpoints.map((value, index) => index ? value : { ...value, at: source.periods[0]!.period.end }),
       checkpoints.map(value => ({ ...value, runId: "d1610000-0000-4000-8000-000000000099" as typeof value.runId })),
@@ -131,7 +135,8 @@ describe("portable sparse household replay checkpoints", () => {
     expect(replayHouseholdForecastWindow(target, source.periods[25]!.period).periods).toEqual(replayHouseholdForecastWindow(source, source.periods[25]!.period).periods);
   });
   it("keeps legacy opening replay usable without advertising portable checkpoints", () => {
-    const { source } = fixture(12);
+    const tax = taxHouseholdFixture({ months: 12, employerOriginal: true });
+    const source = runHouseholdKernel({ kernel: tax.kernel, runContext: tax.context });
     const v3 = createPortableHouseholdReplayArtifact(source);
     for (const version of ["household-replay/v1", "household-replay/v2"] as const) {
       const restored = restorePortableHouseholdReplayArtifact({ ...v3, version, integrity: undefined });
@@ -139,9 +144,9 @@ describe("portable sparse household replay checkpoints", () => {
     }
   });
   it("bounds sparse checkpoints and distinguishes shared artifact bytes from repeated per-period JSON transport", () => {
-    const short = fixture(24).source, longer = fixture(48).source;
-    const bytes = (source: typeof short) => {
-      const artifact = createPortableHouseholdReplayArtifact(source), encoder = new TextEncoder();
+    const short = fixture(24), longer = fixture(48);
+    const bytes = (f: ReturnType<typeof fixture>) => {
+      const { source } = f, artifact = f.artifact(), encoder = new TextEncoder();
       return { periods: source.periods.length, checkpoints: exportHouseholdReplayCheckpoints(source).length,
         sharedArtifact: encoder.encode(JSON.stringify(artifact)).byteLength,
         repeatedPeriodTransport: encoder.encode(JSON.stringify(source.periods.map(period => ({
@@ -149,8 +154,8 @@ describe("portable sparse household replay checkpoints", () => {
         })))).byteLength };
     };
     const shortBytes = bytes(short), longBytes = bytes(longer);
-    expect(exportHouseholdReplayCheckpoints(short)).toHaveLength(1);
-    expect(exportHouseholdReplayCheckpoints(longer)).toHaveLength(3);
+    expect(exportHouseholdReplayCheckpoints(short.source)).toHaveLength(1);
+    expect(exportHouseholdReplayCheckpoints(longer.source)).toHaveLength(3);
     expect(longBytes.sharedArtifact).toBeLessThan(shortBytes.sharedArtifact * 3);
     expect(longBytes.sharedArtifact).toBeLessThan(8_000_000);
     expect(longBytes.repeatedPeriodTransport).toBeLessThan(shortBytes.repeatedPeriodTransport * 6);

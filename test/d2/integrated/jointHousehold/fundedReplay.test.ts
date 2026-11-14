@@ -54,7 +54,8 @@ describe("#149 S8-3 real joint-household funded RMD portable acceptance", () => 
     expect(s.satisfaction(summary.state)).toMatchObject({ coverage: "incomplete", reason: "source_not_qualified" });
     expect(s.satisfaction(summary.state).annual!.obligations.map(o => o.satisfied.amount.toString())).toEqual(["700"]);
     expect(detail.periods.every(p => p.statements.income.equals(money("1000")))).toBe(true);
-    expect(Object.keys(summary.state.d2PostedTransactions!)).toHaveLength(6);
+    expect(Object.values(summary.state.d2PostedTransactions!).filter(p => p.registration.kind !== "household_domain")).toHaveLength(6);
+    expect(Object.values(summary.state.d2PostedTransactions!).filter(p => p.registration.kind === "household_domain")).toHaveLength(months);
     expect(Object.keys(summary.state.retirementDistributionAllocations!)).toHaveLength(2);
     expect(Object.keys(summary.state.d2SettlementReceipts!)).toHaveLength(2);
     const txs = detail.periods.flatMap(p => p.transactions);
@@ -65,7 +66,9 @@ describe("#149 S8-3 real joint-household funded RMD portable acceptance", () => 
     expect(checkpoints.map(c => c.at)).toEqual(months === 13 ? ["2027-01-01T00:00:00.000Z"]
       : ["2027-01-01T00:00:00.000Z", "2028-01-01T00:00:00.000Z"]);
     for (const c of checkpoints) {
-      expect(c.state.d2PostedTransactions).toEqual(detail.state.d2PostedTransactions);
+      expect(c.state.d2PostedTransactions).toEqual(Object.fromEntries(
+        Object.entries(detail.state.d2PostedTransactions!).filter(([, p]) => p.transaction.date < c.at),
+      ));
       expect(c.state.retirementDistributionAllocations).toEqual(detail.state.retirementDistributionAllocations);
       expect(c.state.accounts[ids.retirement]!.cash.amount.toString()).toBe("300");
     }
@@ -74,7 +77,10 @@ describe("#149 S8-3 real joint-household funded RMD portable acceptance", () => 
     const wire = expand(artifact.encoded), deltas = items(field(wire, "checkpoints"));
     if (months === 25) for (const key of ["d2PostedTransactions", "d2SettlementReceipts", "retirementDistributionAllocations"]) {
       const delta = field(field(deltas[1]!, "records"), key);
-      expect(items(field(delta, "set"))).toEqual([]); expect(items(field(delta, "remove"))).toEqual([]);
+      expect(items(field(delta, "set")).map(row => (row as Json[])[0]).sort()).toEqual(key === "d2PostedTransactions"
+        ? detail.periods.slice(12, 24).flatMap(p => p.transactions.filter(t => t.type === "income").map(t => t.id)).sort()
+        : []);
+      expect(items(field(delta, "remove"))).toEqual([]);
     }
     const restored = restorePortableHouseholdReplayArtifact(JSON.parse(JSON.stringify(artifact)));
     expect(exportHouseholdReplayCheckpoints(restored)).toEqual(checkpoints);
@@ -94,9 +100,11 @@ describe("#149 S8-3 real joint-household funded RMD portable acceptance", () => 
         expect(portable.state).toEqual(expected.state); expect(portable.periods).toEqual([detail.periods[index]]);
         expect(replayHouseholdForecastWindow(restored, selected)).toEqual(portable);
         expect(child(selected, "present")).toEqual({ state: canonicalSerialize(expected.state), periods: canonicalSerialize(expected.periods),
-          publisherRead: true, qualification: "qualified", coverage: "incomplete", satisfied: ["700"] });
+          publisherRead: true, wageRead: true, qualification: "qualified", coverage: "incomplete", satisfied: ["700"] });
       }
       const selected = detail.periods.at(-1)!.period, expected = replayHouseholdForecastWindow(summary, selected);
+      for (const mode of ["missing_employer", "changed_wage_bank"])
+        expect(child(selected, mode)).toEqual({ rejected: true });
       for (const mode of ["absent", "tampered"]) {
         const result = child(selected, mode);
         expect(result.state).toBe(canonicalSerialize(expected.state));

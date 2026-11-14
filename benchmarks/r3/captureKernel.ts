@@ -1,6 +1,8 @@
 import { performance } from "node:perf_hooks";
 import type { PortableModelEnvelope } from "../../src/model/modelVersion.js";
-import { compileHouseholdProjection, type HouseholdProjectionCompilerRequest } from "../../src/application/compiler/householdProjection.js";
+import type { HouseholdProjectionCompilerRequest } from "../../src/application/compiler/householdProjection.js";
+import { selectScenario } from "../../src/application/compiler/scenarioSelection.js";
+import { compileHouseholdKernelForRun } from "../../src/application/householdProjection.js";
 import { PerformanceRegistry, PERFORMANCE_PHASES } from "../../src/diagnostics/performance.js";
 import { runHouseholdKernel } from "../../src/simulation/householdExecution.js";
 import { applyHouseholdExecutionOverlay } from "../../src/simulation/r3/compiledHousehold.js";
@@ -22,21 +24,26 @@ export const captureReusableKernelEvidence = (
   fixtures: readonly Fixture[], warmups: number, measuredRuns: number,
 ) => fixtures.map(fixture => {
   const compileStart = performance.now();
-  const result = compileHouseholdProjection(fixture.model, fixture.request.compiler);
-  const compilationMs = performance.now() - compileStart;
-  if (result.status !== "compiled" || result.value.executionKernel === undefined)
-    throw new Error(fixture.id + " reusable kernel did not compile.");
-  const kernel = result.value.executionKernel;
   const boundary = fixture.request.compiler.investments ?? fixture.request.compiler.liabilities ?? fixture.request.compiler.cashFlow;
   if (boundary === undefined) throw new Error("Fixture has no boundary.");
+  const selected = selectScenario(fixture.model, {
+    capabilityName: "household_projection", executionLabel: "Household",
+    simulationStart: boundary.simulationStart, simulationEnd: boundary.simulationEnd,
+    ...(boundary.scenarioId === undefined ? {} : { scenarioId: boundary.scenarioId }),
+  });
+  if (selected.status !== "compiled") throw new Error(fixture.id + " scenario did not compile.");
   const context = createRunContext({
     runId: runId("93000000-0000-4000-8000-000000000090"),
-    scenarioId: scenarioId(kernel.executable.scenarioIdentity),
+    scenarioId: scenarioId(selected.value.id),
     asOf: instant(fixture.request.asOf + "T00:00:00.000Z"), dataCutoff: instant(fixture.request.dataCutoff + "T00:00:00.000Z"),
     simulationStart: instant(boundary.simulationStart + "T00:00:00.000Z"),
     simulationEnd: instant(boundary.simulationEnd + "T00:00:00.000Z"),
     baseCurrency: Currency.of(boundary.baseCurrency),
   });
+  const result = compileHouseholdKernelForRun(fixture.model, fixture.request.compiler, context);
+  const compilationMs = performance.now() - compileStart;
+  if (result.status !== "compiled") throw new Error(fixture.id + " reusable kernel did not compile.");
+  const kernel = result.value.kernel;
   const requireCompleted = (run: ReturnType<typeof runHouseholdKernel>) => {
     if (run.status !== "completed" || run.reachedThrough !== context.simulationEnd)
       throw new Error(fixture.id + " reusable kernel failed to reach the requested horizon.");

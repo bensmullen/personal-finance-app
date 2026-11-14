@@ -12,7 +12,7 @@ import { createIndexedExecutionState, snapshotAuthoritativeCheckpoint, Persisten
 import { deriveStatements } from "../../../../src/statements/index.js";
 import { decimal, money, USD } from "../../../../src/values/index.js";
 import { mixedFixture, resetSourceCalls, sourceCalls } from "./sparseScenario.js";
-import { ids as payrollIds } from "../../health/premiums/payrollPort/scenario.js";
+import { ids as payrollIds, originals as payrollOriginals } from "../../health/premiums/payrollPort/scenario.js";
 import { expandedWire, wireField, wireItems, replaceWireField } from "./wireFixture.js";
 
 // Observe the actual index implementation, including constructors, structural
@@ -31,6 +31,45 @@ const indexWork = () => {
 };
 
 describe("mixed P1/P2 cold sparse checkpoint work", () => {
+  it("requalifies a payroll original committed after the last retained checkpoint", () => {
+    const fixture = mixedFixture(2, false, true, true);
+    const sourceId = "employer-original:growth:2037";
+    const hasOriginal = (state: typeof fixture.forecast.state) =>
+      Object.values(state.d2PostedTransactions ?? {}).some(proof =>
+        proof.registration.kind === "payroll_health_deduction" &&
+        proof.registration.deduction.source.sourceId === sourceId);
+    expect(hasOriginal(fixture.forecast.state)).toBe(true);
+    expect(hasOriginal(exportHouseholdReplayCheckpointRoots(fixture.forecast).at(-1)!.state)).toBe(false);
+    const artifact = createPortableHouseholdReplayArtifact(fixture.forecast, true);
+    const malformed = expandedWire(artifact.encoded);
+    replaceWireField(malformed, "terminalDelta", null);
+    const encoded = JSON.stringify(malformed);
+    expect(() => restorePortableHouseholdReplayArtifact({
+      ...artifact, encoded, integrity: createInputFingerprint({ runContext: fixture.context, openingState: encoded }),
+    })).toThrow("BASIS_MISMATCH");
+    const warmTransport = { ...artifact };
+    const admitted = restorePortableHouseholdReplayArtifact(warmTransport);
+    const original = payrollOriginals.get(sourceId)!;
+    payrollOriginals.delete(sourceId);
+    try {
+      for (const candidate of [artifact, warmTransport, { ...artifact }]) {
+        try {
+          restorePortableHouseholdReplayArtifact(candidate);
+          throw new Error("Expected retracted original to reject restore");
+        } catch (error) {
+          expect(error).toMatchObject({ cause: expect.objectContaining({ message: expect.stringContaining("PAYROLL_HEALTH_SOURCE_INCOMPLETE") }) });
+        }
+      }
+      expect(() => replayHouseholdForecastWindow(admitted, admitted.periods[0]!.period)).toThrow("PAYROLL_HEALTH_SOURCE_INCOMPLETE");
+    } finally {
+      payrollOriginals.set(sourceId, original);
+    }
+    const selected = fixture.forecast.periods.at(-1)!.period;
+    const restored = restorePortableHouseholdReplayArtifact({ ...artifact });
+    expect(canonicalSerialize(replayHouseholdForecastWindow(restored, selected)))
+      .toBe(canonicalSerialize(replayHouseholdForecastWindow(fixture.forecast, selected)));
+  });
+
   it("exports and cold-restores 1/12/120 histories and checkpoints with proportional total work and transport", () => {
     const observations: { count: number; exported: ReplayExportMeasurement; restored: ReplayRestoreMeasurement;
       work: { nodes: number; rows: number } }[] = [];

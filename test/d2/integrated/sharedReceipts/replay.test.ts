@@ -146,8 +146,11 @@ describe("#149 portable shared-receipt foundation", () => {
   it("refuses unavailable independent source history despite intact artifact integrity", () => {
     const f = replayFixture(), summary = runHouseholdKernel({ kernel: f.kernel, runContext: f.runContext });
     const artifact = createPortableHouseholdReplayArtifact(summary);
+    const cached = restorePortableHouseholdReplayArtifact(artifact);
+    expect(restorePortableHouseholdReplayArtifact(artifact)).toBe(cached);
     availability.source = false;
     expect(() => restorePortableHouseholdReplayArtifact(artifact)).toThrow("HOUSEHOLD_REPLAY_BASIS_MISMATCH");
+    expect(() => restorePortableHouseholdReplayArtifact({ ...artifact })).toThrow("HOUSEHOLD_REPLAY_BASIS_MISMATCH");
   });
 
   it("refuses intact receipt bytes when the canonical archive is omitted despite recomputed integrity", () => {

@@ -12,6 +12,7 @@ import { proposePremiums, type PremiumCoverage, type PremiumRequest, type Premiu
 import { attachAftertaxPremiums, type AftertaxPremiumInput, type ConfirmedPremium } from "../../../../src/simulation/d2/integration/aftertaxPremiums/index.js";
 import type { FixedAmortizingLoan } from "../../../../src/simulation/verticalSlice4.js";
 import { catalogSchema } from "../../../fixtures/d2/schema.js";
+import { employerWage } from "../../../fixtures/employerWage.js";
 
 export const catalog = catalogSchema.parse(JSON.parse(readFileSync(new URL("../../../fixtures/d2/catalog.json", import.meta.url), "utf8")));
 export const anchor = (id: string) => catalog.cases.find(c => c.id === id)!;
@@ -70,13 +71,17 @@ export function scenario({ cash = "2000", months = 1, namespace = 1, wageDay = "
       [ids.interest]: { id: ids.interest, balance: money("0") },
     },
   });
+  const context = createRunContext({ runId: runId(uuid(10)), scenarioId: ids.scenario,
+    asOf: instant(`${asOf}T00:00:00.000Z`), dataCutoff: instant(`${asOf}T00:00:00.000Z`),
+    simulationStart: start, simulationEnd: end, baseCurrency: USD });
+  const wages = employerWage(context, {
+    householdId: ids.household, personId: ids.member, bankAccountId: ids.bank, incomeId: ids.wage,
+    bankOwner: "person", employerId: "synthetic-employer", gross: "1000", firstPayday: payday.slice(0, 10),
+  });
   const base = compileHouseholdKernel({
     cashFlowInput: { householdId: ids.household, ownerId: ids.member, cashAccountId: ids.bank,
       expensePayableLiabilityId: ids.payable, baseCurrency: USD, sameInstantCashFlowOrder: "income_before_expense", expenses: [], events: [],
-      incomes: [{ id: ids.wage, ownerId: ids.member, baseMonthlyAmount: money("1000"), start: payday,
-        recurrence: { kind: "utc_monthly", anchor: payday, invalidDayPolicy: "skip" }, depositAccountId: ids.bank,
-        growthRate: Rate.fromDecimal("0", rateConvention.effectiveAnnual()), growthBaseAt: payday,
-        primitiveIds: { growth: primitive(30), recurrence: primitive(31) }, sourceTraceRefs: [trace("synthetic:#149:wage-deposit-1000")] }] },
+      incomes: [wages.income] },
     liabilityInput: { householdId: ids.household, ownerId: ids.member, baseCurrency: USD, loans: [loan] },
     reconciledOpeningState: opening, reconciledPrimitiveState: createPrimitiveRuntimeStateStore(),
     scenarioIdentity: ids.scenario, executionMonths: months, scenarioBindings: { source: "#149 S8-1" },
@@ -110,9 +115,6 @@ export function scenario({ cash = "2000", months = 1, namespace = 1, wageDay = "
   }));
   const input: AftertaxPremiumInput = { kernel: base, request, asOf, confirmed, representations: [] };
   const attached = attachAftertaxPremiums(input);
-  const context = createRunContext({ runId: runId(uuid(10)), scenarioId: ids.scenario,
-    asOf: instant(`${asOf}T00:00:00.000Z`), dataCutoff: instant(`${asOf}T00:00:00.000Z`),
-    simulationStart: start, simulationEnd: end, baseCurrency: USD });
   return { ids, opening, loan, coverage, input, attached, context,
     run: () => runHouseholdKernel({ kernel: attached.kernel, runContext: context, resultTier: "detail" }) };
 }

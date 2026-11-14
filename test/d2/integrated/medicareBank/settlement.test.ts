@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { compileModeledIncomeFixture } from "../../../fixtures/modeledIncome.js";
 import { domainId } from "../../../../src/identity/index.js";
 import { calculationTraceId, calculationTraceRef } from "../../../../src/lineage/index.js";
 import { createAuthoritativeState } from "../../../../src/state/index.js";
 import { civilDate, instant, utcMonthlyPeriods } from "../../../../src/time/index.js";
-import { money, Rate, rateConvention } from "../../../../src/values/index.js";
+import { money } from "../../../../src/values/index.js";
 import { applyHouseholdExecutionOverlay, exportHouseholdReplayCheckpoints, replayHouseholdForecastWindow,
   runHouseholdKernel } from "../../../../src/simulation/householdExecution.js";
 import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../../../../src/simulation/r3/replayArtifact.js";
@@ -348,11 +349,10 @@ describe("#149 opt-in physical Medicare B/D BANK execution", () => {
 
   it("retains independent wages and never treats employer subsidy as household income", () => {
     const i = input(), payday = instant("2026-06-05T00:00:00.000Z");
-    const wage = { id: domainId("income", uuid(700)), ownerId: person(), baseMonthlyAmount: money("500"),
-      start: payday, recurrence: { kind: "utc_monthly" as const, anchor: payday, invalidDayPolicy: "skip" as const },
-      depositAccountId: bank(), growthRate: Rate.fromDecimal("0", rateConvention.effectiveAnnual()), growthBaseAt: payday,
-      primitiveIds: { growth: domainId("primitive-instance", uuid(701)), recurrence: domainId("primitive-instance", uuid(702)) },
-      sourceTraceRefs: [ref("source:unrelated-wage")] };
+    const wage = compileModeledIncomeFixture(fixture().context, 1, {
+      householdId: i.kernel.cash!.input.householdId, personId: person(), accountId: bank(), accountType: "checking",
+      incomes: [{ id: uuid(700), type: "salary", amount: "500", startDate: payday.slice(0, 10) }],
+    }).incomes[0]!;
     const kernel = applyHouseholdExecutionOverlay(i.kernel, { cashFlowInput: { ...i.kernel.cash!.input, incomes: [wage] } });
     const r = { ...i.request, premiums: { ...i.request.premiums, coverages: i.request.premiums.coverages.map(c => ({ ...c,
       quote: { ...c.quote, gross: c.quote.member.plus(money("10")), employer: money("10") } })) } };

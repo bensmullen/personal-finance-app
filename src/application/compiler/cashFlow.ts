@@ -7,7 +7,7 @@ import {
 } from "../../lineage/index.js";
 import type { PortableModelEnvelope } from "../../model/modelVersion.js";
 import { deriveCanonicalRetirementBindings } from "./retirementAuthoring.js";
-import { durablePayrollAllocations, payrollOpeningBalances, supportsD1SpouseHsaScope } from "./payrollAuthoring.js";
+import { durablePayrollAllocations, payrollOpeningBalances } from "./payrollAuthoring.js";
 import { durablePayrollWithholding } from "./payrollWithholding.js";
 import { compileOpeningContributionUsage } from "./contributionOpening.js";
 import {
@@ -15,8 +15,12 @@ import {
   type AuthoritativeState,
 } from "../../state/index.js";
 import { utcMonthlyHorizonMonths, type Instant } from "../../time/index.js";
-import { Currency, Rate, money, rateConvention } from "../../values/index.js";
+import { Currency, Rate, money, rateConvention, ratePeriod } from "../../values/index.js";
 import type { VerticalSlice2Input } from "../../simulation/verticalSlice2.js";
+import { assertRunContext, canonicalSerialize, type RunContext } from "../../simulation/run.js";
+import { applyVerticalSlice2Scenario, resolveScenario, type ResolvedScenario } from "../../simulation/scenario.js";
+import { registerModeledPayrollCompiler, modeledPayrollKey, withoutModeledPayroll, type ModeledPayrollBinding, type ModeledPayrollReference } from "../../simulation/d2/integration/householdWages/modeledPayroll.js";
+import { immutableConfiguration } from "../../simulation/r3/compiledHousehold.js";
 import {
   assertGeometricGrowthRate,
   isPrimitiveId,
@@ -49,7 +53,48 @@ export type SameInstantCashFlowOrder =
   | "income_before_expense"
   | "expense_before_income";
 
+const modeledIncomeTypes = new Set([
+  "salary", "bonus", "commission", "overtime", "equity_compensation", "business",
+  "rental", "interest", "dividend", "capital_gain", "pension", "unemployment",
+  "severance", "gift", "inheritance", "other",
+]);
+
+const issuedIncomes = new WeakMap<ModeledPayrollReference, ModeledPayrollBinding>();
+const authoredCashFlows = new WeakSet<VerticalSlice2Input>();
+registerModeledPayrollCompiler("canonical-cash-flow/v1", reference => issuedIncomes.get(reference));
+const issueModeledIncome = (binding: ModeledPayrollBinding): VerticalSlice2Input["incomes"][number] => {
+  const snapshot = immutableConfiguration(binding), key = modeledPayrollKey(snapshot);
+  const reference = immutableConfiguration<ModeledPayrollReference>({ version: "modeled-payroll/v1", issuer: "canonical-cash-flow/v1", key });
+  issuedIncomes.set(reference, snapshot);
+  return Object.freeze({ ...snapshot.stream, modeledPayroll: reference });
+};
+
+/** Apply an application-resolved scenario to compiler-owned source streams. */
+export function qualifyCashFlowScenario(input: VerticalSlice2Input, resolved: ResolvedScenario, context: RunContext): VerticalSlice2Input {
+  assertRunContext(context);
+  if (!authoredCashFlows.has(input) || context.scenarioId !== resolved.scenario.scenarioId ||
+      canonicalSerialize(resolveScenario(resolved.layers, context.scenarioId)) !== canonicalSerialize(resolved))
+    throw new Error("CASH_FLOW_SCENARIO_SOURCE_NOT_ADMITTED");
+  const effective = applyVerticalSlice2Scenario(input, resolved, context);
+  const sources = new Map(input.incomes.map(stream => [stream.id, stream.modeledPayroll]));
+  return Object.freeze({ ...effective, incomes: Object.freeze(effective.incomes.map(stream => {
+    const ref = sources.get(stream.id);
+    if (ref === undefined) return stream;
+    const binding = issuedIncomes.get(ref)!;
+    if (resolved.rootScenarioId !== binding.scenarioId || context.simulationStart !== binding.start || context.simulationEnd !== binding.end ||
+        context.asOf !== binding.asOf || !stream.baseMonthlyAmount.currency.equals(context.baseCurrency))
+      throw new Error("CASH_FLOW_SCENARIO_CONTEXT_MISMATCH");
+    return issueModeledIncome({
+      ...binding, stream: withoutModeledPayroll(stream), scenarioId: context.scenarioId,
+      events: effective.events.filter(event => event.targetId === stream.id),
+      runId: context.runId, dataCutoff: context.dataCutoff,
+      sourceFingerprint: modeledPayrollKey({ source: binding.sourceFingerprint, resolved, context }),
+    });
+  })) });
+}
+
 export interface CashFlowCompilerRequest {
+  readonly runContext?: RunContext;
   readonly baseCurrency: string;
   readonly asOf?: string;
   readonly simulationStart: string;
@@ -131,6 +176,38 @@ export interface GrowthBinding {
   readonly rate: Rate;
   readonly primitiveId?: string;
   readonly assumptionId?: string;
+}
+
+/** Validate the authored relation without issuing any execution authority. */
+export function validateSalaryActivation(
+  model: PortableModelEnvelope,
+  income: CanonicalObject,
+  event: CanonicalObject,
+  selected: SelectedScenario,
+  memberIds: readonly string[],
+): CompileResult<true> {
+  const incomeId = canonicalId(income, "income_id");
+  const eventId = canonicalId(event, "event_id");
+  const references = Array.isArray(selected.object?.event_ids) ? selected.object.event_ids : [];
+  if (eventId === undefined || event.event_type !== "job_change" ||
+      canonicalId(income, "related_event_id") !== eventId ||
+      income.income_type !== "salary" || !memberIds.includes(String(income.owner_id).toLowerCase()) ||
+      event.enabled !== true || event.trigger_type !== "scheduled" ||
+      canonicalId(event, "scenario_id") !== selected.id || selected.object?.base_scenario_id != null ||
+      references.filter(value => typeof value === "string" && value.toLowerCase() === eventId).length !== 1 ||
+      objects(model, "Event").filter(candidate => canonicalId(candidate, "event_id") === eventId).length !== 1 ||
+      objects(model, "Income").filter(candidate => canonicalId(candidate, "related_event_id") === eventId).length !== 1 ||
+      utcDate(event.start_date) === undefined || event.start_date !== income.start_date)
+    return invalidResult("SALARY_ACTIVATION_BINDING_INVALID",
+      `Income ${incomeId} requires an exclusive enabled scheduled job-change Event ${eventId} listed once in its root Scenario on the salary start date.`,
+      "Income", incomeId, "related_event_id", eventId === undefined ? undefined : [eventId]);
+  if (event.probability_model_id != null || event.trigger_condition != null ||
+      !Array.isArray(event.effect_ids) || event.effect_ids.length !== 0 ||
+      (event.dependencies != null && (!Array.isArray(event.dependencies) || event.dependencies.length !== 0)) ||
+      event.duration_days != null || event.end_date != null || (event.precedence != null && event.precedence !== 0))
+    return unsupportedResult("SALARY_ACTIVATION_SEMANTICS_UNSUPPORTED",
+      `Job-change Event ${eventId} must contain only the scheduled salary activation.`, "Event", eventId);
+  return { status: "compiled", value: true, diagnostics: [] };
 }
 
 export const resolveGrowth = (
@@ -479,10 +556,11 @@ export const resolveGrowth = (
       "Assumption",
       assumptionId,
     );
-  if (assumption.unit !== "effective annual rate")
+  const monthlyIncomeRate = streamType === "Income" && assumption.unit === "monthly periodic rate";
+  if (assumption.unit !== "effective annual rate" && !monthlyIncomeRate)
     return unsupportedResult(
       "RATE_UNIT_UNSUPPORTED",
-      `Assumption ${assumptionId} must use unit "effective annual rate".`,
+      `Assumption ${assumptionId} must use unit "effective annual rate"${streamType === "Income" ? ' or "monthly periodic rate"' : ""}.`,
       "Assumption",
       assumptionId,
       "unit",
@@ -500,7 +578,7 @@ export const resolveGrowth = (
   try {
     const rate = Rate.fromDecimal(
       assumption.value,
-      rateConvention.effectiveAnnual(),
+      monthlyIncomeRate ? rateConvention.periodic(ratePeriod("1", "calendar_month")) : rateConvention.effectiveAnnual(),
     );
     assertGeometricGrowthRate(rate);
     if (primitiveScenarioMismatch)
@@ -578,6 +656,7 @@ const validateEventReference = (
   stream: CanonicalObject,
   type: "Income" | "Expense",
   retirementBindings: readonly RetirementTerminationBinding[] = [],
+  activationByIncome: ReadonlyMap<string, string> = new Map(),
 ): CompileResult<never> | undefined => {
   for (const field of type === "Income"
     ? (["probability_model_id", "related_event_id"] as const)
@@ -612,11 +691,12 @@ const validateEventReference = (
       );
     if (
       field === "related_event_id" &&
-      retirementBindings.some(
-        (binding) =>
-          binding.incomeId.toLowerCase() === id &&
-          binding.canonicalEventId?.toLowerCase() === value.toLowerCase(),
-      )
+      (activationByIncome.get(id) === value.toLowerCase() ||
+        retirementBindings.some(
+          (binding) =>
+            binding.incomeId.toLowerCase() === id &&
+            binding.canonicalEventId?.toLowerCase() === value.toLowerCase(),
+        ))
     )
       continue;
     return unsupportedResult(
@@ -1121,9 +1201,30 @@ const compileCashFlowSources = (
   });
   if (scenarioResult.status !== "compiled") return scenarioResult;
   const selected = scenarioResult.value;
+  const context = request.runContext;
+  if (context !== undefined) {
+    try { assertRunContext(context); }
+    catch (error) { if (error instanceof ValidationError) return { status: "invalid_model", diagnostics: error.issues }; throw error; }
+    if (context.scenarioId !== selected.id || context.simulationStart !== simulationStart ||
+        context.simulationEnd !== simulationEnd || !context.baseCurrency.equals(currency) ||
+        context.asOf !== utcDate(request.asOf ?? request.simulationStart)) {
+      return invalidResult("CASH_FLOW_RUN_CONTEXT_MISMATCH", "Cash-flow compiler boundary differs from the execution context.", "run_context");
+    }
+  }
   request = { ...request, retirementBindings: deriveCanonicalRetirementBindings(model, selected.id, request.retirementBindings) };
   const retirementByIncome = new Map<string, RetirementTerminationBinding>();
   const retirementEventIds = new Set<string>();
+  const activationByIncome = new Map<string, string>();
+  const canonicalEvents = new Map(objects(model, "Event").map(event => [canonicalId(event, "event_id"), event]));
+  for (const income of objects(model, "Income")) {
+    const incomeId = canonicalId(income, "income_id")!;
+    const eventId = canonicalId(income, "related_event_id");
+    const event = canonicalEvents.get(eventId);
+    if (eventId === undefined || event?.event_type !== "job_change") continue;
+    const activation = validateSalaryActivation(model, income, event, selected, scope.memberIds);
+    if (activation.status !== "compiled") return activation;
+    activationByIncome.set(incomeId, eventId);
+  }
   const authoredIdentityIds = new Set(
     Object.values(model.objects).flatMap((collection) =>
       collection.flatMap((entry) =>
@@ -1143,6 +1244,12 @@ const compileCashFlowSources = (
   for (const binding of request.retirementBindings ?? []) {
     const incomeId = binding.incomeId.toLowerCase();
     const eventId = binding.terminationEventId.toLowerCase();
+    if (activationByIncome.has(incomeId) && binding.canonicalEventId === undefined)
+      return unsupportedResult(
+        "SALARY_ACTIVATION_RETIREMENT_AMBIGUOUS",
+        `Income ${incomeId} links a job-change Event and requires a separately authenticated retirement Event for termination.`,
+        "Income", incomeId, "related_event_id",
+      );
     if (
       !UUID.test(binding.incomeId) ||
       !UUID.test(binding.terminationEventId) ||
@@ -1234,16 +1341,6 @@ const compileCashFlowSources = (
     );
     retirementEventIds.add(eventId);
   }
-  let spouseHsaScope = false;
-  try { spouseHsaScope = supportsD1SpouseHsaScope(model, scope.memberIds); } catch (error) { return unsupportedResult("PAYROLL_CONTRIBUTION_UNSUPPORTED", error instanceof Error ? error.message : "Unsupported payroll policy", "Investment"); }
-  if (scope.memberIds.length !== 1 && !spouseHsaScope)
-    return unsupportedResult(
-      "CASH_FLOW_OWNER_AMBIGUOUS",
-      `VS2 cash-flow compilation requires exactly one Household member Person; found ${scope.memberIds.length}.`,
-      "Household",
-      scope.householdId,
-      "members",
-    );
   for (const expense of objects(model, "Expense")) {
     const expenseId = canonicalId(expense, "expense_id")!;
     const expenseOwner = resolveOwnerScope(
@@ -1464,6 +1561,7 @@ const compileCashFlowSources = (
         stream,
         type,
         request.retirementBindings ?? [],
+        activationByIncome,
       );
       if (event?.status === "invalid_model") return event;
       if (!PAYMENT_FREQUENCIES.includes(stream.frequency as never))
@@ -1605,8 +1703,14 @@ const compileCashFlowSources = (
         stream,
         type,
         request.retirementBindings ?? [],
+        activationByIncome,
       );
       if (event) return event;
+      if (type === "Income" && !modeledIncomeTypes.has(String(stream.income_type)) &&
+          money(String(stream.amount), currency).isPositive())
+        return unsupportedResult("INCOME_SOURCE_UNSUPPORTED",
+          `Income ${id} requires a supported canonical modeled source or an independently published benefit.`,
+          "Income", id, "income_type");
       // Structural validation above still covers omitted sources. Do not invent
       // a gross monthly schedule for legitimate unsupported salary facts.
       if (type === "Income" && unsupportedSalary(stream)) {
@@ -1715,11 +1819,13 @@ const compileCashFlowSources = (
       slots.push(`${type}:${id}:recurrence`, `${type}:${id}:zero-growth`);
       if (type === "Income" && retirementByIncome.has(id))
         slots.push(`${type}:${id}:termination`);
+      if (type === "Income" && activationByIncome.has(id))
+        slots.push(`Income:${id}:activation`, `Income:${id}:activation-event`);
       if (type === "Expense") slots.push(`${type}:${id}:inflation-link`);
     }
   }
 
-  const idsResult = generatedCompilerIds(model, slots, GENERATED_PREFIX);
+  const idsResult = generatedCompilerIds(model, slots, GENERATED_PREFIX, [...retirementEventIds]);
   if (idsResult.status !== "compiled") return idsResult;
   const generated = idsResult.value;
   const payableId = domainId("liability", generated.get("payable")!);
@@ -1746,6 +1852,10 @@ const compileCashFlowSources = (
     const growth = resolveGrowth(model, stream, "Income", selected);
     if (growth.status !== "compiled") return growth;
     const start = utcDate(stream.start_date)!;
+    const canonicalActivationId = activationByIncome.get(id);
+    const activationEventId = canonicalActivationId !== undefined && start >= simulationStart && start < simulationEnd
+      ? domainId("event", generated.get(`Income:${id}:activation-event`)!)
+      : undefined;
     const end =
       typeof stream.end_date === "string"
         ? nextUtcDate(stream.end_date)!
@@ -1773,6 +1883,7 @@ const compileCashFlowSources = (
         }),
         growthRate: growth.value.rate,
         growthBaseAt: start,
+        ...(activationEventId === undefined ? {} : { activationEventId }),
         ...(retirementByIncome.has(id)
           ? {
               terminationEventId: domainId(
@@ -1791,6 +1902,9 @@ const compileCashFlowSources = (
             "primitive-instance",
             generated.get(`Income:${id}:recurrence`)!,
           ),
+          ...(activationEventId === undefined ? {} : {
+            activation: domainId("primitive-instance", generated.get(`Income:${id}:activation`)!),
+          }),
           ...(retirementByIncome.has(id)
             ? {
                 termination: domainId(
@@ -1806,6 +1920,9 @@ const compileCashFlowSources = (
             undefined,
             assumptionIds,
           ),
+          ...(canonicalActivationId === undefined ? [] : [
+            calculationTraceRef(calculationTraceId(`compiler:canonical:Event:${canonicalActivationId}`)),
+          ]),
         ]),
       }),
     );
@@ -1941,6 +2058,19 @@ const compileCashFlowSources = (
         ]),
       }),
     );
+    const events = Object.freeze([
+      ...retirementEvents,
+      ...compiledIncomes.flatMap(income => income.activationEventId === undefined ? [] : [Object.freeze({
+        id: income.activationEventId,
+        targetId: income.id,
+        kind: "activation" as const,
+        effectiveAt: income.start,
+        sourceTraceRefs: Object.freeze([
+          calculationTraceRef(calculationTraceId(`compiler:canonical:Event:${activationByIncome.get(income.id)!}`)),
+        ]),
+      })]),
+    ]);
+    const sourceFingerprint = modeledPayrollKey({ model, request });
     const input: VerticalSlice2Input = Object.freeze({
       householdId: domainId("household", scope.householdId),
       ownerId,
@@ -1948,8 +2078,24 @@ const compileCashFlowSources = (
       expensePayableLiabilityId: payableId,
       baseCurrency: currency,
       sameInstantCashFlowOrder: request.sameInstantCashFlowOrder,
-      events: Object.freeze(retirementEvents),
-      incomes: Object.freeze(compiledIncomes),
+      events,
+      incomes: Object.freeze(compiledIncomes.map(income => {
+        const authored = incomes.find(item => canonicalId(item, "income_id") === income.id);
+        const bank = eligibleAccounts.find(item => canonicalId(item, "account_id") === income.depositAccountId);
+        const classification = authored?.income_type;
+        const bankOwner = typeof bank?.owner_id === "string" ? bank.owner_id.toLowerCase() : undefined;
+        if (typeof classification !== "string" || !modeledIncomeTypes.has(classification) ||
+          (!scope.memberIds.includes(String(income.ownerId)) && (classification === "salary" || income.ownerId !== scope.householdId)) ||
+          !bank || bankOwner === undefined || (bankOwner !== scope.householdId && !scope.memberIds.includes(bankOwner))) return income;
+        return issueModeledIncome({ stream: income, householdId: scope.householdId,
+          events: events.filter(event => event.targetId === income.id),
+          bank: { id: income.depositAccountId, ownerId: domainId(bankOwner === scope.householdId ? "household" : "person", bankOwner), kind: String(bank.account_type) as "cash" | "checking" | "savings" },
+          ...(classification === "salary" ? {} : { nonSalaryType: classification }),
+          start: utcDate(request.simulationStart)!, end: utcDate(request.simulationEnd)!,
+          asOf: utcDate(request.asOf ?? request.simulationStart)!, scenarioId: selected.id,
+          ...(context === undefined ? {} : { runId: context.runId, dataCutoff: context.dataCutoff }),
+          sourceFingerprint });
+      })),
       expenses: Object.freeze(compiledExpenses),
     });
     const openingState = createAuthoritativeState({
@@ -1984,6 +2130,7 @@ const compileCashFlowSources = (
         [payableId]: { id: payableId, balance: money("0", currency) },
       },
     });
+    authoredCashFlows.add(input);
     return {
       status: "compiled",
       value: Object.freeze({

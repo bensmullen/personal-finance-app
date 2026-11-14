@@ -1,10 +1,12 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 import { clickFinancialDestination, navigateOwner, expectForecastWindow, showStatusActions } from "./navigation.js";
 import { inspectLiabilityBalanceWindow, inspectMortgageWindow } from "../src/application/mortgageChartData.js";
 import type { PersonalHouseholdForecastReadModel } from "../src/application/householdProjection.js";
 import type { ForecastWorkerResponse } from "../src/application/interactiveForecast.js";
-import { addPersonalObject, createEmptyPersonalDraft, createGoldenHouseholdDraft, exportPersonalModelJson } from "../src/application/personalMvp.js";
+import { addPersonalObject, createEmptyPersonalDraft, createFlagshipHouseholdDraft, exportPersonalModelJson } from "../src/application/personalMvp.js";
 import { GOLDEN_HOUSEHOLD_IDS as ids } from "../src/application/goldenHousehold.js";
+import { deserializePortableModelEnvelope } from "../src/model/modelVersion.js";
 import { formatExactMoney } from "../ui/entityPresentation.js";
 
 const outlook = (page: Page, property = false) => page.getByRole("region", { name: property ? "Property mortgage outlook" : "Debt outlook", exact: true });
@@ -193,7 +195,13 @@ for (const width of [1440, 390]) {
   });
   test(`Debt paid bars and keyboard/table match real committed source at ${width}px`, async ({ page }, info) => {
     await observe(page); await setup(page, width);
-    const source = await appliedSource(page), expected = inspectMortgageWindow(source.points, ids.mortgage);
+    const source = await appliedSource(page);
+    const originalModel = createFlagshipHouseholdDraft();
+    const expected = inspectMortgageWindow(source.points, ids.mortgage, undefined, originalModel);
+    expect(() => inspectMortgageWindow(source.points, ids.mortgage)).toThrow(/BASIS_MISMATCH/);
+    expect(() => inspectMortgageWindow(source.points, ids.mortgage, undefined, {
+      ...originalModel, objects: { ...originalModel.objects, Income: [] },
+    })).toThrow(/BASIS_MISMATCH/);
     await clickFinancialDestination(page, "Debt");
     await expect(outlook(page)).toHaveAttribute("data-evidence-state", "current");
     const month = outlook(page).getByLabel("Selected mortgage month", { exact: true });
@@ -235,7 +243,15 @@ for (const width of [1440, 390]) {
   });
   test(`Unfunded scheduled debt never appears as positive cash paid at ${width}px`, async ({ page }) => {
     await observe(page); await setup(page, width, true);
-    const expected = inspectMortgageWindow((await appliedSource(page)).points, ids.mortgage);
+    const source = await appliedSource(page);
+    // The bank was authored in the UI with its own ID. Read the canonical
+    // model through its export, independently of the worker's replay proof.
+    await navigateOwner(page, "Settings", "Import / Export");
+    const downloading = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Export current model", exact: true }).click();
+    const download = await downloading;
+    const originalModel = deserializePortableModelEnvelope(JSON.parse(await readFile((await download.path())!, "utf8")));
+    const expected = inspectMortgageWindow(source.points, ids.mortgage, undefined, originalModel);
     expect(expected.rows[0]).toMatchObject({ interestPaid: "0", scheduledPrincipalPaid: "0", extraPrincipalPaid: "0" });
     await clickFinancialDestination(page, "Debt");
     await expect(outlook(page)).toHaveAttribute("data-evidence-state", "current");

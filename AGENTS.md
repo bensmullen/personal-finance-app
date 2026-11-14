@@ -132,6 +132,19 @@ not a promise of zero runtime or external-provider blockers. Follow
 `docs/development/handoff-authoring-policy.md`, “First implementation
 blocker: reachable-contract closure audit.” Never bypass Codex's stop hooks.
 
+**Source-qualified change scope census (reviewer-owned):** Before claiming a
+cross-cutting salary/source authentication handoff complete, review reverse
+producer/caller paths in application, production AND independent reference
+evaluators, tests, E2E, manual `tools/ci/` probes, benchmarks, worker delegation,
+and warm/cold replay. Verify where the real run/as-of/cutoff and independent
+source are first known, then classify every directly reachable write as
+authorized product, conditional/test migration, separate framework dependency,
+or read-only with a reason. After repeated no-code BLOCKED, attach the
+path-by-path second-pass disposition to the original issue/PR before another
+Codex restart. Protected tooling changes require a distinct framework-owned
+PR; do not widen product V3 to bypass hooks. See the handoff-authoring policy's
+source-qualified caller inventory gate.
+
 ## Git bootstrap and shared state
 
 GitHub remote state is authoritative for task initialization.

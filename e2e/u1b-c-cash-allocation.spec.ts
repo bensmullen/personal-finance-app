@@ -5,7 +5,8 @@ import { clickFinancialDestination, navigateOwner, expectForecastWindow } from "
 import { cashComparison, inspectMonthlyMoney } from "../src/application/monthlyMoney.js";
 import type { PersonalHouseholdForecastReadModel } from "../src/application/householdProjection.js";
 import type { ForecastWorkerResponse } from "../src/application/interactiveForecast.js";
-import { addPersonalObject, createEmptyPersonalDraft, exportPersonalModelJson, getCurrentPosition, type PersonalDraft } from "../src/application/personalMvp.js";
+import { addPersonalObject, createEmptyPersonalDraft, exportPersonalModelJson, getCurrentPosition } from "../src/application/personalMvp.js";
+import { deserializePortableModelEnvelope } from "../src/model/modelVersion.js";
 import { decimal } from "../src/values/index.js";
 import { formatExactMoney } from "../ui/entityPresentation.js";
 
@@ -116,7 +117,7 @@ for (const width of [1440, 390]) {
     await page.goto("/");
     await page.getByRole("button", { name: "Use synthetic example", exact: true }).click();
     await expect(status(page)).toHaveAttribute("data-lifecycle", "completed", { timeout: 30_000 });
-    const model = JSON.parse(await exported(page)) as PersonalDraft;
+    const model = deserializePortableModelEnvelope(JSON.parse(await exported(page)));
     await clickFinancialDestination(page, "Cash");
     await expect(page.getByRole("heading", { name: "Your cash, coming in and going out.", exact: true })).toBeVisible();
     const cashRun = page.getByRole("button", { name: "Run cash-flow forecast", exact: true });
@@ -213,7 +214,11 @@ for (const width of [1440, 390]) {
       return response?.outcome === "result" ? response.result as PersonalHouseholdForecastReadModel : undefined;
     });
     if (!source || source.status === "unavailable") throw new Error("Expected actual flagship forecast");
-    const expected = inspectMonthlyMoney(source.points.find(point => point.periodStart.startsWith("2026-07"))!, model);
+    const july = source.points.find(point => point.periodStart.startsWith("2026-07"))!;
+    expect(() => inspectMonthlyMoney(july)).toThrow(/HOUSEHOLD_REPLAY_BASIS_MISMATCH/);
+    const expected = inspectMonthlyMoney(july, model);
+    expect(() => inspectMonthlyMoney(july, { ...model, objects: { ...model.objects, Income: [] } }))
+      .toThrow(/HOUSEHOLD_REPLAY_BASIS_MISMATCH/);
     expect(expected.withholding).toBe("posted");
     expect(decimal(expected.withholdingAmount!).isPositive()).toBe(true);
     expect(expected.categories.some(item => item.label === "Employee retirement")).toBe(false);
@@ -273,7 +278,7 @@ for (const width of [1440, 390]) {
     await page.keyboard.press("Enter");
     await expect(selected).toHaveValue("2026-02");
     await expect(panel(page)).toHaveAttribute("data-evidence-state", "incomplete");
-    const expected = inspectMonthlyMoney(source.points[1]!, JSON.parse(before) as PersonalDraft);
+    const expected = inspectMonthlyMoney(source.points[1]!, deserializePortableModelEnvelope(JSON.parse(before)));
     if (decimal(expected.unallocated).isPositive()) await expect(panel(page).locator(".paycheck-bar > span").last()).toHaveClass("paycheck-unallocated");
     const exact = (amount: string) => formatExactMoney(amount, expected.currency);
     const details = panel(page).locator(".cash-chart-details");
@@ -318,7 +323,7 @@ for (const width of [1440, 390]) {
     await observe(page);
     await setup(page, width, "20000.00");
     const source = await appliedSource(page);
-    const model = JSON.parse(await exported(page)) as PersonalDraft;
+    const model = deserializePortableModelEnvelope(JSON.parse(await exported(page)));
     await clickFinancialDestination(page, "Cash");
     const expected = inspectMonthlyMoney(source.points[0]!, model);
     expect(decimal(expected.additionalFunding).isPositive()).toBe(true);

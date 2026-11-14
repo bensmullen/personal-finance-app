@@ -206,6 +206,42 @@ describe("Personal-MVP application facade", () => {
     ).toBe(true);
   });
 
+  it("uses the same job-change salary in the current position and cash-flow forecast", () => {
+    const baseline = createSyntheticPersonalDraft();
+    const income = baseline.objects.Income![0] as Record<string, string>;
+    const scenario = baseline.objects.Scenario![0] as Record<string, string>;
+    const eventId = "90000000-0000-4000-8000-000000000023";
+    const withEvent = { ...baseline, objects: { ...baseline.objects, Event: [{
+      event_id: eventId, name: "Synthetic job change", event_type: "job_change", start_date: "2026-01-01",
+      scenario_id: scenario.scenario_id!, trigger_type: "scheduled",
+      effect_ids: [], dependencies: [], enabled: true,
+    }] } };
+    const withScenario = patchPersonalObject(withEvent, "Scenario", scenario.scenario_id!, { event_ids: [eventId] });
+    const model = patchPersonalObject(withScenario, "Income", income.income_id!, {
+      related_event_id: eventId,
+    });
+    const position = getCurrentPosition(model, request());
+    const forecast = runPersonalForecast(model, request());
+    expect(forecast.status, JSON.stringify(forecast.diagnostics)).toBe("completed");
+    if (forecast.scope !== "cash_flow" || forecast.status === "unavailable") throw new Error("expected cash-flow forecast");
+    expect(position.monthlyIncome?.exact).toBe("6000");
+    expect(position.monthlyCashFlow?.exact).toBe("1800");
+    expect(position.cash?.exact).toBe("5000");
+    expect(forecast.points[0]?.income.exact).toBe(position.monthlyIncome?.exact);
+
+    // Income type is immutable in the editor. Author the adverse source as
+    // a pension so the existing job-change relationship is actually tested.
+    const pension = { ...model, objects: { ...model.objects, Income: [{
+      ...model.objects.Income![0] as Record<string, string>, income_type: "pension",
+    }] } };
+    const unsupported = getCurrentPosition(pension, request());
+    expect(unsupported.monthlyIncome).toBeUndefined();
+    expect(unsupported.cash?.exact).toBe("5000");
+    expect(unsupported.monthlySpending?.exact).toBe("4200");
+    expect(unsupported.diagnostics).toContainEqual(expect.objectContaining({ code: "SALARY_ACTIVATION_BINDING_INVALID" }));
+    expect(runPersonalForecast(pension, request()).status).toBe("unavailable");
+  });
+
   it("executes only plain monthly fixed streams and never silently zeroes authored behavior", () => {
     const model = createSyntheticPersonalDraft();
     expect(runPersonalForecast(model, request()).status).toBe("completed");

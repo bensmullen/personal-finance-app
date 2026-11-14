@@ -40,7 +40,7 @@ registerHouseholdParticipantCodec({ codec: "test-sparse-payroll/v1", restore: in
   if (typeof inputs !== "number" || !Number.isSafeInteger(inputs) || inputs < 1 || inputs > 120) throw new Error("INVALID_SYNTHETIC_PAYROLL_COUNT");
   return growingParticipant(inputs);
 } });
-export const mixedFixture = (count: number, principalOnly = false, growing = false) => {
+export const mixedFixture = (count: number, principalOnly = false, growing = false, terminalPaycheck = false) => {
   let payroll: AuthoritativeState | undefined;
   for (let i = 0; i < count; i++) {
     const at = instant(`${2024 + Math.floor(i / 12)}-${String(i % 12 + 1).padStart(2, "0")}-15T00:00:00.000Z`);
@@ -79,7 +79,7 @@ export const mixedFixture = (count: number, principalOnly = false, growing = fal
     scenarioId: scenarioId("149d0000-0000-4000-8000-000000000002"), asOf: start, dataCutoff: start,
     simulationStart: start, simulationEnd: utcMonthlyPeriods(start, months).at(-1)!.end, baseCurrency: USD });
   const kernel = compileHouseholdKernel({ reconciledOpeningState: opening, reconciledPrimitiveState: createPrimitiveRuntimeStateStore(),
-    ...(growing ? { participants: [growingParticipant(count)] } : {}),
+    ...(growing ? { participants: [growingParticipant(count + Number(terminalPaycheck))] } : {}),
     executionMonths: months, scenarioIdentity: context.scenarioId, scenarioBindings: { synthetic: "mixed immutable source history" } }, start);
   return { opening, context, forecast: runHouseholdKernel({ kernel, runContext: context }) };
 };

@@ -4,7 +4,7 @@ import { createAuthoritativeState, applyD2SettlementAtomically, requalifyD2Settl
 import { money } from "../../../../../src/values/index.js";
 import { instant } from "../../../../../src/time/index.js";
 import { canonicalSerialize } from "../../../../../src/simulation/run.js";
-import { compileHouseholdKernel, applyHouseholdExecutionOverlay, runHouseholdKernel } from "../../../../../src/simulation/householdExecution.js";
+import { compileHouseholdKernel, applyHouseholdExecutionOverlay, replayHouseholdForecastWindow, runHouseholdKernel } from "../../../../../src/simulation/householdExecution.js";
 import { createPrimitiveRuntimeStateStore } from "../../../../../src/simulation/period.js";
 import { attachHelocServicing, qualifyHelocServicingSource } from "../../../../../src/simulation/d2/integration/helocServicing/index.js";
 import { withProvenance } from "../../helocServicing/scenario.js";
@@ -103,7 +103,9 @@ describe("#149 S8-4 actual HELOC in funded joint-household execution", () => {
   });
 
   it.each([false, true])("rolls back all February effects for actual auto/HELOC BANK contention (reversed=%s)", reversed => {
-    const january = jointHeloc({ months: 1, payments: 1 }).run(), s = jointHeloc({ payments: 1 });
+    const s = jointHeloc({ payments: 1 });
+    const baseline = runHouseholdKernel({ kernel: s.kernel, runContext: s.context });
+    const january = replayHouseholdForecastWindow(baseline, baseline.periods[0]!.period);
     // Independently dated installment due at the actual auto/premium instant.
     const p = mapFacts(s.pairs[0]!, new Map([["2026-02-01", "2026-02-15"]]));
     publish([{ ...p, issuer: withProvenance(p.issuer), bank: { ...p.bank, bankCashBefore: money("2900") } }]);
@@ -114,7 +116,8 @@ describe("#149 S8-4 actual HELOC in funded joint-household execution", () => {
     expect(out.status).toBe("incomplete");
     expect(out.diagnostics.map(d => d.code)).toContain("HOUSEHOLD_CONTENTION_UNRESOLVED");
     expect(out.periods).toHaveLength(1);
-    expect(out.state).toEqual(january.state); expect(out.primitiveState).toEqual(january.primitiveState);
+    expect(canonicalSerialize(out.state)).toBe(canonicalSerialize(january.state));
+    expect(out.primitiveState).toEqual(january.primitiveState);
     expect(amount(out.state.accounts[ids.bank]!.cash)).toBe("1900");
     expect(Object.values(out.state.d2SettlementReceipts ?? {}).some(r => r.kind === "heloc_phase_service")).toBe(false);
   });

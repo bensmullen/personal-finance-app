@@ -14,6 +14,7 @@ import {
 } from "../src/application/index.js";
 import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import { runVerticalSlice2 } from "../src/simulation/verticalSlice2.js";
+import { employerWage } from "./fixtures/employerWage.js";
 import { createFundingPolicy, fundingPolicyId } from "../src/funding/index.js";
 import { domainId } from "../src/identity/index.js";
 import { createAuthoritativeState } from "../src/state/index.js";
@@ -107,32 +108,6 @@ describe("canonical executable-model compiler", () => {
       baseCurrency: currency,
       sameInstantCashFlowOrder: "income_before_expense" as const,
       events: [],
-      incomes: [
-        {
-          id: domainId("income", "90000000-0000-4000-8000-000000000005"),
-          ownerId,
-          depositAccountId: accountId,
-          baseMonthlyAmount: money("6000", currency),
-          start: instant("2026-01-01T00:00:00.000Z"),
-          recurrence: {
-            kind: "utc_monthly" as const,
-            anchor: instant("2026-01-01T00:00:00.000Z"),
-            invalidDayPolicy: "skip" as const,
-          },
-          growthRate: Rate.fromDecimal("0", rateConvention.effectiveAnnual()),
-          growthBaseAt: instant("2026-01-01T00:00:00.000Z"),
-          primitiveIds: {
-            growth: domainId(
-              "primitive-instance",
-              "f15c0000-0000-4000-8001-000000000005",
-            ),
-            recurrence: domainId(
-              "primitive-instance",
-              "f15c0000-0000-4000-8001-000000000004",
-            ),
-          },
-        },
-      ],
       expenses: [
         {
           id: domainId("expense", "90000000-0000-4000-8000-000000000006"),
@@ -191,8 +166,13 @@ describe("canonical executable-model compiler", () => {
       simulationEnd: instant("2026-04-01T00:00:00.000Z"),
       baseCurrency: currency,
     });
+    const wage = employerWage(context, {
+      householdId, personId: ownerId, bankAccountId: accountId, bankOwner: "person",
+      incomeId: "90000000-0000-4000-8000-000000000005", employerId: "Independent synthetic employer",
+      gross: "6000", firstPayday: "2026-01-01",
+    });
     const direct = runVerticalSlice2({
-      input: directInput,
+      input: { ...directInput, incomes: [wage.income] },
       openingState: directState,
       runContext: context,
       months: 3,

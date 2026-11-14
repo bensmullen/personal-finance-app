@@ -14,6 +14,8 @@ if (months !== 13 && months !== 25) throw new Error("S8_FUNDED_HORIZON_INVALID")
 // artifact bytes. Only the requested bounded horizon comes from the launcher.
 const s = fundedHousehold({ months });
 const mode = process.env.PFM_S8_FUNDED_SOURCE_MODE ?? "present";
+if (mode === "missing_employer") s.wages.source.mode = "missing";
+if (mode === "changed_wage_bank") s.wages.source.mode = "bank_owner";
 if (mode === "absent") sources.delete(s.raw[0]!.sourceId);
 if (mode === "tampered") {
   const p = s.raw[0]!;
@@ -23,7 +25,15 @@ const raw = sources.get(s.raw[0]!.sourceId);
 const qualification = raw && qualifyRetirementRawSource(raw, raw.cash.withdrawals.requests[0]!.operationId, s.context);
 if (mode === "present" && qualification?.status !== "qualified") throw new Error("S8_PUBLISHER_UNQUALIFIED");
 const { artifact, selected } = JSON.parse(readFileSync(path, "utf8"));
-const restored = restorePortableHouseholdReplayArtifact(artifact);
+let restored: ReturnType<typeof restorePortableHouseholdReplayArtifact>;
+try { restored = restorePortableHouseholdReplayArtifact(artifact); }
+catch (error) {
+  if ((mode !== "missing_employer" && mode !== "changed_wage_bank") ||
+      !(error instanceof Error) || !error.message.includes("HOUSEHOLD_REPLAY_BASIS_MISMATCH")) throw error;
+  process.stdout.write(JSON.stringify({ rejected: true }));
+  process.exit(0);
+}
+if (mode === "missing_employer" || mode === "changed_wage_bank") throw new Error("Unqualified wage history restored");
 const out = replayHouseholdForecastWindow(restored, selected);
 const twice = replayHouseholdForecastWindow(restored, selected);
 if (canonicalSerialize(out.state) !== canonicalSerialize(twice.state) || canonicalSerialize(out.periods) !== canonicalSerialize(twice.periods))
@@ -31,6 +41,7 @@ if (canonicalSerialize(out.state) !== canonicalSerialize(twice.state) || canonic
 const rmd = s.satisfaction(out.state);
 const newPosting = mode === "present" ? undefined : s.run();
 process.stdout.write(JSON.stringify({ state: canonicalSerialize(out.state), periods: canonicalSerialize(out.periods),
-  publisherRead: reads > 0, qualification: qualification?.status ?? "unavailable", coverage: rmd.coverage,
+  publisherRead: reads > 0, wageRead: s.wages.reads.employer > 0 && s.wages.reads.bank > 0,
+  qualification: qualification?.status ?? "unavailable", coverage: rmd.coverage,
   satisfied: rmd.annual?.obligations.map(o => o.satisfied.amount.toString()) ?? null,
   ...(newPosting ? { newPosting: { periods: newPosting.periods.length, state: canonicalSerialize(newPosting.state) } } : {}) }));

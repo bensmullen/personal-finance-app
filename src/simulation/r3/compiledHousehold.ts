@@ -3,6 +3,7 @@ import { canonicalSerialize } from "../run.js";
 import { cloneAuthoritativeState } from "../../state/index.js";
 import { createPrimitiveRuntimeStateStore } from "../period.js";
 import { utcMonthlyPeriods, type Instant, type Period } from "../../time/index.js";
+import { modeledIncomeFingerprintInput } from "../d2/integration/householdWages/modeledPayroll.js";
 
 const configurationSnapshots = new WeakSet<object>();
 
@@ -53,7 +54,9 @@ const cashDomain = (
     occurrenceInput: (id: string) => occurrenceInputs.get(id),
     schedules: Object.freeze([...snapshot.incomes, ...snapshot.expenses].map(stream => {
       const prior = priorSchedules.get(stream.id);
-      return prior !== undefined && prior.recurrence === stream.recurrence && prior.primitiveIds === stream.primitiveIds
+      return prior !== undefined &&
+        (prior.recurrence === stream.recurrence && prior.primitiveIds === stream.primitiveIds ||
+          canonicalSerialize([prior.recurrence, prior.primitiveIds]) === canonicalSerialize([stream.recurrence, stream.primitiveIds]))
         ? prior : Object.freeze({ id: stream.id, recurrence: stream.recurrence, primitiveIds: stream.primitiveIds });
     })),
     canonical: Object.freeze({
@@ -114,7 +117,8 @@ const assemble = (
   return Object.freeze({ schemaVersion: "household-kernel-v1", horizon, cash, investments, liabilities,
     executable: snapshot,
     canonicalInputs: Object.freeze({
-      cashFlowInput: cash?.canonical, investmentInput: investments?.canonical, liabilityInput: liabilities?.canonical,
+      cashFlowInput: cash === undefined ? undefined : modeledIncomeFingerprintInput(cash.canonical),
+      investmentInput: investments?.canonical, liabilityInput: liabilities?.canonical,
       scenarioBindings: snapshot.scenarioBindings, standaloneAssets: snapshot.standaloneAssets,
       ...(snapshot.nonInvestmentPositionIds === undefined ? {} : { nonInvestmentPositionIds: snapshot.nonInvestmentPositionIds }),
     }),

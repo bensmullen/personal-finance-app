@@ -4,12 +4,14 @@ import { createFundingPolicy, fundingPolicyId } from "../src/funding/index.js";
 import { domainId } from "../src/identity/index.js";
 import { calculationTraceId, calculationTraceRef, mergeTraceRefs } from "../src/lineage/index.js";
 import { CURRENT_RUN_VERSIONS, assumptionId, scenarioEventId, scenarioId } from "../src/model/index.js";
-import { compareVerticalSlice2Scenarios, applyVerticalSlice2Scenario, resolveScenario, type ExecutableScenario, type ScenarioChange } from "../src/simulation/scenario.js";
+import { compareVerticalSlice2Scenarios as compareScenarios, applyVerticalSlice2Scenario, resolveScenario, type ExecutableScenario, type ScenarioChange } from "../src/simulation/scenario.js";
 import { createRunContext, runId } from "../src/simulation/run.js";
 import { createAuthoritativeState } from "../src/state/index.js";
 import { instant, utcMonthlyPeriods } from "../src/time/index.js";
 import { Rate, USD, money, rateConvention, ratePeriod } from "../src/values/index.js";
 import { runVerticalSlice2, type VerticalSlice2Input } from "../src/verticalSlice2.js";
+import { qualifyCashFlowScenario } from "../src/application/compiler/cashFlow.js";
+import { compileModeledIncomeFixture } from "./fixtures/modeledIncome.js";
 
 const ids = {
   root: scenarioId("71000000-0000-4000-8000-000000000001"),
@@ -50,6 +52,25 @@ const opening = () => createAuthoritativeState({ accounts: { [ids.cash]: { id: i
 const change = (rate: string, assumption = ids.assumption1): ScenarioChange => ({ kind: "income_growth", incomeId: ids.salary, rate: annual(rate), assumptionId: assumption });
 const scenario = (scenarioIdValue: typeof ids.root, changes: readonly ScenarioChange[] = [], baseScenarioId?: typeof ids.root): ExecutableScenario => Object.freeze({ scenarioId: scenarioIdValue, name: scenarioIdValue, ...(baseScenarioId === undefined ? {} : { baseScenarioId }), horizon, timestep: "monthly", enabled: true, stochastic: false, simulationCount: 1, changes: Object.freeze([...changes]) });
 const runContext = { asOf: instant("2025-12-31T00:00:00.000Z"), dataCutoff: instant("2025-12-31T00:00:00.000Z"), simulationStart: start, simulationEnd: horizon.end, baseCurrency: USD, versions: CURRENT_RUN_VERSIONS } as const;
+const prepareIncomeForRun = (resolved: ReturnType<typeof resolveScenario>, context: ReturnType<typeof createRunContext>) => {
+  const sourceContext = createRunContext({ ...context, scenarioId: resolved.rootScenarioId });
+  const original = compileModeledIncomeFixture(sourceContext, 13, {
+    householdId: ids.household, personId: ids.person, accountId: ids.cash, accountType: "checking",
+    retirementBindings: [{ incomeId: ids.salary, terminationEventId: ids.retire, baselineDate: horizon.end.slice(0, 10) }],
+    incomes: [
+      { id: ids.salary, type: "salary", amount: "1000", startDate: "2026-01-15" },
+      { id: ids.pension, type: "pension", amount: "100", startDate: "2026-01-20" },
+    ],
+  });
+  const incomeChanges = resolved.layers.map(layer => ({
+    ...layer, changes: layer.changes.filter(item => item.kind !== "expense_inflation"),
+  }));
+  const qualified = qualifyCashFlowScenario(original, resolveScenario(incomeChanges, context.scenarioId), context);
+  const applied = applyVerticalSlice2Scenario(baseInput(), resolved, context);
+  return { ...applied, incomes: qualified.incomes, events: qualified.events };
+};
+const compareVerticalSlice2Scenarios = (request: Parameters<typeof compareScenarios>[0]) =>
+  compareScenarios(request, prepareIncomeForRun);
 const issue = (fn: () => unknown): string => { try { fn(); } catch (error) { return (error as ValidationError).issues[0]!.code; } throw new Error("Expected validation failure"); };
 
 describe("scenario resolution and VS2 comparison", () => {
@@ -70,7 +91,16 @@ describe("scenario resolution and VS2 comparison", () => {
     const second = applyVerticalSlice2Scenario(baseInput(), resolveScenario([scenario(ids.root, [change("0.07", ids.assumption3)]), leaf], ids.leaf), runContext);
     expect(first).toEqual(second);
     const context = createRunContext({ ...runContext, runId: runId("73000000-0000-4000-8000-000000000009"), scenarioId: ids.leaf });
-    expect(runVerticalSlice2({ runContext: context, openingState: opening(), input: first, months: 13 }).runMetadata.inputFingerprint).toBe(runVerticalSlice2({ runContext: context, openingState: opening(), input: second, months: 13 }).runMetadata.inputFingerprint);
+    const run = (root: ExecutableScenario) => runVerticalSlice2({
+      runContext: context, openingState: opening(),
+      input: prepareIncomeForRun(resolveScenario([root, leaf], ids.leaf), context), months: 13,
+    });
+    const firstRun = run(scenario(ids.root, [change("0.01")]));
+    const secondRun = run(scenario(ids.root, [change("0.07", ids.assumption3)]));
+    expect(firstRun.status).toBe("completed");
+    expect(secondRun.status).toBe("completed");
+    expect(firstRun.runMetadata.inputFingerprint).toBe(secondRun.runMetadata.inputFingerprint);
+    expect(firstRun.periods.map(period => period.recurringIncomeRecognized)).toEqual(secondRun.periods.map(period => period.recurringIncomeRecognized));
   });
 
   it("is independent of catalog and independent change-array order", () => {
@@ -151,8 +181,10 @@ describe("scenario resolution and VS2 comparison", () => {
     expect(first.baseline.points.map((point) => point.metrics)).toEqual(second.baseline.points.map((point) => point.metrics));
     expect(first.baseline.metadata.inputFingerprint).toBe(second.baseline.metadata.inputFingerprint);
     expect(state.accounts[ids.cash]!.cash.equals(money("0"))).toBe(true);
-    const rootRun = runVerticalSlice2({ runContext: createRunContext({ ...runContext, runId: runId("76000000-0000-4000-8000-000000000005"), scenarioId: ids.root }), openingState: opening(), input: baseInput(), months: 13 });
-    const leafRun = runVerticalSlice2({ runContext: createRunContext({ ...runContext, runId: runId("76000000-0000-4000-8000-000000000006"), scenarioId: ids.leaf }), openingState: opening(), input: baseInput(), months: 13 });
+    const rootContext = createRunContext({ ...runContext, runId: runId("76000000-0000-4000-8000-000000000005"), scenarioId: ids.root });
+    const leafContext = createRunContext({ ...runContext, runId: runId("76000000-0000-4000-8000-000000000006"), scenarioId: ids.leaf });
+    const rootRun = runVerticalSlice2({ runContext: rootContext, openingState: opening(), input: prepareIncomeForRun(resolveScenario([root, leaf], ids.root), rootContext), months: 13 });
+    const leafRun = runVerticalSlice2({ runContext: leafContext, openingState: opening(), input: prepareIncomeForRun(resolveScenario([root, leaf], ids.leaf), leafContext), months: 13 });
     expect(rootRun.periods[0]!.incomeOccurrences[0]!.occurrenceId).not.toBe(leafRun.periods[0]!.incomeOccurrences[0]!.occurrenceId);
   });
 });

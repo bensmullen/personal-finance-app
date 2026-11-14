@@ -11,7 +11,8 @@ import { resolveTaxCoreRule, taxCatalogFingerprint } from "../src/rules/tax/cata
 import { domainId } from "../src/identity/index.js";
 import { instant } from "../src/time/index.js";
 import { runHouseholdKernel, replayHouseholdForecastWindow } from "../src/simulation/householdExecution.js";
-import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../src/simulation/r3/replayArtifact.js";
+import { restoreHouseholdForecastEvidence } from "../src/application/householdProjection.js";
+import { applicationReplayArtifact } from "./fixtures/applicationReplay.js";
 import { createRunContext, runId, scenarioId, canonicalSerialize } from "../src/simulation/run.js";
 import { USD, money } from "../src/values/index.js";
 import { contributionPolicyAt, contributionRuleIdAt } from "../src/simulation/contributionProjection.js";
@@ -138,7 +139,9 @@ describe("Issue 80 resolved forecast decisions", () => {
     // The audited fixture's IRA purchase is one-time. Author a recurring IRA
     // through the normal contract to prove future personal contributions too.
     const recurring = withDatedFacts(authorPersonalPurchasePlan(createD1IntegratedHousehold(), { primitiveId: integratedId(30), investmentId: integratedIds.ira, sourceCashAccountId: golden.savings, amount: "500", frequency: "monthly", date: "2026-01-10", order: 10, excessPolicy: "auto_cap", contributionFacts: { taxYear: 2026, ageAtYearEnd: 36, taxableCompensation: "108000", filingStatus: "single", rothMagi: "108000", workplacePlanCovered: true } }), 2036);
-    const result = runHouseholdKernel({ kernel: kernel({ ...long, forecastLawPolicy: "projected_current_law", tax: compileForecastTaxSettlements(settlementSetup, "2026-01-01", "2036-01-01") }, recurring), runContext: context("2036-01-01") });
+    const request = { ...long, forecastLawPolicy: "projected_current_law" as const, tax: compileForecastTaxSettlements(settlementSetup, "2026-01-01", "2036-01-01") };
+    const runContext = context("2036-01-01");
+    const result = runHouseholdKernel({ kernel: kernel(request, recurring), runContext });
     expect(result.stoppedAt, JSON.stringify(result.diagnostics)).toBeUndefined();
     expect(result.reachedThrough).toBe("2036-01-01T00:00:00.000Z");
     expect(result.periods).toHaveLength(120);
@@ -148,8 +151,8 @@ describe("Issue 80 resolved forecast decisions", () => {
     expect(future.every(entry => entry.buckets.every(bucket => bucket.facts?.provenance === "projected_current_law"))).toBe(true);
     expect(result.diagnostics.some(item => "category" in item && item.category === "projected_current_law")).toBe(true);
     expect(result.diagnostics.some(item => "category" in item && ["payment_funding", "settlement_timing"].includes(String(item.category)))).toBe(false);
-    const artifact = JSON.parse(JSON.stringify(createPortableHouseholdReplayArtifact(result)));
-    const restored = restorePortableHouseholdReplayArtifact(artifact);
+    const artifact = JSON.parse(JSON.stringify(applicationReplayArtifact(recurring, request, runContext)));
+    const restored = restoreHouseholdForecastEvidence(artifact, structuredClone(recurring));
     const window = { start: instant("2027-04-01T00:00:00.000Z"), end: instant("2027-05-01T00:00:00.000Z") };
     expect(canonicalSerialize(replayHouseholdForecastWindow(restored, window))).toBe(canonicalSerialize(replayHouseholdForecastWindow(result, window)));
     // CI measured 68.6s and later 77.36s for this full 120-month replay
@@ -171,7 +174,8 @@ describe("Issue 80 resolved forecast decisions", () => {
       expect(future.facts.hsaFullYearEligible).toBeUndefined();
       expect(future.facts.hsaCoverage).toBeUndefined();
     }
-    const executionKernel = kernel({ ...requestThrough("2027-02-01", 13), forecastLawPolicy: "projected_current_law" }, model);
+    const request = { ...requestThrough("2027-02-01", 13), forecastLawPolicy: "projected_current_law" as const };
+    const executionKernel = kernel(request, model);
     const summary = runHouseholdKernel({ kernel: executionKernel, runContext: context("2027-02-01") });
     const detail = runHouseholdKernel({ kernel: executionKernel, runContext: context("2027-02-01"), resultTier: "detail" });
     expect(summary.stoppedAt, JSON.stringify(summary.diagnostics)).toBeUndefined();
@@ -187,7 +191,8 @@ describe("Issue 80 resolved forecast decisions", () => {
     expect(detail.periods[12]!.outputCapabilities?.contributionPrincipal?.status).toBe("incomplete");
     expect(summary.state).toEqual(detail.state);
     expect(summary.periods).toEqual(detail.periods.map(summarizeHouseholdPeriod));
-    const restored = restorePortableHouseholdReplayArtifact(JSON.parse(JSON.stringify(createPortableHouseholdReplayArtifact(summary))));
+    const artifact = JSON.parse(JSON.stringify(applicationReplayArtifact(model, request, context("2027-02-01"))));
+    const restored = restoreHouseholdForecastEvidence(artifact, structuredClone(model));
     const window = { start: instant("2027-01-01T00:00:00.000Z"), end: instant("2027-02-01T00:00:00.000Z") };
     expect(canonicalSerialize(replayHouseholdForecastWindow(restored, window))).toBe(canonicalSerialize(replayHouseholdForecastWindow(summary, window)));
   });

@@ -7,11 +7,12 @@ import { supportsD1SpouseHsaScope, durablePayrollAllocations } from "./payrollAu
 import { createWorkplaceEventParticipant } from "../../simulation/workplaceEvents.js";
 import { createPerformanceSession, type PerformanceObserver, type PerformanceSession } from "../../diagnostics/performance.js";
 import { canonicalSerialize } from "../../simulation/run.js";
-import { compileHouseholdKernel, type CompiledHouseholdKernel } from "../../simulation/r3/compiledHousehold.js";
+import { compileHouseholdKernel, immutableConfiguration, type CompiledHouseholdKernel } from "../../simulation/r3/compiledHousehold.js";
 import { instant } from "../../time/index.js";
 import { reconcileHouseholdOpeningState, reconcileHouseholdPrimitiveState } from "../../simulation/householdProjection.js";
 import { buildHouseholdScheduledPlan, type HouseholdContentionPolicy } from "../../simulation/intraperiodScheduler.js";
 import { compileHouseholdCashFlow, type CashFlowCompilerRequest, type CashFlowScenarioBindings, type CompiledCashFlow } from "./cashFlow.js";
+import { registerModeledPayrollCompiler, readModeledIncomeBinding, modeledPayrollKey, withoutModeledPayroll, type ModeledPayrollBinding, type ModeledPayrollReference } from "../../simulation/d2/integration/householdWages/modeledPayroll.js";
 import { compileInvestments, type InvestmentCompilerRequest, type CompiledInvestments } from "./investments.js";
 import { compileLiabilities, type LiabilityCompilerRequest, type CompiledLiabilities } from "./liabilities.js";
 import type { CapabilityDiagnostic, CompileResult } from "./types.js";
@@ -31,6 +32,14 @@ export interface HouseholdProjectionCompilerRequest {
   /** Required only when runtime execution discovers material contention. */
   readonly contentionPolicy?: HouseholdContentionPolicy;
 }
+const issuedHouseholdSalaries = new WeakMap<ModeledPayrollReference, ModeledPayrollBinding>();
+registerModeledPayrollCompiler("canonical-household/v1", reference => issuedHouseholdSalaries.get(reference));
+const issueHouseholdSalary = (binding: ModeledPayrollBinding): CompiledCashFlow["input"]["incomes"][number] => {
+  const snapshot = immutableConfiguration(binding), key = modeledPayrollKey(snapshot);
+  const reference = immutableConfiguration<ModeledPayrollReference>({ version: "modeled-payroll/v1", issuer: "canonical-household/v1", key });
+  issuedHouseholdSalaries.set(reference, snapshot);
+  return { ...snapshot.stream, modeledPayroll: reference };
+};
 
 export interface CompiledStandaloneAsset {
   readonly id: string;
@@ -228,6 +237,8 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
     ...(investments === undefined ? {} : { investments: investments.value.scenarioBindings }),
     ...(liabilities === undefined ? {} : { liabilities: liabilities.value.scenarioBindings }),
   });
+  const salarySourceFingerprint = cash?.value.input.incomes.some(income => income.modeledPayroll !== undefined)
+    ? modeledPayrollKey({ model, request }) : undefined;
   const value: CompiledHouseholdProjection = Object.freeze({
     ...(request.forecastLawPolicy === undefined ? {} : { projectedLaw: tax.value.catalog.flatMap(rule => rule.provenance.type === "projected_current_law" && (Object.values(tax.value.filingStatuses ?? {}).some(fact => fact.status === "known" && fact.value === rule.filingStatus && `${fact.taxYear}-01-01` < rule.effectiveUntil && `${Number(fact.taxYear) + 1}-01-01` > rule.effectiveFrom) || rule.filingStatus === "all") && (rule.jurisdiction === "US:FEDERAL" || taxJurisdictions.has(rule.jurisdiction) || taxJurisdictions.has(rule.jurisdiction.replace(/:(WAGE|OPT)$/, ""))) ? [{ jurisdiction: rule.jurisdiction, baseYear: rule.provenance.baseYear, baseRuleId: String(rule.provenance.baseRuleId), from: rule.effectiveFrom, until: rule.effectiveUntil }] : []) }),
     nonInvestmentPositionIds: taxCreditPositionIds(tax.value, firstBoundary.simulationEnd),
@@ -236,9 +247,18 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
       ...(domains?.status === "compiled" ? [domains.value.participant] : []),
       ...(mortgages.value ? [mortgages.value] : []),
       ...(durablePayrollAllocations(model).some(item => item.events.length > 0) ? [createWorkplaceEventParticipant(durablePayrollAllocations(model).flatMap(item => item.events))] : [])]),
-    ...(cash === undefined ? {} : { cashFlowInput: { ...cash.value.input, incomes: cash.value.input.incomes.map(income => ({ ...income,
+    ...(cash === undefined ? {} : { cashFlowInput: { ...cash.value.input, incomes: cash.value.input.incomes.map(income => {
+      const reconstructed = { ...income,
       ...(income.payrollWithholding === undefined ? {} : { payrollTaxCreditAccountId: tax.value.refundAccountId ?? tax.value.fundingPolicy?.orderedSources[0]?.accountId ?? income.payrollTaxCreditAccountId ?? cash.value.input.cashAccountId }),
-      ...(income.payrollContributions === undefined ? {} : { payrollContributions: income.payrollContributions.map(allocation => ({ ...allocation, policy: annualPolicy(allocation.policy) })) }) })) } }),
+      ...(income.payrollContributions === undefined ? {} : { payrollContributions: income.payrollContributions.map(allocation => ({ ...allocation, policy: annualPolicy(allocation.policy) })) }) };
+      const binding = readModeledIncomeBinding(income.modeledPayroll);
+      if (binding === undefined) return reconstructed;
+      const bank = opening.value.accounts[income.depositAccountId]!;
+      return issueHouseholdSalary({ ...binding, stream: withoutModeledPayroll(reconstructed), householdId: cash.value.input.householdId,
+        bank: { id: bank.id, ownerId: bank.ownerId, kind: bank.kind }, start: instant(`${firstBoundary.simulationStart}T00:00:00.000Z`),
+        end: instant(`${firstBoundary.simulationEnd}T00:00:00.000Z`), asOf: instant(`${firstBoundary.asOf ?? firstBoundary.simulationStart}T00:00:00.000Z`),
+        scenarioId: cash.value.scenarioIdentity, sourceFingerprint: salarySourceFingerprint! });
+    }) } }),
     ...(investments === undefined ? {} : { investmentInput: { ...investments.value.input, purchases: investments.value.input.purchases.map(purchase => ({ ...purchase, ...(purchase.contribution === undefined ? {} : { contribution: annualPolicy(purchase.contribution) }) })) } }),
     ...(liabilities === undefined ? {} : { liabilityInput: liabilities.value.input }),
     reconciledOpeningState: opening.value,

@@ -53,7 +53,8 @@ describe("#149 S8-2 independently requalified combined portable v3 baseline", ()
     expect(summary.periods.map(p => p.statements)).toEqual(detail.periods.map(p => p.statements));
     expect(summary.state.d2SettlementReceipts).toEqual(detail.state.d2SettlementReceipts);
     expect(Object.keys(summary.state.d2SettlementReceipts!)).toHaveLength(2);
-    expect(Object.keys(summary.state.d2PostedTransactions!)).toHaveLength(5);
+    expect(Object.values(summary.state.d2PostedTransactions!).filter(p => p.registration.kind !== "household_domain")).toHaveLength(5);
+    expect(Object.values(summary.state.d2PostedTransactions!).filter(p => p.registration.kind === "household_domain")).toHaveLength(months);
     expect(summary.state.d2PostedTransactions).toEqual(detail.state.d2PostedTransactions);
     expect(summary.state.retirementDistributionAllocations).toEqual(detail.state.retirementDistributionAllocations);
     expect(detail.periods.every(p => p.statements.income.amount.toString() === "1000")).toBe(true);
@@ -67,7 +68,9 @@ describe("#149 S8-2 independently requalified combined portable v3 baseline", ()
       : ["2027-01-01T00:00:00.000Z", "2028-01-01T00:00:00.000Z"]);
     for (const c of checkpoints) {
       expect(c.state.d2SettlementReceipts).toEqual(detail.state.d2SettlementReceipts);
-      expect(c.state.d2PostedTransactions).toEqual(detail.state.d2PostedTransactions);
+      expect(c.state.d2PostedTransactions).toEqual(Object.fromEntries(
+        Object.entries(detail.state.d2PostedTransactions!).filter(([, p]) => p.transaction.date < c.at),
+      ));
       expect(c.state.retirementDistributionAllocations?.["s8-retirement-posted"]?.rmdSatisfaction).toBe("not_applied");
     }
     const artifact = createPortableHouseholdReplayArtifact(summary);
@@ -76,9 +79,26 @@ describe("#149 S8-2 independently requalified combined portable v3 baseline", ()
     expect(deltas).toHaveLength(checkpoints.length);
     if (months === 25) for (const key of ["d2PostedTransactions", "d2SettlementReceipts", "retirementDistributionAllocations"]) {
       const delta = field(field(deltas[1]!, "records"), key);
-      expect(items(field(delta, "set"))).toEqual([]);
+      expect(items(field(delta, "set")).map(row => (row as Json[])[0]).sort()).toEqual(key === "d2PostedTransactions"
+        ? detail.periods.slice(12, 24).flatMap(p => p.transactions.filter(t => t.type === "income").map(t => t.id))
+          .sort()
+        : []);
       expect(items(field(delta, "remove"))).toEqual([]);
     }
+    const terminal = field(wire, "terminalDelta");
+    const lastPaycheck = detail.periods.at(-1)!.transactions.find(t => t.type === "income")!;
+    const terminalProofs = field(field(field(terminal, "records"), "d2PostedTransactions"), "set");
+    expect(items(terminalProofs).map(row => (row as Json[])[0])).toEqual([lastPaycheck.id]);
+    // Keep checkpoint history, proof rows and integrity valid while changing
+    // the terminal BANK balance after the last sparse checkpoint.
+    const terminalBank = field(field(field(field(terminal, "records"), "accounts"), "set"), ids.bank);
+    object(field(terminalBank, "cash")).value = ["0", "USD"];
+    const encoded = JSON.stringify(wire);
+    expect(() => restorePortableHouseholdReplayArtifact({ ...artifact, encoded,
+      integrity: createInputFingerprint({ runContext: s.context, openingState: encoded }) }))
+      .toThrow(expect.objectContaining({ cause: expect.objectContaining({
+        message: "HOUSEHOLD_REPLAY_BASIS_MISMATCH: terminal state differs from committed summary",
+      }) }));
     const restored = restorePortableHouseholdReplayArtifact(JSON.parse(JSON.stringify(artifact)));
     expect(exportHouseholdReplayCheckpoints(restored)).toEqual(checkpoints);
     const directory = mkdtempSync(join(tmpdir(), "pfm-s8-combined-"));
@@ -87,7 +107,7 @@ describe("#149 S8-2 independently requalified combined portable v3 baseline", ()
       const worker = spawnSync(process.execPath, [fileURLToPath(new URL("../../../../node_modules/vite-node/vite-node.mjs", import.meta.url)),
         fileURLToPath(new URL("./combinedPortableWorker.ts", import.meta.url))], {
         encoding: "utf8", maxBuffer: 32 * 1024 * 1024, timeout: 30_000,
-        env: { ...process.env, PFM_S8_PAYLOAD: path, PFM_S8_SOURCE_MODE: mode },
+        env: { ...process.env, PFM_S8_PAYLOAD: path, PFM_S8_SOURCE_MODE: mode, PFM_S8_MONTHS: String(months) },
       });
       expect(worker.error).toBeUndefined(); expect(worker.status, worker.stderr).toBe(0);
       return JSON.parse(worker.stdout);
@@ -102,16 +122,17 @@ describe("#149 S8-2 independently requalified combined portable v3 baseline", ()
         expect(replayHouseholdForecastWindow({ ...summary }, selected)).toEqual(expected);
         expect(replayHouseholdForecastWindow(restored, selected)).toEqual(portable);
         expect(child(selected, "available")).toEqual({ state: canonicalSerialize(expected.state), periods: canonicalSerialize(expected.periods),
-          requalified: { fsa: true, card: true, retirement: true } });
+          requalified: { fsa: true, card: true, retirement: true, employer: true, wageBank: true } });
       }
       const selected = detail.periods.at(-1)!.period;
-      for (const mode of ["missing_fsa", "missing_card", "altered_fsa", "altered_card", "altered_retirement", "failing_fsa", "failing_card"])
+      for (const mode of ["missing_fsa", "missing_card", "altered_fsa", "altered_card", "altered_retirement", "failing_fsa", "failing_card",
+        "missing_employer", "changed_employer", "missing_wage_bank", "changed_wage_bank"])
         expect(child(selected, mode)).toEqual({ rejected: true });
       // J1 structural history remains portable without its source owner. Cash
       // is preserved and the journal never gains RMD or complete-tax authority.
       const expected = replayHouseholdForecastWindow(summary, selected);
       expect(child(selected, "missing_retirement")).toEqual({ state: canonicalSerialize(expected.state), periods: canonicalSerialize(expected.periods),
-        requalified: { fsa: true, card: true, retirement: false } });
+        requalified: { fsa: true, card: true, retirement: false, employer: true, wageBank: true } });
       expect(expected.state.retirementDistributionAllocations?.["s8-retirement-posted"]).toMatchObject({ rmdSatisfaction: "not_applied", tax: "incomplete" });
       expect(expected.state.accounts[ids.retirement]!.cash.amount.toString()).toBe("500");
     } finally { rmSync(directory, { recursive: true, force: true }); }

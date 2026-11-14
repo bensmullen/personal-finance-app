@@ -207,6 +207,88 @@ and the already approved product scope; no separate user request is needed.
    the PM for a fresh Codex turn. New blockers trigger another delta audit
    plus reassessment of why the previous review missed them.
 
+### Source-qualified caller inventory before reauthorization (required for cross-cutting financial provenance)
+
+A source-authentication or run-context change is **not** fully scoped by finding
+the production evaluator alone. The ChatGPT reviewer must enumerate reverse
+callers **upstream of each issuer/compiler and downstream through each actual
+writer**, using the exact current GitHub tree and tracked-source search (or
+`git grep` in a verified read-only checkout). Search the relevant symbols in
+`src/`, `ui/`, `test/`, `e2e/`, `benchmarks/`, `tools/ci/`, and
+relevant workflow invocations. Inspect direct imports, aliases and exported
+barrels; a symbol search is a starting point, not dynamic-call proof.
+Specifically resolve:
+
+- **Information sufficiency / indistinguishable inputs:** if the same unsigned
+  runtime record can represent an allowed non-salary flow *and* a forbidden
+  unauthenticated salary, no runtime label, omitted election, owner ID or
+  untrusted fingerprint can reliably distinguish them. Require a separately
+  issuer-qualified canonical economic original for both accepted and rejected
+  cases, or record the missing product/source decision before Codex starts.
+  Explicitly test adversarial reclassification, while preserving valid pension
+  and other canonical income behavior. Do not create a test-only signer or
+  replicate a large domain policy engine in an independent reference: define
+  the shared-primitive parity boundary and independently checked invariants.
+- **Pre-issuer acceptance gates** shared by authored-model decoding, election
+  authoring, tax compilation, forecast readiness and execution. Follow each
+  canonical owner/member/account validation predicate and its reverse callers,
+  even when it is not named like a salary issuer or posting evaluator. Challenge
+  a prior read-only/out-of-scope disposition whenever that gate rejects a newly
+  approved cross-owner/account route; never relax unrelated validators.
+- Direct/compiled/embedded and no-election/elected routes, **independent
+  frozen reference evaluators**, scenario alternatives, actual posting and
+  rollback, and positive/negative fixtures; do not accidentally make the
+  reference reuse the optimized financial calculation.
+- Every point where `runId`, `asOf`, `dataCutoff`, scenario identity and
+  original publisher evidence become available **relative to issuing
+  authority**, including standalone application entry points, worker
+  delegation, manual feasibility scripts, benchmark runners and E2E direct
+  compiler invocations.
+- **Immutable/legacy consumer ordering:** verify whether existing tests and
+  supported API consumers compile canonical sources *before* the actual run
+  context is constructed. If an immutable protected test cannot be edited,
+  decide explicitly whether an authenticated, non-postable pending compiler
+  binding can be activated by the genuine execution context before any
+  mutation. Do not silently treat an optional runId as authorization, forge a
+  compiler-time runId, relax a protected regression or demand an unavailable
+  context from the caller. Distinguish eager authenticated issuance when the
+  real context already exists from deferred, revalidated per-run activation.
+- **Positive fixture closure after source-contract changes:** inventory all
+  direct, prepared, reference, integrated, scenario, benchmark and E2E fixture
+  families that can actually post, including positive streams copied/modified
+  after source issuance. Reissue from verified canonical originals for the
+  *final* effective model and run, not from unsigned test-only credential
+  factories; leave intentionally adversarial negatives negative and protected
+  economic assertions unchanged. Reject partial fixture migrations that merely
+  move the first failing caller.
+- **Sparse replay terminal source frontier:** retained checkpoints may end
+  before terminal execution. Source history after the last retained checkpoint
+  is still required for independent cold-restore admission, not only in a warm
+  in-memory cache. Preserve bounded lossless source-only tail evidence without
+  duplicating full model, tax catalog or authoritative state per month.
+- Warm-cache **early returns** as well as cold decode and checkpoint restore;
+  inspect the independent observed provider/source rechecks on both routes.
+
+Before declaring the **same issue** Codex-ready after an immediate no-change
+BLOCKED, retain a compact **entry → issuer/context → producer → posting →
+archive/replay → test** matrix and **file-by-file write disposition**:
+required product edit, conditional pass-through, bounded test migration,
+separate framework prerequisite, or read-only/excluded (with reason).
+For two or more no-progress STOPs, link the inventory/second-pass evidence in
+the existing task issue or PR discussion; keep the issue body itself compact.
+Check every `ALLOWED_PATHS` against the real hook's protected paths.
+**Never** include `tools/ci/`, `tools/codex/`, agent controls or protected
+workflow files in a product V3 just to unblock a shared workflow. When genuinely
+required, plan a **separate framework-owned patch and merge order**, give the
+product task a publishable bounded scope, and do not declare integration
+merge-ready until the combined evidence is reviewed.
+
+The reviewer owns this census and the second independent pass. It must be
+selective to the task's actual producers/consumers, not a mandatory
+repository-wide parser for ordinary small work. It reduces preventable
+scope misses; it does **not** guarantee future runtime, provider, or CI success
+and does not add new Codex hooks, schema fields, tests or PM ceremony.
+
 **Repeated no-progress STOP escalation:** If the same task has **two or more
 immediate BLOCKED returns without code changes after a claimed full closure
 review**, do not recommend another one-line scope amendment or Codex restart.
