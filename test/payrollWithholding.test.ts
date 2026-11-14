@@ -123,6 +123,10 @@ describe("source-bound atomic paycheck", () => {
     expect(() => candidate(election(), election({ id: uuid(2) }))).toThrow("Conflicting active");
     expect(() => candidate(election({ ownerId: uuid(9) }))).toThrow("exact salary source");
     expect(() => candidate(election({ depositAccountId: domainId("account", uuid(9)) }))).toThrow("exact salary source");
+    // An inactive added election leaves today's journal identical, but still
+    // differs from the employer's authenticated terms.
+    expect(() => candidate(election(), election({ id: uuid(2), start: instant("2026-02-01T00:00:00.000Z") })))
+      .toThrow("Household wage elections differ from the original paycheck");
     expect(initial().accounts[ids.cash]!.cash.isZero()).toBe(true);
   });
   it("honors a half-open midyear election change and does not invent gap coverage", () => {
@@ -610,10 +614,21 @@ describe("payroll credits, tax accrual and net final settlement", () => {
   it.each(["source_end", "retirement_event"] as const)("does not deposit cash after %s salary termination", kind => {
     const fixture = integrated("100");
     const cash = fixture.kernel.executable.cashFlowInput!;
-    const event = domainId("event", uuid(501)), termination = domainId("primitive-instance", uuid(502)), effectiveAt = instant("2024-07-01T00:00:00.000Z");
+    const withholding = election();
+    const qualified = compileModeledIncomeFixture(fixture.context, 12, {
+      householdId: ids.household, personId: ids.person, accountId: ids.cash, accountType: "cash",
+      incomes: [{ id: ids.income, type: "salary", employer: withholding.employerId, amount: "1000",
+        startDate: "2024-01-15", ...(kind === "source_end" ? { endDate: "2024-06-30" } : {}) }],
+      withholding: [{ id: withholding.id, incomeId: ids.income, ownerId: ids.person,
+        employerId: withholding.employerId, depositAccountId: ids.cash, jurisdiction: withholding.jurisdiction,
+        effectiveDate: "2024-01-01", provenance: withholding.provenance, userConfirmed: true,
+        calculation: { kind: "fixed", amount: "100" } }],
+      ...(kind === "retirement_event" ? { retirementBindings: [{
+        incomeId: ids.income, terminationEventId: uuid(501), baselineDate: "2024-07-01",
+      }] } : {}),
+    });
     const kernel = compileHouseholdKernel({ ...fixture.kernel.executable, cashFlowInput: { ...cash,
-      events: kind === "source_end" ? [] : [{ id: event, targetId: ids.income, kind: "termination", effectiveAt }],
-      incomes: cash.incomes.map(item => ({ ...item, ...(kind === "source_end" ? { end: effectiveAt } : { terminationEventId: event, primitiveIds: { ...item.primitiveIds, termination } }) })) } }, fixture.context.simulationStart);
+      events: qualified.events, incomes: qualified.incomes } }, fixture.context.simulationStart);
     const detail = runHouseholdKernel({ kernel, runContext: fixture.context, resultTier: "detail" });
     expect(detail.periods.flatMap(period => period.transactions).filter(tx => tx.type === "payroll_income")).toHaveLength(6);
     expect(detail.state.accounts[ids.cash]!.cash.equals(money("5400"))).toBe(true);

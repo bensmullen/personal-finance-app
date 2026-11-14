@@ -154,13 +154,18 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
   ].map(createAccountingLeg) });
   if (input.householdWage !== undefined) {
     const { source, context, period } = input.householdWage;
+    const stream = input.householdWage.stream;
     const run = input.runContext;
     if (run === undefined || run.runId !== context.runId || run.asOf !== context.asOf || run.dataCutoff !== context.dataCutoff ||
         period.start < run.simulationStart || period.end > run.simulationEnd ||
         input.householdId !== context.householdId || context.personId !== input.ownerId ||
         context.bankAccountId !== input.depositAccountId || context.eventAt !== input.at || context.eventId !== input.id || !input.occurrenceId)
       return invalid("Household wage context differs from the actual paycheck");
-    const evidence = qualifyHouseholdWage(source, context, { stream: input.householdWage.stream, incomeId: input.incomeId, occurrenceId: input.occurrenceId, period, gross: input.gross, transaction });
+    if (canonicalSerialize(stream.payrollContributions ?? []) !== canonicalSerialize(input.allocations) ||
+        canonicalSerialize(stream.payrollWithholding ?? []) !== canonicalSerialize(input.withholding ?? []) ||
+        stream.payrollTaxCreditAccountId !== input.taxCreditAccountId)
+      return invalid("Household wage elections differ from the original paycheck");
+    const evidence = qualifyHouseholdWage(source, context, { stream, incomeId: input.incomeId, occurrenceId: input.occurrenceId, period, gross: input.gross, transaction });
     applyHouseholdDomainTransactionAtomically(candidate, transaction, evidence);
   }
   else if (health === undefined) applyAccountingTransactionAtomically(candidate, transaction);

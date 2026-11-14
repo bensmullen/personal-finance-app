@@ -218,18 +218,22 @@ describe("Personal-MVP application facade", () => {
     }] } };
     const withScenario = patchPersonalObject(withEvent, "Scenario", scenario.scenario_id!, { event_ids: [eventId] });
     const model = patchPersonalObject(withScenario, "Income", income.income_id!, {
-      income_type: "salary", related_event_id: eventId,
+      related_event_id: eventId,
     });
     const position = getCurrentPosition(model, request());
     const forecast = runPersonalForecast(model, request());
-    expect(forecast.status).toBe("completed");
+    expect(forecast.status, JSON.stringify(forecast.diagnostics)).toBe("completed");
     if (forecast.scope !== "cash_flow" || forecast.status === "unavailable") throw new Error("expected cash-flow forecast");
     expect(position.monthlyIncome?.exact).toBe("6000");
     expect(position.monthlyCashFlow?.exact).toBe("1800");
     expect(position.cash?.exact).toBe("5000");
     expect(forecast.points[0]?.income.exact).toBe(position.monthlyIncome?.exact);
 
-    const pension = patchPersonalObject(model, "Income", income.income_id!, { income_type: "pension" });
+    // Income type is immutable in the editor. Author the adverse source as
+    // a pension so the existing job-change relationship is actually tested.
+    const pension = { ...model, objects: { ...model.objects, Income: [{
+      ...model.objects.Income![0] as Record<string, string>, income_type: "pension",
+    }] } };
     const unsupported = getCurrentPosition(pension, request());
     expect(unsupported.monthlyIncome).toBeUndefined();
     expect(unsupported.cash?.exact).toBe("5000");
