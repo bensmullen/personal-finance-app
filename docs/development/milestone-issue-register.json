@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "as_of": "2026-10-30",
+  "as_of": "2026-11-13",
   "authority": "Roadmap issue allocation only. Financial meaning remains in controlled specifications; GitHub is authoritative for current issue state.",
   "lifecycle": "Every new non-learning product, bug, milestone or framework issue must be registered at creation and linked to an owner stage and first mandatory closeout gate. Deferred means explicitly gated, not forgotten. Closing or moving an issue requires reconciliation here and in roadmap. U1 handoff completed: #94 is superseded by #120 after PR #98 merged; only #120 holds final U1/D1 owner acceptance. #94 technical closeout is not U1 UAT approval; all historical #94 dependency edges now point to #120. D2 parallel reallocation 2026-10-17: #103's unimplemented retirement distribution/RMD scope is consolidated into #146; backend #146/#147/#148 may overlap U1 #120 after approved financial contracts and #149 shared interface freeze. #149 alone owns deferred cross-domain/UI seams and final D2-D acceptance. #114 is merged preparation, not D2 functionality. U1B-C #142 closed after PR #157 merged; U1B-D #161 newly allocated to its own stage, implementation sequential after merged registration PR, not blocked by final #120 UAT. U1B-E requires separate later authorization.",
   "stage_gates": {
@@ -107,6 +107,33 @@
       "required_issue_numbers": [
         235,
         238
+      ]
+    },
+    "FINANCIAL_AUDIT_P1": {
+      "stage": "Independent Phase 1 merged-baseline financial semantic audit (read-only reports; separate from D2 implementation)",
+      "blocking_transition": "Complete Phase 1 audit and accept its consolidated, reviewed findings register. This does not change D2 closeout ownership #149, UI UAT #120, or authorize R5. Final integration re-audit must occur after active D2-D routes merge.",
+      "required_issue_numbers": [
+        295,
+        296,
+        297,
+        298,
+        299
+      ]
+    },
+    "FINANCIAL_AUDIT_REPRO": {
+      "stage": "Phase 1 financial semantic defect reproduction, independently scoped CI-backed tests",
+      "blocking_transition": "Complete three independent reproduction/falsification reviews and triage their CI-backed findings; no automatic D2/R5/UAT gate change and no repair permission or merge of temporary expected-failure tests.",
+      "required_issue_numbers": [
+        308,
+        309,
+        310
+      ]
+    },
+    "D2_SOURCE_FEASIBILITY_FRAMEWORK": {
+      "stage": "D2-D S2 manual forecast feasibility/reference parity framework companion",
+      "blocking_transition": "Run and independently validate manual exact optimized/reference parity after #277 publishes a stable source-qualified issuer API and before claiming the associated D2 manual feasibility evidence. This is not a Codex start authorization, a replacement for D2 #149, or a new product-scope decision.",
+      "required_issue_numbers": [
+        306
       ]
     }
   },
@@ -760,6 +787,116 @@
         "PFA-TAX-015"
       ],
       "scope": "S1c shared VS2 recurring-expense executed household BANK DEBIT with original expense/claim and source-qualified funded settlement, real run cutoff and one S1 generic proof, preserving person-owned legacy; used later by non-SSA Medicare and aftertax premiums #278/#280. Disjoint from #285 shared state writes; both may start after governance registration merges."
+    },
+    {
+      "issue_number": 295,
+      "owner_stage": "audit-execution-replay",
+      "blocking_gate": "FINANCIAL_AUDIT_P1",
+      "depends_on": [],
+      "spec_requirement_ids": [
+        "PFA-DET-015",
+        "PFA-DET-023",
+        "PFA-PERF-019"
+      ],
+      "scope": "Independent 2026-11-13 pinned-main financial kernel/ordering, ledger/atomicity, archive/cold replay and proportional payload correctness report; no production modifications."
+    },
+    {
+      "issue_number": 296,
+      "owner_stage": "audit-tax-benefits",
+      "blocking_gate": "FINANCIAL_AUDIT_P1",
+      "depends_on": [],
+      "spec_requirement_ids": [
+        "PFA-TAX-015",
+        "PFA-TAX-016",
+        "PFA-DET-016"
+      ],
+      "scope": "Independent pinned-main tax, payroll, withholding, Social Security and benefit exact-cent, annual-boundary and source-exclusivity audit; no active D2-D final verdict."
+    },
+    {
+      "issue_number": 297,
+      "owner_stage": "audit-investing-retirement",
+      "blocking_gate": "FINANCIAL_AUDIT_P1",
+      "depends_on": [],
+      "spec_requirement_ids": [
+        "PFA-INV-001",
+        "PFA-DET-017",
+        "PFA-DET-018"
+      ],
+      "scope": "Independent pinned-main investing and retirement/RMD standalone implementation, conservation, tax bucket and coverage report; household-bank destination and future trades deferred."
+    },
+    {
+      "issue_number": 298,
+      "owner_stage": "audit-debt-health",
+      "blocking_gate": "FINANCIAL_AUDIT_P1",
+      "depends_on": [],
+      "spec_requirement_ids": [
+        "PFA-DET-019",
+        "PFA-DET-020",
+        "PFA-INS-001"
+      ],
+      "scope": "Independent pinned-main liabilities, mortgage/HELOC/cards, health/insurance and original-expense versus funded settlement correctness review; active #278/#279 routes deferred."
+    },
+    {
+      "issue_number": 299,
+      "owner_stage": "audit-test-assurance",
+      "blocking_gate": "FINANCIAL_AUDIT_P1",
+      "depends_on": [],
+      "spec_requirement_ids": [
+        "PFA-DET-015",
+        "PFA-DET-023",
+        "PFA-TAX-015"
+      ],
+      "scope": "Independent merged-baseline test-suite oracle strength, negative-branch and provenance/replay coverage matrix and proposed missing tests without source/test changes."
+    },
+    {
+      "issue_number": 308,
+      "owner_stage": "audit-repro-niit-magi-loss",
+      "blocking_gate": "FINANCIAL_AUDIT_REPRO",
+      "depends_on": [],
+      "spec_requirement_ids": [
+        "PFA-TAX-001",
+        "PFA-TAX-003",
+        "PFA-TAX-004"
+      ],
+      "scope": "CI-backed test-only NIIT capital-loss MAGI reproduction/falsification under test/t1aTaxIntegration.test.ts; source audit #296/PR #302. No production change or authorized repair; acceptance evidence reviewed externally."
+    },
+    {
+      "issue_number": 309,
+      "owner_stage": "audit-repro-subcent-price",
+      "blocking_gate": "FINANCIAL_AUDIT_REPRO",
+      "depends_on": [],
+      "spec_requirement_ids": [
+        "PFA-DET-005",
+        "PFA-DET-010",
+        "PFA-INV-001"
+      ],
+      "scope": "CI-backed test-only zero-return 0.004 USD per-unit/1000-share valuation reproduction/falsification under test/verticalSlice3.test.ts; source audit #297/PR #304. No production change or authorized repair."
+    },
+    {
+      "issue_number": 310,
+      "owner_stage": "audit-repro-indirect-basis",
+      "blocking_gate": "FINANCIAL_AUDIT_REPRO",
+      "depends_on": [],
+      "spec_requirement_ids": [
+        "PFA-DET-004",
+        "PFA-DET-010",
+        "PFA-INV-022"
+      ],
+      "scope": "CI-backed test-only positive-after-tax-basis rounding eligibility reproduction/falsification in test/d1DomainMechanics.test.ts; source audit #297/PR #304. No production change or authorized repair."
+    },
+    {
+      "issue_number": 306,
+      "owner_stage": "framework-d2-s2-manual-feasibility",
+      "blocking_gate": "D2_SOURCE_FEASIBILITY_FRAMEWORK",
+      "depends_on": [
+        277
+      ],
+      "spec_requirement_ids": [
+        "PFA-DET-016",
+        "PFA-DET-023",
+        "PFA-PERF-019"
+      ],
+      "scope": "Dependent protected manual feasibility/reference parity caller in tools/ci/forecast-feasibility.mjs, framework-only #306 after original product #277 publishes context-qualified run source. Stays BLOCKED until exact product API/SHA and independent audit. Framework PR #307 only governs reviewer caller-census policy, not this protected implementation."
     }
   ],
   "legacy_open_task_reconciliation": {
