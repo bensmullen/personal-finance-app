@@ -924,14 +924,13 @@
       "owner_stage": "engineering-framework-reliability-abandoned-receipt",
       "blocking_gate": "FRAMEWORK_RELIABILITY",
       "depends_on": [
-        249,
-        293
+        249
       ],
       "spec_requirement_ids": [
         "PFA-PERF-019",
         "PFA-UX-024"
       ],
-      "scope": "PM-approved zero-stale-lock framework remediation for confirmed ACTIVE=True orphan receipts after Codex no-tool/BLOCKED/COMPLETE stops. Atomically separate pre-execution non-owning task admission and first actual writer claim; preserve active writer, hashed provenance, Stop/checkpoint, protected write and interrupted dirty state. Improve operator-only recovery from stale canonical checkout using verified bootstrap. Deterministic hook/concurrency/tooling tests. Follow up candidate #217 without conflating independent unresolved branch divergence."
+      "scope": "PM-approved zero-stale-lock framework remediation for confirmed ACTIVE=True orphan receipts after Codex no-tool/BLOCKED/COMPLETE stops. Atomically separate pre-execution non-owning task admission and first actual writer claim; preserve active writer, hashed provenance, Stop/checkpoint, protected write and interrupted dirty state. Improve operator-only recovery from stale canonical checkout using verified bootstrap. Deterministic hook/concurrency/tooling tests. Follow up candidate #217 without conflating independent unresolved branch divergence. Prior closed #293 is incorporated by merged framework on main, not a live registered dependency."
     }
   ],
   "legacy_open_task_reconciliation": {
