@@ -177,19 +177,25 @@ if (args[0] === '--probe' && args.length === 3) {
   const { runPersonalHouseholdForecast } = await import('../../src/application/index.ts');
   const { createApplicationPerformanceObserver } = await import('../../src/application/performance.ts');
   const { PerformanceRegistry, PERFORMANCE_PHASES } = await import('../../src/diagnostics/performance.ts');
-  const fixture = createRealisticPerformanceFixture();
-  const start = fixture.request.compiler.cashFlow.simulationStart;
-  const date = new Date(`${start}T00:00:00.000Z`);
-  date.setUTCMonth(date.getUTCMonth() + months);
-  const end = date.toISOString().slice(0, 10);
-  const endInstant = `${end}T00:00:00.000Z`;
-  const model = { ...fixture.model, objects: { ...fixture.model.objects,
-    Scenario: fixture.model.objects.Scenario.map(scenario => ({ ...scenario, end_date: end })) } };
-  const compiler = { ...fixture.request.compiler };
-  for (const key of ['cashFlow', 'investments', 'liabilities']) {
-    compiler[key] = { ...compiler[key], simulationEnd: end, months };
+  const fixture = createRealisticPerformanceFixture(Math.max(24, months));
+  let { model, request } = fixture;
+  const start = request.compiler.cashFlow.simulationStart;
+  const startInstant = instant(`${start}T00:00:00.000Z`);
+  const expected = utcMonthlyPeriods(startInstant, months);
+  // Short probes retain the 24-month fixture's original income lifecycle.
+  if (months < fixture.dimensions.horizonMonths) {
+    const end = expected.at(-1).end.slice(0, 10);
+    model = { ...model, objects: { ...model.objects,
+      Scenario: model.objects.Scenario.map(scenario => ({ ...scenario, end_date: end })) } };
+    const compiler = { ...request.compiler };
+    for (const key of ['cashFlow', 'investments', 'liabilities']) {
+      compiler[key] = { ...compiler[key], simulationEnd: end, months };
+    }
+    request = { ...request, compiler };
   }
-  const request = { ...fixture.request, compiler };
+  const { compiler } = request;
+  const end = compiler.cashFlow.simulationEnd;
+  const endInstant = `${end}T00:00:00.000Z`;
   const registry = new PerformanceRegistry();
   const started = performance.now();
   const result = runPersonalHouseholdForecast(model, request, createApplicationPerformanceObserver(
@@ -198,8 +204,6 @@ if (args[0] === '--probe' && args.length === 3) {
       executionLocation: 'local_node', runtime: process.version, cacheState: 'not_applicable' }, registry));
   const wallMs = performance.now() - started;
   const heapUsedBytes = process.memoryUsage().heapUsed;
-  const startInstant = instant(`${start}T00:00:00.000Z`);
-  const expected = utcMonthlyPeriods(startInstant, months);
   const applicationCoverage = coverage(result, result.points ?? [], expected,
     point => ({ start: point.periodStart, end: point.periodEnd }));
   const applicationCapabilities = result.points?.at(-1)?.outputCapabilities ?? {};
