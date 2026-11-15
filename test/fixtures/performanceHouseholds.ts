@@ -185,7 +185,7 @@ const representative = (id: string, family: "a" | "b", months: number, scale: nu
   return Object.freeze({ id, classification: "synthetic", model, request, dimensions, comparisonIntents, coverage: coverage(model, scale > 1, id) });
 };
 
-export const createRealisticPerformanceFixture = (): PerformanceHouseholdFixture => representative("realistic-household", "a", 24, 1);
+export const createRealisticPerformanceFixture = (months = 24): PerformanceHouseholdFixture => representative("realistic-household", "a", months, 1);
 export const createStressPerformanceFixture = (): PerformanceHouseholdFixture => representative("stress-household", "b", 180, 3);
 
 /** Bounded, independent horizon/count probes; never folded into primary baseline samples. */
