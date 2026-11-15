@@ -30,6 +30,8 @@ Use `agent/<branch>` when resuming a ChatGPT-created PR.
 
 Open the exact worktree path printed by `PR_WORKTREE_READY`. Do not ask Codex
 to create/switch worktrees or branches inside the implementation turn.
+`PR_TASK_RECEIPT` reports the separate ownership state. Run the printed
+read-only preflight in that worktree before submitting the task.
 
 When SessionStart reports a clean linked `codex/` or `agent/` feature
 worktree and UserPromptSubmit accepts a task whose `TARGET_BRANCH` equals the
@@ -75,6 +77,15 @@ conditions when useful. Their exact headings are not parser requirements.
 ## Execution rules
 
 - Stay on `TARGET_BRANCH`.
+- Prompt acceptance prepares a non-owning receipt. The first permitted
+  repository mutation claims the writer under the policy lock. The bounded
+  preflight can run after writer admission. A fresh authenticated turn may
+  supersede an unused prepared receipt at a proven clean checkpoint.
+- Until the first admitted edit, use simple read-only shell commands such as
+  `git status`, `git show HEAD:path`, `rg -n 'pattern' path`, or `cat path`.
+  Use separate calls for inspection. Shell wrappers, substitutions, pipelines,
+  redirection, and unrecognized Git options are denied without an active grant.
+  Unexpected drift from a prepared checkpoint requires operator diagnosis.
 - Edit only `ALLOWED_PATHS`.
 - Before writing any high-cardinality/periodic diagnostic, worker/API payload,
   saved result, cached snapshot, or read model, inspect how much large identical
@@ -205,10 +216,14 @@ writer because it cannot prove the old writer has stopped.
    **before any push**, publishes the original and recovery branches without
    force, and invokes the ordinary `bootstrap-pr.sh resume` for a fresh,
    differently named worktree. It does not modify the old worktree's task receipt
-   or claim WIP implementation acceptance:
+   or claim WIP implementation acceptance. It verifies the same issue number
+   against the old hash-bound active receipt and the live recovery authorization.
+   It loads and verifies the bootstrap and policy from fetched origin/main,
+   independently of the canonical checkout's working files.
 
    ```bash
-   PFM_CRASH_RECOVERY_CONFIRMED=1 \
+   cd -- "$canonical_checkout" &&
+   PFM_CRASH_RECOVERY_CONFIRMED=1 PFM_CRASH_RECOVERY_ISSUE="$issue_number" \
    bash tools/codex/recover-interrupted-task.sh \
      "/absolute/path/to/interrupted-worktree" \
      "codex/original-task-branch" \
@@ -223,12 +238,10 @@ writer because it cannot prove the old writer has stopped.
    the original path is dirty, or source SHA/issue is unverified, STOP for
    operator diagnosis, no force/rebase/clean/receipt deletion. Node is optional.
 
-**Pre-merged compatibility:** If this helper is not yet installed in the
-canonical checkout, do not fabricate its availability. Use the same read-only
-verification and ordinary non-force `git push -u origin HEAD:refs/heads/<old>`,
-`git push origin HEAD:refs/heads/<recovery>`, then
-`bootstrap-pr.sh resume <recovery>`, but only when both remote refs are absent
-or proven equal to the local checkpoint.
+If the canonical checkout's recovery script predates this protocol, load the
+current script from trusted origin/main using the pinned-object procedure in
+`docs/development/handoff-authoring-policy.md`. If the merged helper is
+unavailable, stop at read-only diagnosis and preserve the checkpoint and receipt.
 
 The source and recovery branches are separate by design; this prevents a stale
 session from becoming a writer again even when the original receipt remains

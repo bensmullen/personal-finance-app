@@ -396,6 +396,15 @@ that would otherwise look valid to a human.
 
 ### Computer crash and active-receipt recovery
 
+Prompt acceptance creates a hash-bound `PREPARED` receipt. Ownership
+begins when the policy lock protects admission of the first authorized
+repository write. A clean prepared receipt can be superseded by another
+authenticated turn at the same safe checkpoint, even if Stop never ran.
+Once a write is admitted, a missing tool result or a missing Stop leaves
+the active writer fenced. `PR_WORKTREE_READY` reports Git readiness.
+Read `PR_TASK_RECEIPT` for the separate ownership snapshot and run the
+printed preflight from the exact folder before submitting the issue.
+
 An abrupt laptop shutdown can leave a valid `ACTIVE:true` task receipt
 bound to the old Codex session, plus a clean but unpublished WIP commit.
 This is a **recoverable operator Git/session state**, not permission for
@@ -422,8 +431,12 @@ after a reported computer crash, ChatGPT SHALL:
    delete/replace receipts, reset, clean, stash, rebase, or infer that a lost
    session permits rewriting active task ownership.
 4. Use the audited operator-only
-   `tools/codex/recover-interrupted-task.sh` when available, or its documented
-   equivalent exact-SHA/non-force push then `bootstrap-pr.sh resume` sequence.
+   `tools/codex/recover-interrupted-task.sh` with
+   `PFM_CRASH_RECOVERY_CONFIRMED=1` and
+   `PFM_CRASH_RECOVERY_ISSUE` set to the original issue number. It checks
+   the active owner's issue pointer against the live recovery authorization,
+   publishes the pinned checkpoint to both branches with an atomic,
+   non-force push, and runs a blob-verified bootstrap from origin/main.
    Once the **recovery** branch's remote SHA, Git issue target and fresh
    worktree are all verified, start a new Codex chat with the **same** issue
    pointer. Codex must finish the original acceptance, including any
@@ -438,6 +451,35 @@ This preserves single-writer protection across a genuine crash while avoiding
 the common **no upstream → no PR → foreign receipt** dead-end. A normal
 same-session interruption retains the existing guarded continuation path;
 neither path silently relaxes scope, financial provenance or review gates.
+
+If the canonical checkout's recovery helper may be stale, prepare the same
+exact branch-specific command by loading the merged helper from the verified
+remote. Substitute the verified canonical and source worktree paths, exact
+branch names and checkpoint, and original issue number before giving this
+command to the operator. The confirmation is for a human who stopped the
+old writer. A missing merged helper or failed digest comparison requires
+operator diagnosis before publication.
+
+```bash
+cd -- "$canonical_checkout" && (
+  set -euo pipefail
+  export GIT_NO_REPLACE_OBJECTS=1
+  case "$(git remote get-url origin)" in
+    https://github.com/bensmullen/personal-finance-app|https://github.com/bensmullen/personal-finance-app.git|git@github.com:bensmullen/personal-finance-app.git|ssh://git@github.com/bensmullen/personal-finance-app.git) ;;
+    *) exit 1 ;;
+  esac
+  git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+  main="$(git rev-parse --verify refs/remotes/origin/main)"
+  helper_blob="$(git rev-parse --verify "$main:tools/codex/recover-interrupted-task.sh")"
+  helper_dir="$(mktemp -d "${TMPDIR:-/tmp}/pfm-recovery-entry.XXXXXXXX")"
+  trap 'rm -rf -- "$helper_dir"' EXIT
+  git cat-file blob "$helper_blob" > "$helper_dir/recover-interrupted-task.sh"
+  test "$(git hash-object --no-filters "$helper_dir/recover-interrupted-task.sh")" = "$helper_blob"
+  PFM_CRASH_RECOVERY_CONFIRMED=1 PFM_CRASH_RECOVERY_ISSUE="$issue_number" \
+    PFM_RECOVERY_MAIN_SHA="$main" bash "$helper_dir/recover-interrupted-task.sh" \
+    "$source_worktree" "$original_branch" "$recovery_branch" "$checkpoint_sha"
+)
+```
 
 ### Live issue readiness gate before recommending Codex (mandatory)
 

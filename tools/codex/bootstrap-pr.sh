@@ -86,6 +86,10 @@ if ! git show-ref --verify --quiet "$remote_main"; then
   exit 1
 fi
 origin_main="$(git rev-parse "$remote_main")"
+if [ -n "${PFM_RECOVERY_MAIN_SHA:-}" ] && [ "$origin_main" != "$PFM_RECOVERY_MAIN_SHA" ]; then
+  printf 'PR_BOOTSTRAP_FAIL origin/main changed during recovery\n' >&2
+  exit 1
+fi
 
 branch_owner() {
   # Do not exit awk early: with pipefail, an upstream git worktree producer
@@ -111,7 +115,15 @@ registered_at_target() {
 prepare_target_path() {
   local registered current_branch
   registered="$(registered_at_target)"
+  if [ -n "${PFM_RECOVERY_HEAD:-}" ] && { [ -n "$registered" ] || [ -e "$target_abs" ]; }; then
+    printf 'PR_BOOTSTRAP_FAIL recovery target already exists: %s\n' "$target_abs" >&2
+    exit 1
+  fi
   if [ -n "$registered" ]; then
+    if [ "$(receipt_status "$registered")" != absent ]; then
+      printf 'PR_BOOTSTRAP_FAIL target worktree has task receipt evidence: %s\n' "$registered" >&2
+      exit 1
+    fi
     if [ -n "$(git -C "$registered" status --porcelain=v1 --untracked-files=normal)" ]; then
       printf 'PR_BOOTSTRAP_FAIL existing target worktree is dirty: %s\n' "$registered" >&2
       exit 1
@@ -127,6 +139,63 @@ prepare_target_path() {
     exit 1
   fi
   git worktree prune
+}
+
+receipt_status() {
+  local worktree="$1" pointer="$1/.codex/runtime/latest-task.json" status
+  status=absent
+  if [ -d "${pointer%/*}" ]; then
+    status=malformed-or-tampered
+    if command -v python3 >/dev/null 2>&1; then
+      status="$(python3 - "$worktree" "$branch" <<'PY' || printf 'malformed-or-tampered'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1]).resolve()
+pointer = root / '.codex/runtime/latest-task.json'
+
+if not pointer.exists() and not pointer.is_symlink():
+    for candidate in pointer.parent.glob('*.json'):
+        try:
+            state = json.loads(candidate.read_bytes())
+            if state.get('ACTIVE') is True or state.get('PREPARED') is True:
+                print('malformed-or-tampered')
+                break
+        except (OSError, ValueError, AttributeError):
+            continue
+    else:
+        print('absent')
+    sys.exit(0)
+
+try:
+    receipt = json.loads(pointer.read_bytes())
+    name = receipt['path']
+    state_path = pointer.parent / name
+    if pointer.is_symlink() or Path(name).name != name or state_path == pointer or state_path.is_symlink():
+        raise ValueError()
+    data = state_path.read_bytes()
+    state = json.loads(data)
+    if (hashlib.sha256(data).hexdigest() != receipt['sha256'] or
+            state.get('WORKTREE') != str(root) or state.get('TARGET_BRANCH') != sys.argv[2] or
+            type(state.get('ACTIVE')) is not bool or
+            not isinstance(state.get('AUTHORIZATION_ID'), str) or
+            not isinstance(state.get('SESSION_ID'), str) or
+            type(state.get('PREPARED', False)) is not bool or
+            (state['ACTIVE'] and state.get('PREPARED'))):
+        raise ValueError()
+    print('active-foreign-writer' if state['ACTIVE'] else
+          'prepared-non-owning' if state.get('PREPARED') else 'closed')
+except (OSError, ValueError, TypeError, KeyError, AttributeError):
+    print('malformed-or-tampered')
+PY
+)"
+    else
+      status=unverified-python-unavailable
+    fi
+  fi
+  printf '%s' "$status"
 }
 
 verify_ready() {
@@ -153,8 +222,9 @@ verify_ready() {
   fi
   printf 'PR_WORKTREE_READY mode=%s path=%s branch=%s head=%s origin_main=%s\n' \
     "$mode" "$path" "$actual_branch" "$actual" "$origin_main"
+  printf 'PR_TASK_RECEIPT status=%s path=%s\n' "$(receipt_status "$path")" "$path"
   printf '\nOPEN THIS EXACT WORKTREE IN CODEX: %s\n' "$path"
-  printf 'Bootstrap does not change the folder selected in the Codex GUI. Run this read-only preflight from its terminal before submitting TARGET_BRANCH=%s:\n' "$branch"
+  printf 'Git readiness does not grant receipt ownership or change the folder selected in Codex. Run this read-only preflight from its terminal before submitting TARGET_BRANCH=%s:\n' "$branch"
   preflight='test "$(pwd -P)" = "$(cd -- "$1" && pwd -P)" && test "$(git rev-parse --show-toplevel)" = "$(pwd -P)" && test "$(git branch --show-current)" = "$2" && test "$(git rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>/dev/null || true)" = "$3" && test "$(git rev-parse HEAD)" = "$(git rev-parse "$4")" && test -z "$(git status --porcelain=v1 --untracked-files=normal)" && printf "PREFLIGHT_OK path=%s branch=%s\n" "$(pwd -P)" "$2"'
   printf 'bash -c %q -- %q %q %q %q\n' "$preflight" "$path" "$branch" "$expected_upstream" "$expected_ref"
 }
@@ -183,6 +253,10 @@ if [ "$mode" = "new" ]; then
         printf 'PR_BOOTSTRAP_FAIL stale branch worktree is dirty: %s\n' "$owner" >&2
         exit 1
       fi
+      if [ "$(receipt_status "$owner")" != absent ]; then
+        printf 'PR_BOOTSTRAP_FAIL stale branch worktree has task receipt evidence: %s\n' "$owner" >&2
+        exit 1
+      fi
       git worktree remove "$owner"
     fi
     git branch -D "$branch" >/dev/null
@@ -204,20 +278,43 @@ if ! git show-ref --verify --quiet "$remote_target"; then
 fi
 remote_head="$(git rev-parse "$remote_target")"
 owner="$(branch_owner)"
+if [ -n "${PFM_RECOVERY_HEAD:-}" ]; then
+  if [ "$remote_head" != "$PFM_RECOVERY_HEAD" ] ||
+     [ "$(git ls-remote --heads origin "refs/heads/$branch")" != "$(printf '%s\trefs/heads/%s' "$PFM_RECOVERY_HEAD" "$branch")" ]; then
+    printf 'PR_BOOTSTRAP_FAIL recovery branch changed during bootstrap\n' >&2
+    exit 1
+  fi
+  if [ -n "$owner" ] && { [ "$(git -C "$owner" rev-parse HEAD)" != "$PFM_RECOVERY_HEAD" ] ||
+                           [ "$(receipt_status "$owner")" != absent ] ||
+                           { [ -n "$target_arg" ] && [ "$owner" != "$target_abs" ]; }; }; then
+    printf 'PR_BOOTSTRAP_FAIL existing recovery worktree is not the requested receipt-free checkpoint: %s\n' "$owner" >&2
+    exit 1
+  fi
+fi
 
 if [ -n "$owner" ]; then
-  git -C "$owner" branch --set-upstream-to="$remote_tracking" "$branch" >/dev/null
+  owner_receipt="$(receipt_status "$owner")"
   if [ -n "$(git -C "$owner" status --porcelain=v1 --untracked-files=normal)" ]; then
     printf 'PR_BOOTSTRAP_FAIL existing branch worktree is dirty: %s\n' "$owner" >&2
     exit 1
   fi
   local_head="$(git -C "$owner" rev-parse HEAD)"
   if [ "$local_head" = "$remote_head" ]; then
+    case "$owner_receipt" in
+      absent|closed) git -C "$owner" branch --set-upstream-to="$remote_tracking" "$branch" >/dev/null ;;
+    esac
     verify_ready "$owner" "$remote_head"
     exit 0
   fi
   if git merge-base --is-ancestor "$local_head" "$remote_head"; then
+    case "$owner_receipt" in
+      absent|closed) ;;
+      *)
+        printf 'PR_BOOTSTRAP_FAIL fast-forward needs receipt ownership diagnosis: path=%s status=%s\n' "$owner" "$owner_receipt" >&2
+        exit 1 ;;
+    esac
     git -C "$owner" merge --ff-only "$remote_target" >/dev/null
+    git -C "$owner" branch --set-upstream-to="$remote_tracking" "$branch" >/dev/null
     verify_ready "$owner" "$remote_head"
     exit 0
   fi

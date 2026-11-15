@@ -72,8 +72,10 @@ def is_linked_worktree(root):
 
 
 def state_path(root, payload):
-    sid = re.sub(r"[^A-Za-z0-9_.-]", "_", str(payload.get("session_id") or "session"))
-    tid = re.sub(r"[^A-Za-z0-9_.-]", "_", str(payload.get("turn_id") or "turn"))
+    sid = str(payload.get("session_id") or "session")
+    tid = str(payload.get("turn_id") or "turn")
+    if not all(re.fullmatch(r"[A-Za-z0-9_.-]+", item) for item in (sid, tid)):
+        raise ValueError("Invalid hook session or turn identity")
     directory = root / ".codex" / "runtime"
     directory.mkdir(parents=True, exist_ok=True)
     return directory / f"{sid}-{tid}.json"
@@ -107,19 +109,36 @@ def prior_state(root, include_closed=False):
     # A single durable receipt avoids guessing among sessions or tied mtimes.
     directory = root / ".codex" / "runtime"
     try:
-        receipt = json.loads((directory / "latest-task.json").read_text())
+        pointer = directory / "latest-task.json"
+        if pointer.is_symlink():
+            return None
+        receipt = json.loads(pointer.read_text())
         name = receipt["path"]
-        if Path(name).name != name or name == "latest-task.json":
+        if Path(name).name != name or name == "latest-task.json" or (directory / name).is_symlink():
             return None
         data = (directory / name).read_bytes()
         if hashlib.sha256(data).hexdigest() != receipt["sha256"]:
             return None
         state = json.loads(data)
-        if state.get("WORKTREE") != str(root.resolve()) or (not include_closed and not state.get("ACTIVE")):
+        if (state.get("WORKTREE") != str(root.resolve()) or
+                type(state.get("ACTIVE")) is not bool or
+                type(state.get("PREPARED", False)) is not bool or
+                not isinstance(state.get("AUTHORIZATION_ID"), str) or
+                not isinstance(state.get("SESSION_ID"), str) or
+                (state.get("ACTIVE") and state.get("PREPARED")) or
+                (not include_closed and not state.get("ACTIVE"))):
             return None
         return state
     except Exception:
         return None
+
+
+def current_grant(root, payload, state):
+    return (state == prior_state(root, include_closed=True) and
+            state.get("SESSION_ID") == str(payload.get("session_id") or "session") and
+            state.get("TURN_ID", str(payload.get("turn_id") or "turn")) ==
+            str(payload.get("turn_id") or "turn") and
+            (state.get("ACTIVE") or state.get("PREPARED")))
 
 
 def receipt_diagnostic(root, state=None):
@@ -241,10 +260,7 @@ def git_paths(args, root):
     return {value for value in result.stdout.split("\0") if value}
 
 
-def checkpoint_guard(root, state):
-    target = state["TARGET_BRANCH"]
-    if current_branch(root) != target or not state.get("ACTIVE"):
-        return "branch changed/detached or task state is inactive"
+def git_operation_error(root):
     for marker in ("MERGE_HEAD", "rebase-merge", "rebase-apply", "CHERRY_PICK_HEAD",
                    "REVERT_HEAD", "sequencer", "BISECT_LOG", "AUTO_MERGE"):
         location = git_value(["rev-parse", "--git-path", marker], root)
@@ -252,6 +268,16 @@ def checkpoint_guard(root, state):
             return f"ambiguous Git operation: {marker}"
     if git_paths(["ls-files", "-u", "-z"], root):
         return "unmerged/conflicted index"
+    return None
+
+
+def checkpoint_guard(root, state):
+    target = state["TARGET_BRANCH"]
+    if current_branch(root) != target or not state.get("ACTIVE"):
+        return "branch changed/detached or task state is inactive"
+    operation_error = git_operation_error(root)
+    if operation_error:
+        return operation_error
     if run_git(["merge-base", "--is-ancestor", state["BASE_HEAD"], "HEAD"], root).returncode:
         return "prior BASE_HEAD is not an ancestor of HEAD"
     paths = set()
@@ -417,6 +443,48 @@ def clean_closed_checkpoint(root, target):
             git_value(["rev-parse", "@{u}"], root) == remote_head and
             final.returncode == 0 and
             final.stdout.split() == [remote_head, f"refs/heads/{target}"])
+
+
+def prepared_index_digest(root):
+    index = subprocess.run(["git", "ls-files", "--stage", "-v", "-z"], cwd=root, capture_output=True)
+    if index.returncode:
+        raise ValueError("Cannot inspect the prepared checkpoint index")
+    return hashlib.sha256(index.stdout).hexdigest()
+
+
+def prepared_local_error(root, state):
+    status = run_git(["--no-optional-locks", "status", "--porcelain=v1", "--untracked-files=all"], root)
+    if status.returncode or status.stdout:
+        return "STATE_DIRTY: prepared task requires a proven clean worktree"
+    head = state["BASE_HEAD"]
+    if not head or current_branch(root) != state["TARGET_BRANCH"] or git_value(["rev-parse", "HEAD"], root) != head:
+        return "prepared branch or HEAD changed"
+    digest = state.get("PREPARED_INDEX_SHA256")
+    if digest is not None and prepared_index_digest(root) != digest:
+        return "prepared index changed"
+    return git_operation_error(root)
+
+
+def prepared_checkpoint_error(root, state):
+    error = prepared_local_error(root, state)
+    if error:
+        return error
+    target = state["TARGET_BRANCH"]
+    head = state["BASE_HEAD"]
+    ok, reason = safe_push(f"git push origin {target}", root, target)
+    if not ok:
+        return reason
+    upstream = git_value(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], root)
+    ref = f"refs/heads/{target}"
+    remote = run_git(["ls-remote", "--exit-code", "origin", ref], root)
+    if upstream and (upstream != f"origin/{target}" or git_value(["rev-parse", "@{u}"], root) != head):
+        return "prepared branch has unexpected upstream or unpublished commits"
+    if remote.returncode == 0 and remote.stdout.split() == [head, ref]:
+        return None
+    if (remote.returncode == 2 and not upstream and
+            git_value(["rev-parse", "refs/remotes/origin/main"], root) == head):
+        return None  # New, unpublished branch at the bootstrap base.
+    return "prepared branch is not at its published head or unpublished bootstrap base"
 
 
 def scalar(prompt, key):
@@ -754,15 +822,100 @@ def tokens(command):
         return command.split()
 
 
+# Accept one simple command with literal arguments. Quoted search patterns can
+# contain shell punctuation, but only single quotes can quote substitutions.
+SHELL_LITERAL = r"""(?:[a-zA-Z0-9_./:@%+=,-]|'[^'\n\r]*'|"[^"\\`$\n\r]*")+"""
+
+
+def literal_shell_args(command):
+    word = SHELL_LITERAL
+    if not re.fullmatch(rf"[ \t]*{word}(?:[ \t]+{word})*[ \t]*", command):
+        return []
+    return shlex.split(command)
+
+
+def read_only_shell(command):
+    parts = literal_shell_args(command)
+    if not parts:
+        return False
+    name, *args = parts
+    if name in {"pwd", "cat", "ls", "head", "tail", "wc"}:
+        options = {
+            "pwd": {"-L", "-P"},
+            "cat": {"-n", "-b", "-s", "-v", "-e", "-t"},
+            "ls": {"-a", "-A", "-l", "-la", "-al", "-d", "-h", "-1"},
+            "head": {"-n", "-c"},
+            "tail": {"-n", "-c"},
+            "wc": {"-l", "-w", "-c", "-m"},
+        }
+        return all(not arg.startswith("-") or arg in options[name] or arg == "--" for arg in args)
+    if name == "sed":
+        return (args[:1] == ["-n"] and len(args) >= 3 and
+                all(re.fullmatch(r"\d+(?:,\d+)?p", script) for script in args[1].split(";")) and
+                all(not arg.startswith("-") for arg in args[2:]))
+    if name == "rg":
+        options = {
+            "-n", "-i", "-F", "-S", "-l", "-c", "-H", "-N", "-o", "-v", "-w",
+            "--files", "--hidden", "--no-ignore", "--no-heading", "--line-number",
+            "--fixed-strings", "--count", "--stats",
+        }
+        values = {"-g", "--glob", "-e", "--regexp", "-A", "-B", "-C", "-m", "--max-count"}
+        arguments = iter(args)
+        for arg in arguments:
+            if arg == "--":
+                return True
+            if arg in values:
+                if next(arguments, None) is None:
+                    return False
+            elif arg.startswith("-") and arg not in options:
+                return False
+        return True
+    if name == "git":
+        if args[:1] == ["--no-pager"]:
+            args = args[1:]
+        if not args:
+            return False
+        subcommand, *args = args
+        if subcommand == "branch":
+            return args == ["--show-current"]
+        if subcommand == "worktree":
+            return args in (["list"], ["list", "--porcelain"])
+        options = {
+            "status": {"-s", "-b", "-sb", "--short", "--branch", "--porcelain",
+                       "--porcelain=v1", "--porcelain=v2", "--untracked-files=all",
+                       "--untracked-files=normal", "--untracked-files=no"},
+            "show": {"--stat", "--name-only", "--name-status", "--oneline", "--no-patch",
+                     "--no-ext-diff", "--no-textconv"},
+            "diff": {"--stat", "--name-only", "--name-status", "--cached", "--staged",
+                     "--no-ext-diff", "--no-textconv", "--check"},
+            "rev-parse": {"--show-toplevel", "--git-dir", "--git-common-dir", "--short",
+                          "--verify", "--abbrev-ref", "--symbolic-full-name"},
+            "log": {"--oneline", "--stat", "--name-only", "--name-status", "--no-patch",
+                    "--no-ext-diff", "--no-textconv", "-n"},
+            "ls-files": {"--stage", "--cached", "--others", "--exclude-standard", "-z"},
+        }
+        if subcommand not in options:
+            return False
+        for arg in args:
+            if arg == "--":
+                return True
+            if not arg.startswith("-") or arg in options[subcommand]:
+                continue
+            if subcommand == "log" and re.fullmatch(r"-[1-9][0-9]*", arg):
+                continue
+            return False
+        return True
+    return False
+
+
 def patch_paths(command):
-    found = []
-    for pattern in (
-        r"(?m)^\*\*\* (?:Update|Add|Delete) File:\s*(.+?)\s*$",
-        r"(?m)^diff --git a/(.+?) b/(.+?)$",
-    ):
-        for match in re.finditer(pattern, command):
-            found.append(match.group(match.lastindex))
-    return found
+    return re.findall(r"(?m)^\*\*\* (?:(?:Update|Add|Delete) File|Move to):[ \t]*(.+?)[ \t]*$", command)
+
+
+def direct_worktree_path(root, path):
+    relative = Path(normalize(path))
+    return (not relative.is_absolute() and ".." not in relative.parts and
+            (root / relative).resolve() == root.resolve() / relative)
 
 
 def tool_paths(value):
@@ -791,14 +944,15 @@ def likely_shell_write(command):
     return bool(re.search(pattern, command.strip()))
 
 
-def safe_mkdir(command, patterns):
-    if any(token in command for token in ("&&", "||", ";", "|", ">", "<")):
+def safe_mkdir(command, root, patterns):
+    parts = literal_shell_args(command)
+    if parts[:2] != ["mkdir", "-p"]:
         return False
-    parts = tokens(command)
-    if not parts or parts[0] != "mkdir":
-        return False
-    paths = [part for part in parts[1:] if not part.startswith("-")]
-    return bool(paths) and all(allowed(path, patterns) for path in paths)
+    paths = parts[2:]
+    return bool(paths) and all(
+        path and not path.startswith("-") and path == path.strip() and "\\" not in path and
+        direct_worktree_path(root, path) and allowed(path, patterns) for path in paths
+    )
 
 
 def is_local_verification(command):
@@ -1000,7 +1154,7 @@ def user_prompt(payload, root):
 
     if task_prompt is None:
         owner = prior_state(root, include_closed=True)
-        closed = owner is not None and not owner.get("ACTIVE")
+        closed = owner is not None and not owner.get("ACTIVE") and not owner.get("PREPARED")
         recovery_hint = (
             " A previous PFM task has stopped and its authorization is closed. "
             "After the operator verifies a clean/upstream-synchronized worktree, "
@@ -1049,10 +1203,12 @@ def user_prompt(payload, root):
         "OBJECTIVE": section(task_prompt, "OBJECTIVE"),
         "ACCEPTANCE": section(task_prompt, "ACCEPTANCE"),
         "WORKTREE": str(root.resolve()),
-        "ACTIVE": True,
+        "ACTIVE": False,
+        "PREPARED": True,
         "TASK_IDENTITY": task_identity(task_prompt, attachment_metadata),
         "AUTHORIZATION_ID": os.urandom(16).hex(),
         "SESSION_ID": str(payload.get("session_id") or "session"),
+        "TURN_ID": str(payload.get("turn_id") or "turn"),
     }
     if attachment_metadata:
         if attachment_metadata.get("attachment") is not None:
@@ -1061,17 +1217,22 @@ def user_prompt(payload, root):
             state["TASK_ISSUE"] = attachment_metadata["issue"]
     dirty = git_value(["status", "--porcelain=v1", "--untracked-files=all"], root)
     prior = prior_state(root)
-    receipt_exists = (root / '.codex/runtime/latest-task.json').exists()
+    pointer = root / '.codex/runtime/latest-task.json'
+    receipt_exists = pointer.exists() or pointer.is_symlink()
     owner = prior_state(root, include_closed=True)
     if receipt_exists and not owner:
         emit({"decision": "block", "reason": receipt_diagnostic(root, state) + " Missing valid prior provenance."})
         return
-    if owner is not None and owner.get("ACTIVE") is False and owner.get("SESSION_ID") == state["SESSION_ID"]:
+    if (owner is not None and not owner.get("ACTIVE") and not owner.get("PREPARED") and
+            owner.get("SESSION_ID") == state["SESSION_ID"]):
         emit({"decision": "block", "reason": (
             "Closed PFM task session: start a NEW Codex conversation in the verified worktree "
             "and submit the live task authorization. Preserve the closed receipt; "
             "a new turn in this conversation does not create a new session."
         )})
+        return
+    if state_path(root, payload).exists():
+        emit({"decision": "block", "reason": "Duplicate PFM authorization for this session and turn."})
         return
     if not receipt_exists:
         for path in (root / '.codex/runtime').glob('*.json'):
@@ -1082,14 +1243,27 @@ def user_prompt(payload, root):
             if orphan.get('ACTIVE'):
                 emit({"decision": "block", "reason": receipt_diagnostic(root, state) + " Missing receipt with active prior provenance."})
                 return
+            if orphan.get("PREPARED"):
+                emit({"decision": "block", "reason": receipt_diagnostic(root, state) + " Missing receipt with prepared prior provenance."})
+                return
     if prior and prior.get('SESSION_ID') != state['SESSION_ID']:
         emit({"decision": "block", "reason": receipt_diagnostic(root, state) + " Active foreign writer; activation refused."})
         return
     # A terminal BLOCKED/COMPLETE stop closes the old grant. Reauthorization is
     # allowed only on a newly validated task turn, and only from a truly shared
     # clean checkpoint; never inherit a stale local tracking ref as provenance.
-    closed_owner = owner is not None and not owner.get("ACTIVE") and owner.get("TARGET_BRANCH") == target
-    if closed_owner and not dirty:
+    if owner and owner.get("TARGET_BRANCH") != target:
+        emit({"decision": "block", "reason": receipt_diagnostic(root, state) + " Receipt branch mismatch."})
+        return
+    if owner and owner.get("PREPARED"):
+        error = prepared_local_error(root, owner)
+        if error:
+            emit({"decision": "block", "reason": "STATE_RECOVERY_REQUIRED: " + error})
+            return
+    closed_owner = owner is not None and not owner.get("ACTIVE") and not owner.get("PREPARED")
+    unpublished_closed_base = (closed_owner and owner["BASE_HEAD"] == state["BASE_HEAD"] and
+                               not git_value(["rev-parse", "@{u}"], root))
+    if closed_owner and not dirty and not unpublished_closed_base:
         if not clean_closed_checkpoint(root, target):
             emit({"decision": "block", "reason": (
                 "STATE_RECOVERY_REQUIRED: closed task checkpoint is not proven clean and "
@@ -1098,11 +1272,18 @@ def user_prompt(payload, root):
                 "before opening a fresh Codex chat. Do not delete receipts or reset."
             )})
             return
+    if prior:
+        if prior.get("TASK_IDENTITY") != state["TASK_IDENTITY"]:
+            emit({"decision": "block", "reason": receipt_diagnostic(root, state) + " Task provenance differs."})
+            return
+        state["ACTIVE"] = True
+        state["PREPARED"] = False
+        state["BASE_HEAD"] = prior["BASE_HEAD"]
     # Also retry an interrupted checkpoint push when its local commit is clean.
     pending = (prior and prior.get("TASK_IDENTITY") == state["TASK_IDENTITY"] and
                git_value(["rev-parse", "HEAD"], root) != git_value(["rev-parse", "@{u}"], root) and
                "PFM-Checkpoint: true" in git_value(["log", "-1", "--format=%B"], root))
-    if dirty or pending:
+    if dirty or pending or (prior and state["BASE_HEAD"] != git_value(["rev-parse", "HEAD"], root)):
         if not prior or prior.get("TASK_IDENTITY") != state["TASK_IDENTITY"] or prior.get("TARGET_BRANCH") != target:
             emit({"decision": "block", "reason": "STATE_RECOVERY_REQUIRED: STATE_DIRTY has no matching active prior task provenance; preserve work for operator recovery."})
             return
@@ -1112,6 +1293,14 @@ def user_prompt(payload, root):
             emit({"decision": "block", "reason": error})
             return
         state["BASE_HEAD"] = git_value(["rev-parse", "HEAD"], root)
+    if not prior:
+        state["BASE_HEAD"] = git_value(["rev-parse", "HEAD"], root)
+        error = prepared_checkpoint_error(root, state)
+        if error:
+            reason = "closed task checkpoint: " if closed_owner else ""
+            emit({"decision": "block", "reason": "STATE_RECOVERY_REQUIRED: " + reason + error})
+            return
+        state["PREPARED_INDEX_SHA256"] = prepared_index_digest(root)
     save_state(root, payload, state)
 
     issue_metadata = state.get("TASK_ISSUE")
@@ -1124,7 +1313,8 @@ def user_prompt(payload, root):
         source = ""
     context = (
         f"PFM task authorization accepted{source}. Repository edits are restricted to ALLOWED_PATHS. "
-        "Use apply_patch for repository file edits. Optional bounded preflight only: "
+        + ("Writer ownership begins at the first permitted mutation. " if state["PREPARED"] else "")
+        + "Use apply_patch for repository file edits. Optional bounded preflight only: "
         "node tools/codex/limited-local-verification.mjs [directly affected test/name.test.ts]; "
         "one invocation and one correction retry after FAIL. No other local verification or installs. "
         "Before stopping, report either TASK_STATUS: COMPLETE with ACCEPTANCE_STATUS: SATISFIED, "
@@ -1162,41 +1352,43 @@ def pre_tool(payload, root):
     tool = str(payload.get("tool_name") or "")
     tool_input = payload.get("tool_input") or {}
     command = str(tool_input.get("command") or "") if isinstance(tool_input, dict) else ""
+    mutation = tool == "apply_patch" or (tool == "Bash" and is_repository_mutation(command))
     state = load_state(root, payload)
 
     if tool in {"spawn_agent", "Agent"}:
         deny("Subagents are disabled for PFM implementation turns.")
         return
 
-    if state is None:
-        if tool == "apply_patch" or (tool == "Bash" and (is_repository_mutation(command) or 'limited-local-verification' in command)):
-            deny("No active PFM task authorization. Repository mutation is blocked.")
-            return
-        emit({})
+    current = state is not None and current_grant(root, payload, state)
+    matching_branch = current and current_branch(root) == state["TARGET_BRANCH"]
+    if not matching_branch:
+        if tool == "apply_patch" or (tool == "Bash" and not read_only_shell(command)):
+            if state is None:
+                deny("No active PFM task authorization. Bash is limited to verified read-only inspection.")
+            elif not current:
+                deny(receipt_diagnostic(root, state))
+            else:
+                deny("TASK_BRANCH_DRIFT: current branch no longer matches the authorized task branch.")
+        else:
+            emit({})
         return
 
-    latest = prior_state(root)
-    if not state.get('ACTIVE') or not latest or latest.get('AUTHORIZATION_ID') != state.get('AUTHORIZATION_ID'):
-        if tool in {'Bash', 'apply_patch'}:
-            deny(receipt_diagnostic(root, state))
+    if tool == "Bash" and state.get("PREPARED"):
+        if read_only_shell(command):
+            emit({})
             return
+        if not safe_mkdir(command, root, state["ALLOWED_PATHS"]):
+            deny("Prepared task Bash requires a verified read-only command or authorized mkdir -p. Use apply_patch for file edits.")
+            return
+        if all((root / path).is_dir() for path in literal_shell_args(command)[2:]):
+            deny("All requested directories already exist. No writer was admitted.")
+            return
+        mutation = True
 
-    if tool == "apply_patch" or (
-        tool == "Bash"
-        and (
-            likely_shell_write(command)
-            or re.search(r"(^|\\s)git\\s+(commit|push|add)(\\s|$)", command)
-            or re.search(r"(^|\\s)gh\\s+pr\\s+create(\\s|$)", command)
-        )
-    ):
+    if mutation:
         attachment_error = attachment_integrity_error(state)
         if attachment_error:
             deny(attachment_error)
-            return
-
-    if current_branch(root) != state["TARGET_BRANCH"]:
-        if tool == "apply_patch" or tool == "Bash":
-            deny("TASK_BRANCH_DRIFT: current branch no longer matches the authorized task branch.")
             return
 
     if tool == "Bash":
@@ -1221,15 +1413,10 @@ def pre_tool(payload, root):
             deny("Git branch/worktree/history mutation is blocked inside an active task. Use the bootstrap helper before the task.")
             return
         if re.search(r"(^|\s)git\s+update-index(\s|$)", command):
-            if safe_update_index(command, state["ALLOWED_PATHS"]):
-                emit({})
+            if not safe_update_index(command, state["ALLOWED_PATHS"]):
+                deny("git update-index is allowed only for --chmod on authorized paths.")
                 return
-            deny("git update-index is allowed only for --chmod on authorized paths.")
-            return
-        if likely_shell_write(command) and safe_mkdir(command, state["ALLOWED_PATHS"]):
-            emit({})
-            return
-        if likely_shell_write(command) and not re.search(r"(^|\s)git\s+(commit|push|add)(\s|$)", command):
+        if likely_shell_write(command) and not safe_mkdir(command, root, state["ALLOWED_PATHS"]):
             deny("Repository file edits must use apply_patch so ALLOWED_PATHS can be enforced before mutation.")
             return
         if re.search(r"(^|\s)git\s+push(\s|$)", command):
@@ -1248,7 +1435,14 @@ def pre_tool(payload, root):
                 return
 
     if tool == "apply_patch":
-        for path in patch_paths(command):
+        paths = patch_paths(command)
+        if not paths:
+            deny("Patch must identify at least one repository file.")
+            return
+        for path in paths:
+            if not direct_worktree_path(root, path):
+                deny(f"Patch path must stay within this worktree: {path}")
+                return
             if not allowed(path, state["ALLOWED_PATHS"]):
                 deny(f"Out-of-scope edit blocked: {path}")
                 return
@@ -1256,6 +1450,24 @@ def pre_tool(payload, root):
                 deny(f"Protected framework edit blocked: {path}")
                 return
 
+    if mutation and state.get("PREPARED"):
+        issue = state.get("TASK_ISSUE")
+        if issue:
+            try:
+                _, live = read_task_issue(f"PFM_TASK_ISSUE: {issue['number']}")
+            except (TaskIssueError, ValueError) as exc:
+                deny(str(exc))
+                return
+            if live["sha256"] != issue["sha256"]:
+                deny("TASK_ISSUE_INTEGRITY: issue body changed since preparation. Submit the live issue in a fresh turn.")
+                return
+        error = prepared_checkpoint_error(root, state)
+        if error:
+            deny("STATE_RECOVERY_REQUIRED: " + error)
+            return
+        state["ACTIVE"] = True
+        state["PREPARED"] = False
+        save_state(root, payload, state)
     emit({})
 
 
@@ -1266,20 +1478,20 @@ def permission_request(payload, root):
     command = str((payload.get("tool_input") or {}).get("command") or "")
     is_push = bool(re.search(r"(^|\s)git\s+push(\s|$)", command))
     is_pr_create = bool(re.search(r"(^|\s)gh\s+pr\s+create(\s|$)", command))
+    state = load_state(root, payload)
+    if not (state and state.get("ACTIVE") and current_grant(root, payload, state) and
+            current_branch(root) == state["TARGET_BRANCH"]):
+        if read_only_shell(command):
+            emit({})
+        else:
+            reason = receipt_diagnostic(root, state) if state else "No active PFM task authorization."
+            emit({"hookSpecificOutput": {
+                "hookEventName": "PermissionRequest",
+                "decision": {"behavior": "deny", "message": reason},
+            }})
+        return
     if not is_push and not is_pr_create:
         emit({})
-        return
-
-    state = load_state(root, payload)
-    if state is None:
-        emit(
-            {
-                "hookSpecificOutput": {
-                    "hookEventName": "PermissionRequest",
-                    "decision": {"behavior": "deny", "message": "No active PFM task authorization."},
-                }
-            }
-        )
         return
 
     attachment_error = attachment_integrity_error(state)
@@ -1304,8 +1516,7 @@ def permission_request(payload, root):
         failure = actionable_preflight_failure(root, state)
         if failure:
             ok, reason = False, failure
-    latest = prior_state(root)
-    if not state.get('ACTIVE') or not latest or latest.get('AUTHORIZATION_ID') != state.get('AUTHORIZATION_ID'):
+    if not current_grant(root, payload, state):
         ok, reason = False, receipt_diagnostic(root, state)
     decision = {"behavior": "allow"} if ok else {"behavior": "deny", "message": f"Unsafe {label} blocked: {reason}"}
     emit({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": decision}})
@@ -1313,8 +1524,20 @@ def permission_request(payload, root):
 
 def post_tool(payload, root):
     state = load_state(root, payload)
-    if state is None:
+    if state is None or not current_grant(root, payload, state):
         emit({})
+        return
+
+    if state.get("PREPARED"):
+        error = prepared_local_error(root, state)
+        if error and current_grant(root, payload, state):
+            emit({
+                "continue": False,
+                "stopReason": "STATE_RECOVERY_REQUIRED: " + error,
+                "systemMessage": "Prepared checkpoint changed before writer admission. Preserve Git changes and receipts for operator diagnosis.",
+            })
+        else:
+            emit({})
         return
 
     attachment_error = attachment_integrity_error(state)
@@ -1415,39 +1638,60 @@ def block_or_stop(payload, reason):
 
 def stop(payload, root):
     state = load_state(root, payload)
-    if state is None:
-        emit({"continue": True})
-        return
-
-    latest = prior_state(root)
-    if state.get("ACTIVE") and (not latest or latest.get("AUTHORIZATION_ID") != state.get("AUTHORIZATION_ID")):
-        block_or_stop(payload, receipt_diagnostic(root, state))
-        return
-
-    if not state.get('ACTIVE'):
-        # Idempotent Stop cannot republish a closed turn over a newer owner.
-        message = str(payload.get('last_assistant_message', ''))
-        if "TASK_STATUS: BLOCKED" in message and 'TASK_STATUS: COMPLETE' not in message and ('BLOCKER:' in message or 'LOOKUP_REQUIRED:' in message):
-            emit({"continue": True})
-            return
-
     message = str(payload.get("last_assistant_message") or "")
+    complete = "TASK_STATUS: COMPLETE" in message
+    blocked = ("TASK_STATUS: BLOCKED" in message and
+               ("BLOCKER:" in message or "LOOKUP_REQUIRED:" in message))
+    if state is None:
+        if complete:
+            block_or_stop(payload, "Cannot report COMPLETE without a valid task receipt")
+        else:
+            emit({"continue": True})
+        return
+
+    if not current_grant(root, payload, state):
+        if not state.get("ACTIVE") and blocked and not complete:
+            # A historical prepared or closed turn cannot publish anything.
+            emit({"continue": True})
+        else:
+            reason = receipt_diagnostic(root, state)
+            if complete and not state.get("ACTIVE") and not state.get("PREPARED"):
+                reason = "Cannot report COMPLETE: no implementation commit can be accepted under a closed grant"
+            elif not complete and not state.get("ACTIVE") and not state.get("PREPARED"):
+                reason = "Report TASK_STATUS: BLOCKED with an explicit BLOCKER:/LOOKUP_REQUIRED: reason."
+            block_or_stop(payload, reason)
+        return
+
     attachment_error = attachment_integrity_error(state)
     if attachment_error:
         block_or_stop(payload, attachment_error)
         return
 
-    complete = "TASK_STATUS: COMPLETE" in message
-    blocked = "TASK_STATUS: BLOCKED" in message
-
-    if complete and blocked:
-        block_or_stop(payload, "final report contains both COMPLETE and BLOCKED")
+    invalid = None
+    if complete:
+        if "TASK_STATUS: BLOCKED" in message:
+            invalid = "final report contains both COMPLETE and BLOCKED"
+        elif "ACCEPTANCE_STATUS: SATISFIED" not in message:
+            invalid = "COMPLETE requires ACCEPTANCE_STATUS: SATISFIED"
+        elif state.get("PREPARED"):
+            invalid = "Cannot report COMPLETE: no implementation commit under this grant"
+        else:
+            problems = completion_problems(root, state)
+            if problems:
+                invalid = "Cannot report COMPLETE: " + "; ".join(problems)
+    elif not blocked:
+        invalid = "Finish the authorized task, or report TASK_STATUS: BLOCKED with an explicit BLOCKER:/LOOKUP_REQUIRED: reason."
+    if invalid and not payload.get("stop_hook_active"):
+        block_or_stop(payload, invalid)
         return
 
-    if blocked:
-        if "BLOCKER:" not in message and "LOOKUP_REQUIRED:" not in message:
-            block_or_stop(payload, "BLOCKED status requires BLOCKER: or LOOKUP_REQUIRED:")
+    prepared = state.get("PREPARED")
+    if prepared:
+        error = prepared_checkpoint_error(root, state)
+        if error:
+            block_or_stop(payload, "STATE_RECOVERY_REQUIRED: " + error)
             return
+    elif blocked or invalid:
         if git_value(["status", "--porcelain=v1", "--untracked-files=all"], root):
             error = checkpoint(root, state)
             if error:
@@ -1466,34 +1710,13 @@ def stop(payload, root):
         if blocked_problems:
             block_or_stop(payload, "Blocked task must leave shared Git state understandable: " + "; ".join(blocked_problems))
             return
-        state["ACTIVE"] = False
-        save_state(root, payload, state)
-        emit({"continue": True})
-        return
-
-    if not complete:
-        block_or_stop(
-            payload,
-            "Finish the authorized task, or report TASK_STATUS: BLOCKED with an explicit BLOCKER:/LOOKUP_REQUIRED: reason.",
-        )
-        return
-
-    if "ACCEPTANCE_STATUS: SATISFIED" not in message:
-        block_or_stop(payload, "COMPLETE requires ACCEPTANCE_STATUS: SATISFIED")
-        return
-
-    problems = completion_problems(root, state)
-    if problems:
-        block_or_stop(payload, "Cannot report COMPLETE: " + "; ".join(problems))
-        return
-
-    if not state.get('ACTIVE'):
-        emit({"continue": True})
-        return
-
     state["ACTIVE"] = False
+    state["PREPARED"] = False
     save_state(root, payload, state)
-    emit({"continue": True})
+    if invalid:
+        block_or_stop(payload, invalid)
+    else:
+        emit({"continue": True})
 
 
 def acquire_policy_lock(lock):
@@ -1509,6 +1732,19 @@ def acquire_policy_lock(lock):
             if remaining <= 0:
                 return False
             time.sleep(min(0.05, remaining))
+
+
+def recovery_issue(root, old_branch, new_branch, number):
+    """Read-only operator check, called from a verified origin/main blob."""
+    state = prior_state(root)
+    if (not state or current_branch(root) != old_branch or state.get("TARGET_BRANCH") != old_branch or
+            str(state.get("TASK_ISSUE", {}).get("number")) != number):
+        raise ValueError("no matching hash-bound active owner for the original branch and issue")
+    task, metadata = read_task_issue(f"PFM_TASK_ISSUE: {number}")
+    _, values, _ = validate_task(task)
+    if values["TARGET_BRANCH"] != new_branch:
+        raise ValueError(f"live issue #{number} does not authorize {new_branch}")
+    print(metadata["sha256"])
 
 
 def main():
@@ -1585,4 +1821,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) == 6 and sys.argv[1] == "--recovery-issue":
+        try:
+            recovery_issue(Path(sys.argv[2]).resolve(), *sys.argv[3:])
+        except (TaskIssueError, ValueError) as exc:
+            sys.exit(f"CRASH_RECOVERY_FAIL {exc}")
+    else:
+        main()
