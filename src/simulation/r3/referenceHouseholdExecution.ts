@@ -17,6 +17,7 @@ import {
   assertAuthoritativeStateCurrency,
   admitS4OpeningSources,
   cloneAuthoritativeState,
+  createAuthoritativeState,
   createIndexedExecutionState,
   registerAuthoritativeIdentity,
   validateAuthoritativeState,
@@ -168,14 +169,11 @@ const appendEventPreparationIdentities = (
   state: AuthoritativeState,
   prepared: PreparedVerticalSlice2Period,
 ): number => {
-  // Reference VS2 event work only evaluates P27/P30. Each emits at most one
-  // generated identity, retained in its resulting primitive state. The
-  // candidate already descends from the same opening and owns its registry.
+  // Both candidates share an opening. Event preparation registers only the
+  // occurrence identities emitted by its primitive work.
   let appended = 0;
-  for (const entry of Object.values(prepared.eventPrimitiveTransition)) {
-    if (entry.primitiveId !== "P27" && entry.primitiveId !== "P30") continue;
-    const occurrence = entry.state.occurrenceId;
-    if (occurrence !== undefined && !state.identities.generatedOccurrenceKeys.includes(occurrence)) {
+  for (const occurrence of prepared.eventOccurrenceIdentities) {
+    if (!state.identities.generatedOccurrenceKeys.includes(occurrence)) {
       registerAuthoritativeIdentity(state.identities, "generatedOccurrenceKeys", occurrence);
       appended += 1;
     }
@@ -1224,7 +1222,7 @@ const runCompiledHouseholdProjectionInternal = (
           : { reachedThrough: committed[committed.length - 1]!.period.end }),
         // Execution ancestry is run-local. A public result must cross cold
         // opening validation when it is resubmitted to another run.
-        state: { ...state },
+        state: createAuthoritativeState(state),
         primitiveState,
         periods: Object.freeze(committed),
         diagnostics: Object.freeze(diagnostics),
@@ -1236,7 +1234,7 @@ const runCompiledHouseholdProjectionInternal = (
     runMetadata,
     requestedHorizon,
     reachedThrough: requestedHorizon.end,
-    state: { ...state },
+    state: createAuthoritativeState(state),
     primitiveState,
     periods: Object.freeze(committed),
     diagnostics: Object.freeze(diagnostics),

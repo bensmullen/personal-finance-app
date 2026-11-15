@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import fc from "fast-check";
 import { PerformanceRegistry, type PerformanceObserver } from "../src/diagnostics/performance.js";
 import type { CompiledHouseholdProjection } from "../src/application/compiler/householdProjection.js";
-import { domainId } from "../src/identity/index.js";
+import { domainId, generatedOccurrenceKey } from "../src/identity/index.js";
 import { createFundingPolicy, fundingPolicyId } from "../src/funding/index.js";
 import { runHouseholdKernel, type HouseholdKernelParticipant, runCompiledHouseholdProjection,
   runHouseholdForecastSummary, replayHouseholdForecastWindow } from "../src/simulation/householdExecution.js";
@@ -161,7 +161,10 @@ describe("R3 reusable deterministic household kernel", () => {
       context: { runId: "funded-allocation", dataClassification: "synthetic", modelCounts: {},
         executionLocation: "local_node", cacheState: "not_applicable" },
     });
-    expect(ambiguous).toEqual(referenceRun({ compiled: funded, runContext: context() }));
+    const stoppedReference = referenceRun({ compiled: funded, runContext: context() });
+    expect(ambiguous).toEqual(stoppedReference);
+    expect(stoppedReference).not.toHaveProperty("reachedThrough");
+    expect(stoppedReference.stoppedAt).toBe(start);
     expect(ambiguous.status).toBe("incomplete");
     expect(ambiguous.diagnostics.some(issue => issue.code === "HOUSEHOLD_CONTENTION_UNRESOLVED")).toBe(false);
     expect(registry.latest("engine.schedule_contention")!.resources!.structuralCounters!.contentionFallbackInvocations).toBeGreaterThan(0);
@@ -644,6 +647,66 @@ describe("R3 reusable deterministic household kernel", () => {
     const result = referenceCashRun({ runContext, openingState, input, months });
     expect(result.status).toBe("completed");
     expect(result.periods).toHaveLength(months);
+    expect(result.reachedThrough).toBe(runContext.simulationEnd);
+    expect(result).not.toHaveProperty("stoppedAt");
+    expect(result.runMetadata).toEqual(runFunctions.createRunMetadata(runContext, fingerprint));
+  });
+
+  it("retains standalone VS2 metadata and rolls back a duplicate event after a committed month", () => {
+    const months = 25;
+    const runContext = createRunContext({ ...context(), simulationEnd: instant("2028-02-01T00:00:00.000Z") });
+    const terminationEventId = domainId("event", "93000000-0000-4000-8000-000000000071");
+    const issued = compileModeledIncomeFixture(runContext, months, {
+      householdId: ids.household, personId: ids.owner, accountId: ids.cash, accountType: "checking",
+      retirementBindings: [{ incomeId: ids.income, terminationEventId, baselineDate: "2026-02-10" }],
+      incomes: [{ id: ids.income, type: "salary", amount: "100", startDate: "2025-12-15" }],
+    });
+    const input = { ...cashFlow, incomes: issued.incomes, events: issued.events };
+    const termination = issued.incomes[0]!.primitiveIds.termination!;
+    const key = generatedOccurrenceKey({
+      scenarioId: runContext.scenarioId, primitiveInstanceId: termination,
+      scheduledAt: issued.events.find(event => event.id === terminationEventId)!.effectiveAt,
+      semanticEffectType: "event:termination", economicTargetId: ids.income,
+    });
+    const openingState = createAuthoritativeState({ ...opening(), identities: { generatedOccurrenceKeys: [key] } });
+    const result = referenceCashRun({ runContext, openingState, input, months });
+    expect(result.status).toBe("incomplete");
+    expect(result.periods).toHaveLength(1);
+    expect(result.reachedThrough).toBe(end);
+    expect(result.stoppedAt).toBe(end);
+    expect(result.primitiveState[termination]).toMatchObject({ primitiveId: "P30", state: { terminated: false } });
+    expect(result.diagnostics.some(issue => issue.code === "DUPLICATE_GENERATED_OCCURRENCE")).toBe(true);
+    const fingerprint = runFunctions.createInputFingerprint({
+      runContext, openingState, model: modeledIncomeFingerprintInput(input), assumptions: { months },
+    });
+    expect(result.runMetadata).toEqual(runFunctions.createRunMetadata(runContext, fingerprint));
+  });
+
+  it("retains standalone VS4 metadata when duplicate debt service stops the first month", () => {
+    const runContext = context();
+    const compiledInput = integrated("0");
+    const input = compiledInput.liabilityInput!;
+    const loan = input.loans[0]!;
+    const key = generatedOccurrenceKey({
+      scenarioId: runContext.scenarioId, primitiveInstanceId: loan.primitiveIds.schedule,
+      scheduledAt: loan.paymentSchedule.anchor, semanticEffectType: "liability-payment",
+      economicTargetId: loan.principalLiabilityId,
+    });
+    const openingState = createAuthoritativeState({
+      ...compiledInput.reconciledOpeningState, identities: { generatedOccurrenceKeys: [key] },
+    });
+    const primitiveState = compiledInput.reconciledPrimitiveState;
+    const result = referenceLiabilityRun({ runContext, openingState, primitiveState, input, months: 1 });
+    expect(result.status).toBe("incomplete");
+    expect(result.periods).toHaveLength(0);
+    expect(result).not.toHaveProperty("reachedThrough");
+    expect(result.stoppedAt).toBe(start);
+    expect(result.state).toEqual(openingState);
+    expect(result.primitiveState).toEqual(primitiveState);
+    expect(result.diagnostics.some(issue => issue.code === "DUPLICATE_GENERATED_OCCURRENCE")).toBe(true);
+    const fingerprint = runFunctions.createInputFingerprint({
+      runContext, openingState, primitiveState, model: input, executionPlan: { months: 1 },
+    });
     expect(result.runMetadata).toEqual(runFunctions.createRunMetadata(runContext, fingerprint));
   });
 
@@ -711,7 +774,13 @@ describe("R3 reusable deterministic household kernel", () => {
       context: { runId: "reference-wage-scaling", dataClassification: "synthetic", modelCounts: {},
         executionLocation: "local_node", cacheState: "not_applicable" },
     });
-    expect(result).toEqual(runCompiledHouseholdProjection(request));
+    const optimized = runCompiledHouseholdProjection(request);
+    for (const kind of Object.keys(optimized.state.identities) as (keyof typeof optimized.state.identities)[]) {
+      const identities = result.state.identities[kind];
+      expect(Object.keys(identities), kind).toEqual(Object.keys(optimized.state.identities[kind]));
+      expect(Object.isFrozen(identities), kind).toBe(true);
+    }
+    expect(result).toEqual(optimized);
     expect(result.status).toBe("completed");
     expect(result.reachedThrough).toBe(runContext.simulationEnd);
     expect(result.periods).toHaveLength(months);
@@ -733,6 +802,7 @@ describe("R3 reusable deterministic household kernel", () => {
 
     const archivedState = canonicalSerialize(result.state);
     const cold = createAuthoritativeState(result.state);
+    expect(cold).toEqual(result.state);
     const laterObservation = instant("2026-01-01T00:00:00.000Z");
     const laterContext = createRunContext({ ...runContext, asOf: laterObservation, dataCutoff: laterObservation });
     for (const observation of [runContext, laterContext]) {
@@ -844,11 +914,14 @@ describe("R3 reusable deterministic household kernel", () => {
     expect(compiledInput.executionKernel).toBeDefined();
   });
 
-  it("preserves event eligibility and primitive commit frontiers", () => {
+  it.each([
+    { retirement: "2026-01-10", endingCash: "10" },
+    { retirement: "2026-01-20", endingCash: "110" },
+  ])("preserves event eligibility and primitive commit frontiers for retirement on $retirement", ({ retirement, endingCash }) => {
     const event = domainId("event", "93000000-0000-4000-8000-000000000070");
     const issued = compileModeledIncomeFixture(context(), 1, {
       householdId: ids.household, personId: ids.owner, accountId: ids.cash, accountType: "checking",
-      retirementBindings: [{ incomeId: ids.income, terminationEventId: event, baselineDate: "2026-01-10" }],
+      retirementBindings: [{ incomeId: ids.income, terminationEventId: event, baselineDate: retirement }],
       incomes: [{ id: ids.income, type: "salary", amount: "100", startDate: "2025-12-15" }],
     });
     const input = { ...compiled(), cashFlowInput: {
@@ -859,12 +932,44 @@ describe("R3 reusable deterministic household kernel", () => {
     const result = runCompiledHouseholdProjection({ compiled: input, runContext: context() });
     expect(result).toEqual(referenceRun({ compiled: input, runContext: context() }));
     expect(result.status).toBe("completed");
-    expect(result.state.accounts[ids.cash]!.cash.equals(money("10"))).toBe(true);
+    expect(result.state.accounts[ids.cash]!.cash.equals(money(endingCash))).toBe(true);
     const termination = result.primitiveState[issued.incomes[0]!.primitiveIds.termination!];
     expect(termination?.primitiveId).toBe("P30");
     if (termination?.primitiveId !== "P30") throw new Error("Expected committed termination");
     expect(termination.state.terminated).toBe(true);
     expect(result.state.identities.generatedOccurrenceKeys).toContain(termination.state.occurrenceId);
+  });
+
+  it("commits an expense activation without a cash occurrence and retains its identity in later periods", () => {
+    const runContext = context(2);
+    const event = domainId("event", "93000000-0000-4000-8000-000000000072");
+    const activation = primitive("73");
+    const { recurrence, growthBaseAt, growthRate } = cashFlow.incomes[0]!;
+    const fundingPolicy = integrated("0").liabilityInput!.loans[0]!.fundingPolicy;
+    const compiledInput = {
+      ...compiled(false, false, runContext, 2),
+      cashFlowInput: {
+        ...cashFlow,
+        incomes: [],
+        events: [{ id: event, targetId: ids.expense, kind: "activation" as const, effectiveAt: instant("2026-01-20T00:00:00.000Z") }],
+        expenses: [{
+          id: ids.expense, ownerId: ids.owner, baseMonthlyAmount: money("5"), start,
+          recurrence, activationEventId: event, paymentAccountId: ids.cash, payableLiabilityId: ids.payable,
+          fundingPolicy, inflationRate: growthRate, inflationBaseAt: growthBaseAt,
+          primitiveIds: { recurrence: primitive("74"), indexGrowth: primitive("75"), inflationLink: primitive("76"), activation },
+        }],
+      },
+    };
+    const request = { compiled: compiledInput, runContext };
+    const result = referenceRun(request);
+    expect(result).toEqual(runCompiledHouseholdProjection(request));
+    expect(result.status).toBe("completed");
+    expect(result.periods[0]!.transactions).toHaveLength(0);
+    expect(result.periods[1]!.cash).toEqual(money("5"));
+    const runtime = result.primitiveState[activation];
+    if (runtime?.primitiveId !== "P27") throw new Error("Expected committed activation");
+    expect(runtime.state.activated).toBe(true);
+    expect(result.state.identities.generatedOccurrenceKeys.filter(key => key === runtime.state.occurrenceId)).toHaveLength(1);
   });
 
   it.each([

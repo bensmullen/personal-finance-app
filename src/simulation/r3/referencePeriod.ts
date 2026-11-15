@@ -293,7 +293,7 @@ const registerEffectIdentities = (
   return created;
 };
 
-const occurrenceIdOf = (value: unknown): GeneratedOccurrenceKey | undefined => {
+export const occurrenceIdOf = (value: unknown): GeneratedOccurrenceKey | undefined => {
   if (typeof value !== "object" || value === null || !("occurrenceId" in value)) return undefined;
   const occurrenceId = value.occurrenceId;
   return typeof occurrenceId === "string" ? occurrenceId as GeneratedOccurrenceKey : undefined;

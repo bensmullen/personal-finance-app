@@ -70,6 +70,7 @@ import {
 } from "../run.js";
 import {
   createPrimitiveRuntimeStateStore,
+  occurrenceIdOf,
   runPeriod,
   type PeriodWork,
   type PrimitiveRuntimeStateStore,
@@ -433,6 +434,7 @@ export interface PreparedVerticalSlice2Period {
   readonly primitiveStateFrontier: Instant;
   /** Only P27/P30 entries authored by event preparation; safe to merge into shared runtime. */
   readonly eventPrimitiveTransition: PrimitiveRuntimeStateStore;
+  readonly eventOccurrenceIdentities: readonly GeneratedOccurrenceKey[];
   readonly descriptors: readonly HouseholdWorkDescriptor[];
   readonly occurrences: readonly PreparedVerticalSlice2Occurrence[];
   readonly diagnostics: readonly ValidationIssue[];
@@ -560,7 +562,9 @@ export const prepareVerticalSlice2Period = (
   }
   const ordered = withLocalOrdering(input, occurrences);
   const eventPrimitiveTransition = createPrimitiveRuntimeStateStore(Object.fromEntries(eventResult.primitiveOutputs.filter((output) => output.primitiveId === "P27" || output.primitiveId === "P30").map((output) => [output.primitiveInstanceId, eventResult.primitiveState[output.primitiveInstanceId]!])));
-  const prepared = Object.freeze({ period: Object.freeze({ ...period }), state: eventResult.closingState, primitiveState: eventResult.primitiveState, primitiveStateFrontier: subtractMilliseconds(period.end, 1), eventPrimitiveTransition, descriptors: Object.freeze(ordered.map((item) => item.descriptor)), occurrences: ordered, diagnostics: Object.freeze([...eventResult.diagnostics]), traceRefs: mergeTraceRefs(...eventResult.primitiveOutputs.filter((output) => output.effects.length > 0).map((output) => output.traceRefs)) ?? Object.freeze([]) });
+  const eventOccurrenceIdentities = Object.freeze(eventResult.primitiveOutputs.flatMap(output =>
+    output.effects.map(occurrenceIdOf).filter(id => id !== undefined)));
+  const prepared = Object.freeze({ period: Object.freeze({ ...period }), state: eventResult.closingState, primitiveState: eventResult.primitiveState, primitiveStateFrontier: subtractMilliseconds(period.end, 1), eventPrimitiveTransition, eventOccurrenceIdentities, descriptors: Object.freeze(ordered.map((item) => item.descriptor)), occurrences: ordered, diagnostics: Object.freeze([...eventResult.diagnostics]), traceRefs: mergeTraceRefs(...eventResult.primitiveOutputs.filter((output) => output.effects.length > 0).map((output) => output.traceRefs)) ?? Object.freeze([]) });
   preparedContexts.set(prepared, Object.freeze({ ...runContext }));
   preparedIncomeSources.set(prepared, new Map(input.incomes.map(stream => [stream.id, {
     reference: stream.modeledPayroll,
@@ -640,6 +644,11 @@ const runVerticalSlice2Internal = <Metadata extends Partial<Pick<VerticalSlice2R
   validateInput(request, periods, request.targetPeriods !== undefined);
   const requestedHorizon = Object.freeze({ start: periods[0]!.start, end: periods[periods.length - 1]!.end });
   const runMetadata = metadata(months);
+  const finish = (body: Omit<VerticalSlice2RunResult, "runMetadata">) => {
+    const result = Object.assign(body, runMetadata);
+    Object.freeze(result);
+    return result;
+  };
   let committedState = cloneAuthoritativeState(request.openingState);
   let committedPrimitiveState = createPrimitiveRuntimeStateStore(request.primitiveState);
   const committedPeriods: VerticalSlice2PeriodResult[] = [];
@@ -898,9 +907,8 @@ const runVerticalSlice2Internal = <Metadata extends Partial<Pick<VerticalSlice2R
     } catch (error) {
       if (!(error instanceof ValidationError)) throw error;
       const diagnostics = [...runDiagnostics, ...error.issues];
-      return Object.freeze({
+      return finish({
         status: "incomplete",
-        ...runMetadata,
         requestedHorizon,
         stoppedAt: targetPeriod.start,
         ...(committedPeriods.length === 0 ? {} : { reachedThrough: committedPeriods[committedPeriods.length - 1]!.period.end }),
@@ -913,9 +921,8 @@ const runVerticalSlice2Internal = <Metadata extends Partial<Pick<VerticalSlice2R
     }
   }
 
-  return Object.freeze({
+  return finish({
     status: "completed",
-    ...runMetadata,
     requestedHorizon,
     reachedThrough: requestedHorizon.end,
     state: committedState,
