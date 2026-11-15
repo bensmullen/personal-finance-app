@@ -36,6 +36,7 @@ import {
   applyAccountingTransactionAtomically,
   applyHouseholdDomainTransactionAtomically,
   assertAuthoritativeStateCurrency,
+  admitS4OpeningSources,
   cloneAuthoritativeState,
   registerAuthoritativeIdentity,
   type AuthoritativeState,
@@ -727,7 +728,7 @@ const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): Ver
               householdId: request.input.householdId, personId: domainId("person", stream.ownerId),
               bankAccountId: stream.depositAccountId, direction: "credit" as const, eventAt: occurrence.scheduledAt, eventId: transactionId,
             } };
-            const elected = Boolean(stream.payrollContributions?.length || stream.payrollWithholding?.length);
+            const elected = Boolean(wage?.health || stream.payrollContributions?.length || stream.payrollWithholding?.length);
             if (elected && modeledPayroll === undefined && householdWage === undefined)
               invalidInput("Elected payroll requires an authenticated salary source", `incomes.${stream.id}`);
             // Reference scheduling and gross recognition feed the common payroll domain operation.
@@ -1021,11 +1022,14 @@ const runVerticalSlice2Prepared = (request: VerticalSlice2RunInput): VerticalSli
 };
 
 /** Runs a deterministic monthly household cash-flow projection (360 months by default). */
-export const runVerticalSlice2 = (request: VerticalSlice2RunInput): VerticalSlice2RunResult =>
-  (request.months ?? 360) > 24 ? runVerticalSlice2Internal({
+export const runVerticalSlice2 = (request: VerticalSlice2RunInput): VerticalSlice2RunResult => {
+  assertRunContext(request.runContext);
+  admitS4OpeningSources(request.openingState, request.runContext);
+  return (request.months ?? 360) > 24 ? runVerticalSlice2Internal({
     runContext: request.runContext, openingState: request.openingState, input: request.input,
     ...(request.months === undefined ? {} : { months: request.months }),
     ...(request.primitiveState === undefined ? {} : { primitiveState: request.primitiveState }),
   }) : runVerticalSlice2Prepared(request);
+};
 
 export const createVerticalSlice2PrimitiveId = (value: string): PrimitiveInstanceId => domainId("primitive-instance", value);
