@@ -79,7 +79,10 @@ describe("T1A Phase A deterministic core (synthetic rules)", () => {
   });
   it("requires explicit NIIT bases and taxes the lesser of NII and MAGI excess", () => {
     const rule = taxRule(1, { niit: { rate: Ratio.parse("0.038"), threshold: money("200000") } });
-    for (const [magi, investment, expected] of [["200000", "10000", "0"], ["205000", "10000", "190"], ["220000", "10000", "380"]] as const) {
+    for (const [magi, investment, expected] of [
+      ["199999", "10000", "0"], ["200000", "10000", "0"], ["200001", "10000", "0.04"],
+      ["205000", "10000", "190"], ["220000", "10000", "380"], ["220000", "0", "0"], ["0", "0", "0"],
+    ] as const) {
       expect(calculate(taxInput({}, { modifiedAdjustedGrossIncome: money(magi), netInvestmentIncome: money(investment) }), rule).niit.equals(money(expected))).toBe(true);
     }
     expect(errorCode(() => calculate(taxInput(), rule))).toBe(issueCodes.ruleInputInvalid);
