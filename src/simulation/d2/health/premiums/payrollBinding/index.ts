@@ -1,10 +1,124 @@
-import type { AccountingTransaction } from "../../../../../accounting/index.js";
-import type { AppliedPayrollHealthWageBase, D2SettlementSourceContext, PayrollHealthSourceBinding } from "../../../../../state/index.js";
+import { createAccountingLeg, createAccountingTransaction, type AccountingTransaction } from "../../../../../accounting/index.js";
+import { failValidation, issueCodes } from "../../../../../diagnostics/index.js";
+import { domainId, type DomainId } from "../../../../../identity/index.js";
+import { sha256 } from "../../../../../rules/tax/t1b/contentIdentity.js";
+import { registerHouseholdEconomicOriginalAuthority, type AppliedPayrollHealthWageBase, type D2SettlementSourceContext,
+  type HouseholdBankEventContext, type HouseholdEconomicOriginalReference, type HouseholdEconomicWitness,
+  type HouseholdPayrollHealthEvidence, type PayrollHealthSourceBinding } from "../../../../../state/index.js";
+import { immutableConfiguration } from "../../../../r3/compiledHousehold.js";
 import { instant, type Instant } from "../../../../../time/index.js";
 import { Money } from "../../../../../values/index.js";
 import type { PayrollWithholdingElection } from "../../../../tax/contracts.js";
 import { canonicalSerialize } from "../../../../run.js";
 import { proposePremiums, type PremiumCoverage, type PremiumProposal, type PremiumRequest, type PremiumSource } from "../index.js";
+
+export interface HouseholdPayrollHealthSource {
+  readonly version: "household-payroll-health-source/v1";
+  readonly publisherId: string;
+  readonly sourceId: string;
+}
+
+export interface HouseholdPayrollHealthOriginal {
+  readonly revisionId: string;
+  readonly status: "active" | "withdrawn";
+  readonly expenseId: DomainId<"expense">;
+  readonly event: Pick<HouseholdBankEventContext, "runId" | "eventId" | "eventAt" | "asOf" | "dataCutoff">;
+  readonly payroll: OriginalPayrollPremiumFacts;
+  readonly premiumRequest: PremiumRequest;
+  readonly legalBases: readonly AppliedPayrollHealthWageBase[];
+  /** The independently published final journal, including the premium. */
+  readonly transaction: AccountingTransaction;
+}
+
+export interface HouseholdPayrollHealthProvider {
+  readonly publisherId: string;
+  readonly readActiveOriginal: (query: {
+    readonly sourceId: string;
+    readonly context: HouseholdBankEventContext;
+  }) => {
+    readonly context: HouseholdBankEventContext;
+    readonly completeThrough: Instant;
+    readonly original: HouseholdPayrollHealthOriginal;
+  } | undefined;
+}
+
+const householdProviders = new Map<string, HouseholdPayrollHealthProvider>();
+const incompleteHouseholdHealth = (): never => failValidation({
+  severity: "error", code: issueCodes.ruleInputInvalid, entityType: "payroll_health",
+  message: "HOUSEHOLD_PAYROLL_HEALTH_SOURCE_INCOMPLETE",
+});
+
+/** The independent publisher selects its active revision at the queried cutoff.
+ * The archived digest binds that revision's exact occurrence data, including
+ * legal bases, without storing the quote or legal inputs on each posting. */
+export function qualifyHouseholdPayrollHealth(source: HouseholdPayrollHealthSource, context: HouseholdBankEventContext) {
+  try {
+    const provider = householdProviders.get(source.publisherId);
+    const response = provider?.readActiveOriginal(immutableConfiguration({ sourceId: source.sourceId, context }));
+    if (source.version !== "household-payroll-health-source/v1" || !response ||
+        !same(response.context, context) || response.completeThrough !== context.dataCutoff)
+      return incompleteHouseholdHealth();
+    const original = immutableConfiguration(response.original);
+    const { payroll, premiumRequest, legalBases, transaction } = original;
+    const binding = payroll.source;
+    if (original.status !== "active" || !text(original.revisionId) || binding.sourceId !== source.sourceId ||
+        original.event.runId !== context.runId || original.event.eventId !== context.eventId ||
+        original.event.eventAt !== context.eventAt ||
+        binding.householdId !== context.householdId || binding.ownerId !== context.personId ||
+        binding.bankAccountId !== context.bankAccountId || binding.dueAt !== context.eventAt ||
+        binding.transactionId !== context.eventId || context.direction !== "credit")
+      return incompleteHouseholdHealth();
+    const { intents } = inspectPayrollPremiumBindings({
+      context, proposals: proposePremiums(premiumRequest).proposals, bindings: [binding],
+      originals: { premiumRequest: () => premiumRequest, payroll: () => payroll, legalBases: () => legalBases },
+    }, true);
+    const intent = intents[0];
+    if (intents.length !== 1 || !intent || intent.legalBaseCandidate.status !== "documented_conditional")
+      return incompleteHouseholdHealth();
+    const employeeAmount = intent.proposedCashPayDeduction.amount;
+    const expenseId = domainId("expense", original.expenseId);
+    const cash = payroll.transaction.legs.find(leg => leg.type === "cash");
+    const net = (cash?.amount ?? Money.zero(payroll.gross.currency)).minus(employeeAmount);
+    if (net.isNegative()) return incompleteHouseholdHealth();
+    const expected = createAccountingTransaction({ ...payroll.transaction, legs: [
+      ...payroll.transaction.legs.filter(leg => leg.type === "asset"),
+      ...(employeeAmount.isZero() ? [] : [createAccountingLeg({ type: "expense", posting: "debit", amount: employeeAmount, entityId: expenseId })]),
+      ...(cash && net.isPositive() ? [createAccountingLeg({ ...cash, amount: net })] : []),
+      ...payroll.transaction.legs.filter(leg => leg.type === "income"),
+    ] });
+    if (!same(expected, transaction)) return incompleteHouseholdHealth();
+    const reference: HouseholdEconomicOriginalReference = {
+      version: "household-economic-original/v1", family: "payroll_health", publisherId: source.publisherId,
+      sourceId: source.sourceId, revisionId: original.revisionId, digest: `sha256:${sha256(canonicalSerialize(original))}`,
+    };
+    const witness: HouseholdEconomicWitness = { original: reference,
+      source: { kind: "organization", id: binding.employerId }, payer: { kind: "person", id: binding.ownerId },
+      beneficiary: binding.ownerId };
+    const payrollHealth: HouseholdPayrollHealthEvidence = { memberIds: intent.memberIds, deduction: {
+      version: "payroll-health-deduction/v1", source: binding, at: binding.dueAt, gross: payroll.gross,
+      employeeAmount, employerAmount: intent.employerSubsidy, expenseId, contributions: payroll.contributions,
+      withholding: payroll.withholding.map(({ election, amount }) => ({ electionId: election.id, jurisdiction: election.jurisdiction, amount })),
+      deductionInventory: payroll.deductionInventory, appliedJurisdictionWageBases: intent.legalBaseCandidate.appliedBases,
+    } };
+    return immutableConfiguration({ witness, transaction, payrollHealth, context, payrollHealthCommitCutoff: {
+      asOf: original.event.asOf, dataCutoff: original.event.dataCutoff,
+    }, requiredFamilies: ["wage", "payroll_health"] as const });
+  } catch {
+    return incompleteHouseholdHealth();
+  }
+}
+
+export function registerHouseholdPayrollHealthProvider(provider: HouseholdPayrollHealthProvider): void {
+  const { publisherId } = provider;
+  registerHouseholdEconomicOriginalAuthority("payroll_health", publisherId, { qualify: (reference, context) => {
+    try {
+      const result = qualifyHouseholdPayrollHealth({ version: "household-payroll-health-source/v1",
+        publisherId, sourceId: reference.sourceId }, context);
+      return same(reference, result.witness.original) ? result : undefined;
+    } catch { return undefined; }
+  } });
+  householdProviders.set(publisherId, Object.freeze({ publisherId, readActiveOriginal: provider.readActiveOriginal.bind(provider) }));
+}
 
 export interface PayrollPremiumSourceWindow {
   readonly sourceId: string;
@@ -153,6 +267,15 @@ export function proposePayrollPremiumBindings(input: {
   readonly bindings: readonly PayrollHealthSourceBinding[];
   readonly originals: PayrollPremiumOriginals;
 }) {
+  return inspectPayrollPremiumBindings(input);
+}
+
+function inspectPayrollPremiumBindings(input: {
+  readonly context: D2SettlementSourceContext;
+  readonly proposals: readonly PremiumProposal[];
+  readonly bindings: readonly PayrollHealthSourceBinding[];
+  readonly originals: PayrollPremiumOriginals;
+}, householdBank = false) {
   instant(input.context.asOf); instant(input.context.dataCutoff);
   const context = snapshot(input.context);
   const diagnostics: PayrollPremiumDiagnostic[] = [];
@@ -206,7 +329,8 @@ export function proposePayrollPremiumBindings(input: {
       ![s.sourceId, s.sourceVersion, s.householdId, s.ownerId, s.incomeId, s.employerId, s.occurrenceId, s.transactionId,
         s.bankAccountId, s.coverageId, s.planId, s.electionId, s.claimId].every(text) ||
       s.householdId !== p.householdId || s.ownerId !== p.payerId || s.employerId !== p.sponsorId ||
-      s.coverageId !== p.coverageId || s.planId !== p.planId || f.employmentId !== route.employmentId || f.bankOwnerId !== s.ownerId ||
+      s.coverageId !== p.coverageId || s.planId !== p.planId || f.employmentId !== route.employmentId ||
+      f.bankOwnerId !== (householdBank ? s.householdId : s.ownerId) ||
       s.transactionId !== `tx:recognition:income:${s.incomeId}:${s.dueAt}`) {
       reject("ORIGINAL_PAYROLL_IDENTITY_MISMATCH", "exact original wage/source, household, owner, employing sponsor, job and owned bank"); continue;
     }

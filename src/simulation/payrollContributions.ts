@@ -14,6 +14,7 @@ import { applyHouseholdDomainTransactionAtomically, type HouseholdBankEventConte
 import { qualifyHouseholdWage, type HouseholdWageSourceRef, type WageStreamOriginal } from "./d2/integration/householdWages/index.js";
 import type { Period } from "../time/index.js";
 import { assertModeledPayrollOccurrence, type ModeledPayrollOccurrence } from "./d2/integration/householdWages/modeledPayroll.js";
+import { qualifyHouseholdPayrollHealth } from "./d2/health/premiums/payrollBinding/index.js";
 
 export interface PayrollContributionAllocation {
   readonly id: string;
@@ -67,8 +68,13 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
     opening.d2PostedTransactions?.[accountingTransactionId(input.id)]?.registration.kind === "payroll_health_deduction")) return invalid("HOUSEHOLD_PAYROLL_HEALTH_REQUIRES_S4");
   const healthQualification = input.healthPremium === undefined ? undefined : qualifyPayrollHealthSource(input.healthPremium.source, input.healthPremium.context);
   if (healthQualification?.status === "incomplete") return invalid(`Payroll health source incomplete: ${healthQualification.reason}`);
-  const health = healthQualification?.deduction;
-  if (health !== undefined && (canonicalSerialize(health.source) !== canonicalSerialize(input.healthPremium!.source) ||
+  const compositeSource = input.householdWage?.source.health;
+  const composite = compositeSource === undefined ? undefined
+    : qualifyHouseholdPayrollHealth(compositeSource, input.householdWage!.context);
+  const health = composite?.payrollHealth.deduction ?? healthQualification?.deduction;
+  if (composite && input.allocations.some(allocation => allocation.policy.personId !== input.ownerId))
+    return invalid("Composite payroll contributions must belong to the authenticated Person");
+  if (health !== undefined && (input.healthPremium !== undefined && canonicalSerialize(health.source) !== canonicalSerialize(input.healthPremium.source) ||
       health.source.transactionId !== input.id || health.source.incomeId !== input.incomeId || health.source.ownerId !== input.ownerId ||
       health.source.occurrenceId !== input.occurrenceId || health.source.bankAccountId !== input.depositAccountId ||
       health.at !== input.at || !health.gross.equals(input.gross))) return invalid("Payroll health must bind the exact original wage occurrence");
@@ -166,6 +172,8 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
         stream.payrollTaxCreditAccountId !== input.taxCreditAccountId)
       return invalid("Household wage elections differ from the original paycheck");
     const evidence = qualifyHouseholdWage(source, context, { stream, incomeId: input.incomeId, occurrenceId: input.occurrenceId, period, gross: input.gross, transaction });
+    if (composite !== undefined && canonicalSerialize(evidence.originals[1]) !== canonicalSerialize(composite.witness))
+      return invalid("Payroll health source changed during execution");
     applyHouseholdDomainTransactionAtomically(candidate, transaction, evidence);
   }
   else if (health === undefined) applyAccountingTransactionAtomically(candidate, transaction);
@@ -185,7 +193,8 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
     candidate = posted.state; transactions.push(posted.transaction);
   }
   const withholdingEvidence: PayrollWithholdingEvidence | undefined = elections.length === 0 && health === undefined ? undefined : {
-    ...(health === undefined ? {} : { healthDeduction: payrollHealthPostingEvidence(candidate, transaction.id, input.healthPremium!.context)! }),
+    ...(health === undefined ? {} : { healthDeduction: composite?.payrollHealth.deduction ??
+      payrollHealthPostingEvidence(candidate, transaction.id, input.healthPremium!.context)! }),
     incomeId: input.incomeId, ownerId: input.ownerId!, employerId: health?.source.employerId ?? elections[0]!.employerId, at: input.at, occurrenceId: input.occurrenceId!, transactionId: transaction.id,
     gross: input.gross, employeeContributions: employee, takeHomeCash: net, depositAccountId: input.depositAccountId, credits: Object.freeze(credits),
   };

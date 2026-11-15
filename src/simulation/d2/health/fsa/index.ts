@@ -69,7 +69,7 @@ export interface FsaReceipt extends FsaIdentity {
   readonly payment: { readonly status: "unpaid" } | { readonly status: "paid";
     readonly paidAt: CivilDate; readonly amount: Money; readonly paymentRef: string };
   readonly destination: { readonly accountId: string; readonly ownerId: string; readonly householdId: string;
-    readonly kind: "bank_cash"; readonly evidence: FsaSource } | null;
+    readonly kind: "bank_cash"; readonly evidence: FsaSource; readonly householdBank?: true } | null;
   readonly evidence: FsaSource | null;
   readonly decision: { readonly kind: "eligible" | "partial" | "denied";
     readonly eligibleAmount: Money; readonly decidedAt: CivilDate; readonly evidence: FsaSource } | null;
@@ -392,7 +392,8 @@ export const evaluateFsa = (request: FsaRequest): FsaResult => {
     if (!r.reimbursement || r.reimbursement.status === "unsupported_reversal" || r.expenseType !== "qualified_medical_service"
       || !text(r.payeeId) || !point(r.evidence, "health_fsa_receipt", r.proofId, r.incurredAt, at)
       || !r.decision || !point(r.decision.evidence, "health_fsa_adjudication", r.proofId, r.decision.decidedAt, at)
-      || !dest || dest.kind !== "bank_cash" || !text(dest.accountId) || dest.ownerId !== p.personId
+      || !dest || dest.kind !== "bank_cash" || !text(dest.accountId) ||
+      (dest.ownerId !== p.personId && !(dest.ownerId === p.householdId && dest.householdBank === true))
       || dest.householdId !== p.householdId || !point(dest.evidence, "health_fsa_destination", dest.accountId, r.submittedAt, at)) {
       fail("RECEIPT_EVIDENCE_REQUIRED", "qualified proof, decision, reimbursement status and employee destination evidence"); continue;
     }

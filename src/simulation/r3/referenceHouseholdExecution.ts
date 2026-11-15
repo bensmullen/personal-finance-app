@@ -15,6 +15,7 @@ import {
 } from "../../lineage/index.js";
 import {
   assertAuthoritativeStateCurrency,
+  admitS4OpeningSources,
   cloneAuthoritativeState,
   createAuthoritativeIdentityRegistry,
   validateAuthoritativeState,
@@ -369,6 +370,7 @@ const runCompiledHouseholdProjectionInternal = (
     compiled.reconciledOpeningState,
     runContext.baseCurrency,
   );
+  admitS4OpeningSources(compiled.reconciledOpeningState, runContext);
   let state = cloneAuthoritativeState(compiled.reconciledOpeningState);
   let primitiveState = createPrimitiveRuntimeStateStore(
     compiled.reconciledPrimitiveState,

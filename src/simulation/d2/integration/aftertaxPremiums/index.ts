@@ -1,7 +1,9 @@
+import { accountingTransactionId } from "../../../../accounting/index.js";
 import { domainId } from "../../../../identity/index.js";
 import { ValidationError } from "../../../../diagnostics/index.js";
 import { sha256 } from "../../../../rules/tax/t1b/contentIdentity.js";
-import type { HouseholdBankEventContext, HouseholdEconomicOriginalReference, PayrollHealthSourceBinding } from "../../../../state/index.js";
+import { householdPayrollHealthPostingEvidence, qualifyPayrollHealthSource, requalifyPayrollHealthPosting, type HouseholdBankEventContext,
+  type HouseholdEconomicOriginalReference, type PayrollHealthSourceBinding } from "../../../../state/index.js";
 import { createFundingPolicy, fundingPolicyId } from "../../../../funding/index.js";
 import { calculationTraceId, calculationTraceRef } from "../../../../lineage/index.js";
 import { civilDate, instant, type CivilDate } from "../../../../time/index.js";
@@ -155,10 +157,10 @@ function premiumGuard(input: PremiumGuardBinding): HouseholdKernelParticipant {
     try { return readPremiumOriginal(binding.source.original, binding.context); }
     catch (error) { return reject(error instanceof Error ? error.message : "PREMIUM_ORIGINAL_UNAVAILABLE"); }
   };
-  const inspect = (s: PayrollHealthSourceBinding) => {
+  const inspect = (s: PayrollHealthSourceBinding, members: readonly string[] = [s.ownerId]) => {
     const d = original(), p = d.confirmation.proposal;
     if (s.householdId === p.householdId && (s.planId === p.planId || s.coverageId === p.coverageId)
-      && (s.ownerId === p.payerId || p.memberIds.includes(s.ownerId))
+      && (s.ownerId === p.payerId || members.some(member => p.memberIds.includes(member)))
       && s.periodStart < d.original.period.end && s.periodEnd > d.original.period.start)
       reject("DUPLICATE_PREMIUM_PAYROLL_ROUTE");
   };
@@ -168,14 +170,45 @@ function premiumGuard(input: PremiumGuardBinding): HouseholdKernelParticipant {
         if (context.runId !== binding.context.runId || context.asOf !== binding.context.asOf || context.dataCutoff !== binding.context.dataCutoff)
           reject("PREMIUM_RUN_CONTEXT_CHANGED");
         original();
-        for (const proof of Object.values(opening.state.d2PostedTransactions ?? {}))
-          if (proof.registration.kind === "payroll_health_deduction") inspect(proof.registration.deduction.source);
+        for (const proof of Object.values(opening.state.d2PostedTransactions ?? {})) {
+          if (proof.registration.kind === "payroll_health_deduction") {
+            inspect(requalifyPayrollHealthPosting(proof, context).source);
+            continue;
+          }
+          const composite = householdPayrollHealthPostingEvidence(proof, context);
+          if (composite) inspect(composite.deduction.source, composite.memberIds);
+        }
       }
       return { id, operations: [] };
     },
-    observe: (_descriptor, facts, runtime) => {
-      for (const row of facts.cash?.payrollWithholding ?? facts.summary?.cash?.payrollWithholding ?? [])
-        if (row.healthDeduction) inspect(row.healthDeduction.source);
+    observe: (_descriptor, facts, runtime, observation) => {
+      for (const row of facts.cash?.payrollWithholding ?? facts.summary?.cash?.payrollWithholding ?? []) {
+        if (!row.healthDeduction) continue;
+        if (!observation) {
+          // Legacy direct callers can still identify an overlap through the
+          // signed publisher original. Composite evidence needs its posted proof.
+          const legacy = qualifyPayrollHealthSource(row.healthDeduction.source, binding.context);
+          if (legacy.status === "qualified" && legacy.transaction.id === row.healthDeduction.source.transactionId
+            && same(legacy.deduction, row.healthDeduction)) inspect(legacy.deduction.source);
+          return reject("PAYROLL_POSTING_UNAVAILABLE");
+        }
+        if (!nonempty(row.transactionId)) return reject("PAYROLL_POSTING_UNAVAILABLE");
+        const transactionId = accountingTransactionId(row.transactionId);
+        const proof = observation.postingProofs?.[transactionId];
+        if (!proof || proof.transaction.id !== transactionId || proof.transaction.type !== "payroll_income"
+          || proof.transaction.date !== row.at || proof.registration.role !== "original"
+          || proof.registration.operationId !== transactionId) return reject("PAYROLL_POSTING_UNAVAILABLE");
+        const composite = householdPayrollHealthPostingEvidence(proof, observation.context);
+        const deduction = composite?.deduction ?? (proof.registration.kind === "payroll_health_deduction"
+          ? requalifyPayrollHealthPosting(proof, observation.context) : undefined);
+        if (!deduction || !same(deduction, row.healthDeduction) || deduction.source.transactionId !== transactionId
+          || deduction.source.incomeId !== row.incomeId || deduction.source.ownerId !== row.ownerId
+          || deduction.source.employerId !== row.employerId || deduction.source.occurrenceId !== row.occurrenceId
+          || deduction.source.bankAccountId !== row.depositAccountId || deduction.source.householdId !== proof.registration.householdId
+          || deduction.source.ownerId !== proof.registration.personId || deduction.source.bankAccountId !== proof.registration.bankAccountId)
+          return reject("PAYROLL_HEALTH_ORIGINAL_UNAVAILABLE");
+        inspect(deduction.source, composite?.memberIds);
+      }
       return runtime;
     },
   } satisfies HouseholdKernelParticipant);

@@ -1002,7 +1002,14 @@ export const prepareVerticalSlice3Period = (
         parameters: {
           returnBasis: item.returnBasis,
           cashFlowTiming: "end_of_period",
-          postingRounding: item.priceRounding,
+          postingRounding: new RoundingPolicy(
+            Math.max(
+              18,
+              item.priceRounding.scale,
+              currentState.positions[item.targetPositionId]!.price.amount.toString().split(".")[1]?.length ?? 0,
+            ),
+            item.priceRounding.mode,
+          ),
         },
         context: {
           evaluationInstant: closeAt(period),
