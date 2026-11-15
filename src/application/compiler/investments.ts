@@ -1390,9 +1390,11 @@ export const compileInvestments = (
       );
     }
     const accountId = String(investment.account_id).toLowerCase();
+    const targetPositionId = domainId("position", id);
+    const openingQuote = positions[targetPositionId]!.price.amount.toString();
     returns.push(
       Object.freeze({
-        targetPositionId: domainId("position", id),
+        targetPositionId,
         accountId: domainId("account", accountId),
         rate,
         returnBasis: Object.freeze({
@@ -1401,9 +1403,9 @@ export const compileInvestments = (
           calculationRounding: new RoundingPolicy(18, "half_even"),
         }),
         timing: "end_of_period_on_opening_quantity",
-        priceRounding: RoundingPolicy.currency(
-          currency.minorUnitScale,
-          "half_up",
+        priceRounding: new RoundingPolicy(
+          Math.max(18, openingQuote.split(".")[1]?.length ?? 0),
+          "half_even",
         ),
         primitiveIds: Object.freeze({
           compounding: domainId("primitive-instance", primitiveId),

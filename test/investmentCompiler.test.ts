@@ -9,6 +9,7 @@ import {
   type PersonalDraft,
 } from "../src/application/index.js";
 import { domainId } from "../src/identity/index.js";
+import { runVerticalSlice3 as runReferenceVerticalSlice3 } from "../src/simulation/r3/referenceVerticalSlice3.js";
 import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import {
   runVerticalSlice3,
@@ -157,6 +158,37 @@ const purchase = {
 };
 
 describe("canonical investment compiler", () => {
+  it.each([
+    { quote: "0.004", marketValue: "4", scale: 18 },
+    { quote: "0.0040000000000000001", marketValue: "4.0000000000000001", scale: 19 },
+  ])("preserves an authored unit quote of $quote in both evaluators", ({ quote, marketValue, scale }) => {
+    const model = fixture(draft => {
+      Object.assign(draft.objects.Investment![0]!, { quantity: "1000", price: quote, market_value: marketValue });
+      draft.objects.Assumption![0]!.value = "0";
+    });
+    const compiled = compileInvestments(model, request());
+    expect(compiled.status).toBe("compiled");
+    if (compiled.status !== "compiled") return;
+    const { input, openingState, primitiveState } = compiled.value;
+    const position = openingState.positions[ids.investment]!;
+    expect(position.price.equals(money(quote))).toBe(true);
+    expect(position.carryingValue.equals(money(marketValue))).toBe(true);
+    expect(position.quantity.equals(Quantity.parse("1000", SHARE))).toBe(true);
+    expect(input.returns[0]!.priceRounding).toMatchObject({ scale, mode: "half_even" });
+    expect(input.returns[0]!.rate.value.isZero()).toBe(true);
+    const executable = { input, openingState, primitiveState, runContext: context(), months: 2 };
+    for (const result of [runVerticalSlice3(executable), runReferenceVerticalSlice3(executable)]) {
+      expect(result.status).toBe("completed");
+      expect(result.periods).toHaveLength(2);
+      expect(result.state.positions[ids.investment]!.price.equals(money(quote))).toBe(true);
+      for (const period of result.periods) {
+        expect(period.portfolioValue.equals(money(marketValue))).toBe(true);
+        expect(period.unrealizedGain.isZero()).toBe(true);
+        expect(period.traceRefs.flatMap(ref => ref.assumptionIds ?? [])).toContain(ids.assumption);
+      }
+    }
+  });
+
   it("compiles one economic position without account double counting and retains P23 assumption lineage", () => {
     const compiled = compileInvestments(fixture(), request());
     expect(compiled.status).toBe("compiled");
