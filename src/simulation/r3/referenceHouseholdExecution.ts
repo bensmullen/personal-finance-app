@@ -75,6 +75,7 @@ import type {
   VerticalSlice4LiquidityShortfall,
   VerticalSlice4PeriodResult,
 } from "../verticalSlice4.js";
+import { firstDependencyOrder } from "./ordering.js";
 
 export interface HouseholdProjectionPeriodResult {
   readonly period: Period;
@@ -507,7 +508,10 @@ const runCompiledHouseholdProjectionInternal = (
   const diagnostics: ValidationIssue[] = [];
   for (const period of periods)
     try {
-      let candidateState = cloneAuthoritativeState(state);
+      let candidateState = performance.measure("engine.period_fork", () => {
+        performance.counters({ referenceMonthForks: 1 });
+        return cloneAuthoritativeState(state);
+      });
       let candidatePrimitiveState =
         createPrimitiveRuntimeStateStore(primitiveState);
       let liability: VerticalSlice4PeriodResult | undefined;
@@ -566,7 +570,10 @@ const runCompiledHouseholdProjectionInternal = (
         opening: AuthoritativeState,
         openingPrimitiveState: PrimitiveRuntimeStateStore,
       ): InstantExecution => {
-        let nextState = cloneAuthoritativeState(opening);
+        let nextState = performance.measure("engine.period_fork", () => {
+          performance.counters({ referenceInstantForks: 1 });
+          return cloneAuthoritativeState(opening);
+        });
         let nextPrimitiveState = createPrimitiveRuntimeStateStore(
           openingPrimitiveState,
         );
@@ -703,7 +710,8 @@ const runCompiledHouseholdProjectionInternal = (
               ...prepared.cash!.eventPrimitiveTransition,
             },
           );
-          candidateState = mergeEventPreparationIdentities(candidateState, prepared.cash!);
+          candidateState = performance.measure("engine.period_fork", () =>
+            mergeEventPreparationIdentities(candidateState, prepared.cash!));
           eventRuntimeCommitted = true;
         }
         const sameInstant = scheduled.value.descriptors.filter(
@@ -778,8 +786,9 @@ const runCompiledHouseholdProjectionInternal = (
               candidatePrimitiveState,
             ),
           ));
-          const signatures = [...new Set(previews.map(outcomeSignature))];
-          if (signatures.length > 1) {
+          const signatures = performance.measure("engine.schedule_contention", () =>
+            new Set(previews.map(outcomeSignature)));
+          if (signatures.size > 1) {
             const policy = scheduled.value.policy;
             const policyEdges =
               policy === undefined
@@ -828,7 +837,8 @@ const runCompiledHouseholdProjectionInternal = (
             ));
             if (
               policy === undefined ||
-              new Set(constrainedPreviews.map(outcomeSignature)).size > 1
+              performance.measure("engine.schedule_contention", () =>
+                new Set(constrainedPreviews.map(outcomeSignature)).size > 1)
             ) {
               const policyText =
                 policy === undefined
@@ -861,14 +871,12 @@ const runCompiledHouseholdProjectionInternal = (
               });
           }
         }
-        const finalOrder = performance.measure("engine.schedule_contention", () => linearizations(
-          sameInstant,
-          resolvedEdges.filter(
-            (edge) =>
-              sameInstant.some((item) => item.id === edge.before) &&
-              sameInstant.some((item) => item.id === edge.after),
-          ),
-        ))[0];
+        // The final execution used only the lexical first complete order.
+        // Contention previews above still compare every admissible outcome.
+        const finalOrder = performance.measure("engine.schedule_contention", () => {
+          performance.counters({ referenceFinalOrderDescriptors: sameInstant.length });
+          return firstDependencyOrder(sameInstant, resolvedEdges);
+        });
         if (finalOrder === undefined)
           throw new ValidationError({
             severity: "error",
@@ -899,7 +907,8 @@ const runCompiledHouseholdProjectionInternal = (
             ...prepared.cash!.eventPrimitiveTransition,
           },
         );
-        candidateState = mergeEventPreparationIdentities(candidateState, prepared.cash!);
+        candidateState = performance.measure("engine.period_fork", () =>
+          mergeEventPreparationIdentities(candidateState, prepared.cash!));
       }
       performance.measure("engine.trace_result", () => {
       if (liabilityPeriods.length > 0) {
@@ -1010,12 +1019,11 @@ const runCompiledHouseholdProjectionInternal = (
         });
       }
       });
-      validateAuthoritativeState(candidateState);
-      assertAuthoritativeStateCurrency(candidateState, runContext.baseCurrency);
-      assertPrimitiveRuntimeStateConsistent(
-        candidatePrimitiveState,
-        candidateState,
-      );
+      performance.measure("engine.validate_commit", () => {
+        validateAuthoritativeState(candidateState);
+        assertAuthoritativeStateCurrency(candidateState, runContext.baseCurrency);
+        assertPrimitiveRuntimeStateConsistent(candidatePrimitiveState, candidateState);
+      });
       const transactions = performance.measure("engine.trace_result", () => Object.freeze(
         [
           ...cashPeriods.flatMap((item) => item.transactions),

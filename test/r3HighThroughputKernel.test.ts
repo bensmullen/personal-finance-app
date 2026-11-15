@@ -23,6 +23,7 @@ import { createObligation, executionSettlementHistory, appendSettlementIdentity,
 import { instant } from "../src/time/index.js";
 import { Quantity, Rate, RoundingPolicy, SHARE, USD, money, rateConvention, ratePeriod } from "../src/values/index.js";
 import { authorModeledIncomeFixture, compileModeledIncomeFixture } from "./fixtures/modeledIncome.js";
+import { employerWage } from "./fixtures/employerWage.js";
 import { patchPersonalObject } from "../src/application/personalMvp.js";
 
 const ids = {
@@ -616,6 +617,66 @@ describe("R3 reusable deterministic household kernel", () => {
       expect(actual).toEqual(reference);
       expect(actual.status).toBe("completed");
     }), { numRuns: 8, seed: 53 });
+  });
+
+  it.each([2, 4])("preserves each signed wage and the archived source checks over %i periods", months => {
+    const runContext = createRunContext({
+      ...context(),
+      simulationEnd: instant(months === 2 ? "2026-03-01T00:00:00.000Z" : "2026-05-01T00:00:00.000Z"),
+    });
+    const signed = employerWage(runContext, {
+      householdId: ids.household, personId: ids.owner, incomeId: ids.income, bankAccountId: ids.cash,
+      employerId: "r3-reference-scaling-employer", firstPayday: "2026-01-15", gross: "100",
+    });
+    const input = {
+      ...compiled(false, false, runContext, months),
+      reconciledOpeningState: createAuthoritativeState({
+        ...opening(),
+        accounts: { [ids.cash]: { id: ids.cash, kind: "checking", ownerId: ids.household, cash: money("10") } },
+      }),
+      cashFlowInput: { ...cashFlow, incomes: [signed.income] },
+    };
+    const request = { compiled: input, runContext };
+    const registry = new PerformanceRegistry();
+    let tick = 0;
+    const result = referenceRun(request, {
+      clock: { now: () => tick++ }, sink: registry,
+      context: { runId: "reference-wage-scaling", dataClassification: "synthetic", modelCounts: {},
+        executionLocation: "local_node", cacheState: "not_applicable" },
+    });
+    expect(result).toEqual(runCompiledHouseholdProjection(request));
+    expect(result.status).toBe("completed");
+    expect(result.reachedThrough).toBe(runContext.simulationEnd);
+    expect(result.periods).toHaveLength(months);
+    expect(registry.latest("engine.period_fork")?.resources?.structuralCounters).toMatchObject({
+      referenceMonthForks: months, referenceInstantForks: months, referenceFinalOrderDescriptors: months,
+    });
+    const proofs = result.state.d2PostedTransactions!;
+    expect(Object.keys(proofs)).toHaveLength(months);
+    for (const [index, row] of result.periods.entries()) {
+      const original = signed.originalAt(row.period);
+      expect(row.transactions).toEqual([original.transaction]);
+      expect(row.cash).toEqual(money(String(110 + index * 100)));
+      expect(proofs[original.transaction.id]!.transaction).toEqual(original.transaction);
+    }
+
+    const archivedState = canonicalSerialize(result.state);
+    const fromArchive = {
+      ...request, compiled: { ...input, reconciledOpeningState: result.state },
+    };
+    const laterObservation = instant("2026-01-01T00:00:00.000Z");
+    expect(() => referenceRun({
+      ...fromArchive,
+      runContext: createRunContext({ ...runContext, asOf: laterObservation, dataCutoff: laterObservation }),
+    })).toThrow(ValidationError);
+
+    signed.source.mode = "withdrawn";
+    try {
+      expect(() => referenceRun(fromArchive)).toThrow(ValidationError);
+      expect(canonicalSerialize(result.state)).toBe(archivedState);
+    } finally {
+      signed.source.mode = "available";
+    }
   });
 
   it("matches a bounded Golden Household with all supported domains", () => {
