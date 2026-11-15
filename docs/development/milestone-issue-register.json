@@ -87,11 +87,12 @@
     },
     "FRAMEWORK_RELIABILITY": {
       "stage": "Engineering development-framework reliability",
-      "blocking_transition": "The merged #218/#231 framework preflight and Python compatibility remain complete; require #249's separate closed-session and worktree-recovery hook self-tests and selected green CI before declaring FRAMEWORK_RELIABILITY complete. No U1/D1/D2/R11 product blocking edge.",
+      "blocking_transition": "Engineering framework reliability now also includes #322's reviewed no-phantom-active-receipt/first-writer fencing and stale canonical crash-recovery fix, independently tested and merged before that engineering reliability gate is declared complete. Earlier #218/#231/#249 remain historical accepted gates. #322 is independent of U1/D1/D2/R11 product release gates and does not block #309 recovery/implementation.",
       "required_issue_numbers": [
         218,
         231,
-        249
+        249,
+        322
       ]
     },
     "CI_OPTIMIZATION": {
@@ -122,7 +123,7 @@
     },
     "FINANCIAL_AUDIT_REPRO": {
       "stage": "Phase 1 confirmed financial-defect reproduction and PM-approved bounded repairs",
-      "blocking_transition": "Independently close reproduction review, carry approved #309 and #310 financial engine repairs to ordinary passing regression tests and selected exact-head CI, and retain #308's NIIT finding pending separate PM tax repair authorization. This is an investigation/repair queue, not a new automatic D2/U1/R5 closeout gate. Temporary it.fails tests must not merge unchanged.",
+      "blocking_transition": "Complete and independently audit three confirmed financial defect repairs on original issues #308 (approved 2026-11-14), #309 and #310 with exact-head CI, supported original sources, normal passing regression tests (no merged temporary it.fails), and financial replay/negative semantics as applicable. Non-D2-blocking audit/repair queue; #149 and #120 remain separate mandatory combined acceptance gates.",
       "required_issue_numbers": [
         308,
         309,
@@ -131,9 +132,10 @@
     },
     "D2_SOURCE_FEASIBILITY_FRAMEWORK": {
       "stage": "D2-D S2 manual forecast feasibility/reference parity framework companion",
-      "blocking_transition": "Run and independently validate manual exact optimized/reference parity after #277 publishes a stable source-qualified issuer API and before claiming the associated D2 manual feasibility evidence. This is not a Codex start authorization, a replacement for D2 #149, or a new product-scope decision.",
+      "blocking_transition": "After D2 S2 #277 issuer merge, independently repair and audit frozen-reference long-horizon execution under separate #326 (preserving pinned independent financial oracle) before declaring #306 full 8/20/120/360/649 manual optimized/reference parity. #326 is a bounded performance prerequisite, not permission to change financial semantics, tax source authority, the 120s/2048MiB budget, D2 #149 integration/UAT, or R5 gating.",
       "required_issue_numbers": [
-        306
+        306,
+        326
       ]
     },
     "T1A_DEFERRED_PORTABLE_INTEREST_REPLAY": {
@@ -856,6 +858,20 @@
       "scope": "Independent merged-baseline test-suite oracle strength, negative-branch and provenance/replay coverage matrix and proposed missing tests without source/test changes."
     },
     {
+      "issue_number": 306,
+      "owner_stage": "framework-d2-s2-manual-feasibility",
+      "blocking_gate": "D2_SOURCE_FEASIBILITY_FRAMEWORK",
+      "depends_on": [
+        277
+      ],
+      "spec_requirement_ids": [
+        "PFA-DET-016",
+        "PFA-DET-023",
+        "PFA-PERF-019"
+      ],
+      "scope": "Protected #306 manual source-qualified application-repeat plus optimized/frozen-reference parity is green in ordinary CI but heavy #16 timed out during independent frozen reference at 120 months; 360/649 unmeasured. PM approved distinct #326 reference-only performance prerequisite. Original three-path #306 framework harness is unchanged; #306 resumes validation only after independent #326 PR merges. No relaxation of economic/financial equivalence or 120s/2048MiB budget."
+    },
+    {
       "issue_number": 308,
       "owner_stage": "audit-repro-niit-magi-loss",
       "blocking_gate": "FINANCIAL_AUDIT_REPRO",
@@ -865,7 +881,7 @@
         "PFA-TAX-003",
         "PFA-TAX-004"
       ],
-      "scope": "Confirmed 2024 NIIT MAGI $380 vs independently expected $1,026 after $20k net capital loss, with passing control years and exact-head CI in PR #312. Production tax repair NOT approved in this two-repair wave; original #308 remains owner pending PM tax decision and removal of temporary it.fails."
+      "scope": "PM-approved bounded federal 2024 NIIT MAGI/eligible net capital loss cap repair under original issue #308 and draft PR #312. Independently reproduced $380 observed versus $1,026 correct on 2024 $190k salary/$40k taxable interest/-$20k realized net capital loss. Preserve source-qualified annual tax recognition/payments, correct NIIT MAGI/NII from statutory allowable loss while leaving ordinary income/payroll/tax components untouched; convert temporary it.fails to passing tests, preserve #314 wage-source fixtures."
     },
     {
       "issue_number": 309,
@@ -892,20 +908,6 @@
       "scope": "PM-approved bounded indirect-rollover pre-tax-only eligibility production repair in existing PR #315: reject any positive source basis before cent rounding and before journal/receipt/tax mutation; preserve admitted zero-basis, direct/mixed rollover, negative/idempotency cases; convert temporary expected-failure to passing regression."
     },
     {
-      "issue_number": 306,
-      "owner_stage": "framework-d2-s2-manual-feasibility",
-      "blocking_gate": "D2_SOURCE_FEASIBILITY_FRAMEWORK",
-      "depends_on": [
-        277
-      ],
-      "spec_requirement_ids": [
-        "PFA-DET-016",
-        "PFA-DET-023",
-        "PFA-PERF-019"
-      ],
-      "scope": "Dependent protected manual feasibility/reference parity caller in tools/ci/forecast-feasibility.mjs, framework-only #306 after original product #277 publishes context-qualified run source. Stays BLOCKED until exact product API/SHA and independent audit. Framework PR #307 only governs reviewer caller-census policy, not this protected implementation."
-    },
-    {
       "issue_number": 313,
       "owner_stage": "T1A-deferred-custom-interest-portable-replay",
       "blocking_gate": "T1A_DEFERRED_PORTABLE_INTEREST_REPLAY",
@@ -917,6 +919,33 @@
         "PFA-DET-023"
       ],
       "scope": "PM-approved narrow D2-D S2 #277 deferral only for positive custom T1A tax participant + compiler-issued interest portable cold replay. Planning issue #313 is NOT a V3 task. Independent original interest issuer/tax overlay capability, precise run/source admissibility, authored canonical model and v3 compact replay need future PM architecture approval; preserve all live forecast taxable interest and genuine portable alternate positive/negatives in #277."
+    },
+    {
+      "issue_number": 322,
+      "owner_stage": "engineering-framework-reliability-abandoned-receipt",
+      "blocking_gate": "FRAMEWORK_RELIABILITY",
+      "depends_on": [
+        249
+      ],
+      "spec_requirement_ids": [
+        "PFA-PERF-019",
+        "PFA-UX-024"
+      ],
+      "scope": "PM-approved zero-stale-lock framework remediation for confirmed ACTIVE=True orphan receipts after Codex no-tool/BLOCKED/COMPLETE stops. Atomically separate pre-execution non-owning task admission and first actual writer claim; preserve active writer, hashed provenance, Stop/checkpoint, protected write and interrupted dirty state. Improve operator-only recovery from stale canonical checkout using verified bootstrap. Deterministic hook/concurrency/tooling tests. Follow up candidate #217 without conflating independent unresolved branch divergence. Prior closed #293 is incorporated by merged framework on main, not a live registered dependency."
+    },
+    {
+      "issue_number": 326,
+      "owner_stage": "R3-independent-frozen-reference-performance",
+      "blocking_gate": "D2_SOURCE_FEASIBILITY_FRAMEWORK",
+      "depends_on": [
+        277
+      ],
+      "spec_requirement_ids": [
+        "PFA-PERF-019",
+        "PFA-PERF-021",
+        "PFA-DET-023"
+      ],
+      "scope": "PM-approved 2026-11-14 separate reference-only performance optimization to unblock #306 five-horizon forecast-scaling (heavy #16 120-month SIGKILL inside frozen reference). Keep independently pinned pre-R3 economic oracle, authentic wage/BANK source admission, posting, rollback, archived proof requalification, primitive/funding state, financial parity and negative replay. No production/shared state, tax rules, or manual harness changes; no increased runtime ceiling. New isolated 7-path Codex repair; independent ordinary CI/oracle audit and PM merge precede #306 branch synchronization and reviewer-owned 8/20/120/360/649 validation."
     }
   ],
   "legacy_open_task_reconciliation": {

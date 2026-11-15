@@ -7,10 +7,11 @@ import { createFactProvenance } from "../../model/provenance.js";
 import { resolveTaxCoreRule, taxCatalogFingerprint } from "../../rules/tax/catalog.js";
 import { applyTaxCoreRule } from "../../rules/tax/calculator.js";
 import { recognizeTaxLegalBases } from "../../rules/tax/recognition.js";
-import type { TaxIncomeFacts, TaxJurisdictionFacts } from "../../rules/tax/contracts.js";
+import type { TaxCoreRule, TaxIncomeFacts, TaxJurisdictionFacts } from "../../rules/tax/contracts.js";
 import { applySettlement, claimId, createObligation, createSettlement, createSettlementProposal, recognitionId, settlementId, settlementProposalId } from "../../semantics/index.js";
 import { applyAccountingTransactionAtomically, authoritativeClaimHistory, createIndexedRecognitionFact, registerAuthoritativeIdentity,
-  payrollHealthPostingEvidence, type AuthoritativeState, type D2SettlementSourceContext, type PayrollHealthDeductionEvidence } from "../../state/index.js";
+  householdPayrollHealthPostingEvidence, payrollHealthPostingEvidence, type AuthoritativeState,
+  type D2SettlementSourceContext, type PayrollHealthDeductionEvidence } from "../../state/index.js";
 import { instant, subtractMilliseconds, utcDateOnlyInstant, type Instant } from "../../time/index.js";
 import { decimal, money, Money, Quantity, RoundingPolicy, Unit, USD } from "../../values/index.js";
 import type { HouseholdKernelParticipant } from "../householdExecution.js";
@@ -27,6 +28,26 @@ const creditUnit = Unit.of("usd_tax_credit");
 const zero = () => Money.zero(USD);
 export const emptyTaxIncome = (): TaxIncomeFacts => Object.freeze({ wages: zero(), taxableInterest: zero(), ordinaryDividends: zero(), qualifiedDividends: zero(), shortTermGains: zero(), longTermGains: zero(), traditionalContributions: zero(), eligibleTraditionalDeduction: zero(), traditionalDistributions: zero(), traditionalDistributionBasisRecovered: zero(), rothContributions: zero(), rothDistributions: zero(), taxableRothDistributions: zero() });
 const sumIncome = (inputs: readonly TaxIncomeFacts[]): TaxIncomeFacts => Object.freeze(Object.fromEntries(Object.keys(emptyTaxIncome()).map(key => [key, inputs.reduce((sum, input) => sum.plus(input[key as keyof TaxIncomeFacts]), zero())])) as unknown as TaxIncomeFacts);
+
+function niitBases(rule: TaxCoreRule, income: TaxIncomeFacts) {
+  // Cross-character offsets preserve the signed total. Ordinary tax still
+  // nets each character separately to determine the preferential base.
+  let capital = income.shortTermGains.plus(income.longTermGains);
+  if (capital.isNegative()) {
+    if (rule.income?.basis !== "recognized_income") {
+      throw new ValidationError({ severity: "error", code: "NIIT_CAPITAL_LOSS_BASE_UNSUPPORTED",
+        message: "NIIT on a net capital loss requires a recognized-income rule with an annual capital-loss deduction limit.", entityType: "tax_execution" });
+    }
+    const floor = rule.income.capitalLossDeductionLimit.negated();
+    if (capital.compare(floor) < 0) capital = floor;
+  }
+  const investment = income.taxableInterest.plus(income.ordinaryDividends).plus(income.qualifiedDividends).plus(capital);
+  const magi = investment.plus(income.wages).plus(income.traditionalDistributions)
+    .minus(income.traditionalDistributionBasisRecovered).plus(income.taxableRothDistributions)
+    .minus(income.eligibleTraditionalDeduction);
+  return { modifiedAdjustedGrossIncome: magi.isNegative() ? zero() : magi, netInvestmentIncome: investment.isNegative() ? zero() : investment };
+}
+
 interface TaxYearRuntime {
   readonly payrollEvidence?: readonly PayrollWithholdingEvidence[];
   readonly paymentTraceRefs?: Readonly<Record<string, RecognizedTaxEconomics["traceRefs"]>>;
@@ -95,21 +116,36 @@ const payrollCovered = (input: HouseholdTaxInput, source: CompiledTaxIncome | un
  * then independently resolve its original plan/source again at this cutoff. */
 const qualifiedPaycheckHealth = (state: AuthoritativeState, source: CompiledTaxIncome | undefined,
   economic: RecognizedTaxEconomics, receipts: readonly PayrollWithholdingEvidence[], context: D2SettlementSourceContext):
-  { readonly required: boolean; readonly deduction?: PayrollHealthDeductionEvidence } => {
+  { readonly required: boolean; readonly deduction?: PayrollHealthDeductionEvidence; readonly composite?: true } => {
   const id = accountingTransactionId(`tx:recognition:income:${economic.sourceId}:${economic.at}`);
   const proof = state.d2PostedTransactions?.[id];
   const matching = receipts.filter(r => r.incomeId === economic.sourceId && r.at === economic.at);
-  const required = proof?.registration.kind === "payroll_health_deduction" || matching.some(r => r.healthDeduction !== undefined);
+  const composite = proof?.registration.kind === "household_domain" &&
+    proof.registration.evidence.originals.some(witness => witness.original.family === "payroll_health");
+  const required = composite || proof?.registration.kind === "payroll_health_deduction" || matching.some(r => r.healthDeduction !== undefined);
   if (!required) return { required: false };
-  if (!source || matching.length !== 1 || proof?.registration.kind !== "payroll_health_deduction") return { required };
+  if (!source || matching.length !== 1 || !proof) return { required };
   try {
-    const d = payrollHealthPostingEvidence(state, id, context), r = matching[0]!;
+    const d = composite ? householdPayrollHealthPostingEvidence(proof, context)?.deduction
+      : payrollHealthPostingEvidence(state, id, context);
+    const r = matching[0]!;
     if (d === undefined || canonicalSerialize(d) !== canonicalSerialize(r.healthDeduction) || d.source.ownerId !== source.ownerId ||
         d.source.employerId !== source.employerId || d.source.incomeId !== source.id || d.source.occurrenceId !== r.occurrenceId ||
         r.transactionId !== id || r.depositAccountId !== d.source.bankAccountId || !d.gross.equals(economic.income.wages) ||
         !d.contributions.reduce((sum, c) => sum.plus(c.amount), zero()).equals(r.employeeContributions) ||
         canonicalSerialize(d.withholding) !== canonicalSerialize(r.credits.map(({ electionId, jurisdiction, amount }) => ({ electionId, jurisdiction, amount })))) return { required };
-    return { required, deduction: d };
+    if (composite) {
+      const cash = proof.transaction.legs.find(leg => leg.type === "cash");
+      if (r.ownerId !== d.source.ownerId || r.employerId !== d.source.employerId || !r.gross.equals(d.gross) ||
+          state.accounts[d.source.bankAccountId]?.ownerId !== d.source.householdId ||
+          !r.takeHomeCash.equals(cash?.amount ?? zero()) || r.credits.some(credit => {
+            if (credit.taxYear !== d.at.slice(0, 4)) return true;
+            const { creditPositionId } = taxBalanceIds(credit.jurisdiction, credit.taxYear);
+            const legs = proof.transaction.legs.filter(leg => leg.type === "asset" && leg.entityId === creditPositionId);
+            return credit.amount.isZero() ? legs.length !== 0 : legs.length !== 1 || !legs[0]!.amount.equals(credit.amount);
+          })) return { required };
+    }
+    return { required, deduction: d, ...(composite ? { composite: true } : {}) };
   } catch { return { required }; }
 };
 /** Stable per-regime balance identities, independent of rule version/catalog ordering. */
@@ -352,6 +388,8 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
               // A missing income component still cannot waive health source admission.
               if (health.some(h => h.required && h.deduction === undefined)) throw new ValidationError({ severity: "error", code: "PAYROLL_HEALTH_SOURCE_INCOMPLETE", message: "Original payroll health source or posted evidence is unavailable.", entityType: "tax_execution" });
               const healthContributionIds = new Set(health.flatMap(h => h.deduction?.contributions.map(c => c.id) ?? []));
+              const compositeContributionIds = new Set(health.flatMap(h =>
+                h.composite ? h.deduction?.contributions.map(c => c.id) ?? [] : []));
               let income = sumIncome(incomes);
               if (group.jurisdiction === "US:FEDERAL") {
                 const people = new Set(group.entries.map(entry => sources.get(entry.sourceId)?.ownerId));
@@ -360,7 +398,9 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
                 if (hsa.compare(income.wages) > 0) throw new ValidationError({ severity: "error", code: "PAYROLL_HSA_WAGE_BASE_INVALID", message: "Employee HSA exclusions exceed recognized wages.", entityType: "tax_execution" });
                 income = Object.freeze({ ...income, wages: income.wages.minus(hsa),
                   traditionalContributions: applicable.filter(entry => entry.character === "traditional_ira" || entry.character === "traditional_401k").reduce((sum, entry) => sum.plus(entry.amount), income.traditionalContributions),
-                  eligibleTraditionalDeduction: applicable.filter(entry => entry.character === "traditional_ira" || entry.character === "traditional_401k").reduce((sum, entry) => sum.plus(entry.character === "traditional_401k" ? entry.amount : entry.eligibleDeduction ?? zero()), income.eligibleTraditionalDeduction),
+                  eligibleTraditionalDeduction: applicable.filter(entry => entry.character === "traditional_ira" ||
+                    entry.character === "traditional_401k" && !compositeContributionIds.has(entry.id))
+                    .reduce((sum, entry) => sum.plus(entry.character === "traditional_401k" ? entry.amount : entry.eligibleDeduction ?? zero()), income.eligibleTraditionalDeduction),
                   rothContributions: applicable.filter(entry => entry.character === "roth_ira" || entry.character === "roth_401k").reduce((sum, entry) => sum.plus(entry.amount), income.rothContributions),
                 });
               } else if (contributions.some(entry => !healthContributionIds.has(entry.id) && (entry.character === "traditional_401k" || entry.character.endsWith("_hsa") || entry.character === "traditional_ira" && entry.eligibleDeduction?.isPositive()))) {
@@ -379,12 +419,9 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
                 if (hsa.compare(wagesBefore) > 0) throw new ValidationError({ severity: "error", code: "PAYROLL_HSA_EMPLOYEE_BASE_INVALID", message: "Employee HSA exclusions exceed this employee's wages.", entityType: "tax_execution" });
                 wages.set(employee, wagesBefore.minus(hsa));
               }
-              const gross = income.wages.plus(income.taxableInterest).plus(income.ordinaryDividends).plus(income.qualifiedDividends).plus(income.shortTermGains).plus(income.longTermGains)
-                .plus(income.traditionalDistributions).minus(income.traditionalDistributionBasisRecovered).plus(income.taxableRothDistributions);
-              const nii = income.taxableInterest.plus(income.ordinaryDividends).plus(income.qualifiedDividends).plus(income.shortTermGains).plus(income.longTermGains);
               const application = applyTaxCoreRule(resolved, { income, ...legalBases, withholding: zero(), estimatedPayments: zero(), priorPaymentCredit: zero(),
                 ...(resolved.rule.payroll === undefined ? {} : { employeeWages: [...wages].map(([employeeKey, amount]) => ({ employeeKey, wages: amount })) }),
-                ...(resolved.rule.niit === undefined ? {} : { modifiedAdjustedGrossIncome: gross.compare(income.eligibleTraditionalDeduction) < 0 ? zero() : gross.minus(income.eligibleTraditionalDeduction), netInvestmentIncome: nii.isNegative() ? zero() : nii }),
+                ...(resolved.rule.niit === undefined ? {} : niitBases(resolved.rule, income)),
                 ...(resolved.rule.periodicEmployeeTax === undefined ? {} : { periodicWages: { unit: resolved.rule.periodicEmployeeTax.unit,
                   wages: health.some(h => h.required)
                     ? group.entries.reduce((sum, entry, index) => sum.plus((healthBase(index, "periodic") ?? entry.income.wages).times(decimal(entry.allocation))), zero())

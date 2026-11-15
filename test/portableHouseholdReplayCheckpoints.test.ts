@@ -1,13 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { compileHouseholdProjection } from "../src/application/compiler/householdProjection.js";
 import { createGoldenHouseholdDraft } from "../src/application/personalMvp.js";
 import { createGoldenHouseholdForecastRequest, GOLDEN_HOUSEHOLD_IDS as ids } from "../src/application/goldenHousehold.js";
-import { runHouseholdKernel, replayHouseholdForecastWindow, exportHouseholdReplayCheckpoints, registerHouseholdReplayCheckpoints } from "../src/simulation/householdExecution.js";
+import { compileHouseholdKernel, runHouseholdKernel, replayHouseholdForecastWindow, exportHouseholdReplayCheckpoints, registerHouseholdReplayCheckpoints } from "../src/simulation/householdExecution.js";
+import * as periodExecution from "../src/simulation/period.js";
 import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../src/simulation/r3/replayArtifact.js";
 import { restoreHouseholdForecastEvidence } from "../src/application/householdProjection.js";
 import { canonicalSerialize, createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import { instant } from "../src/time/index.js";
-import { USD } from "../src/values/index.js";
+import { Quantity, Rate, RoundingPolicy, SHARE, USD, money, rateConvention } from "../src/values/index.js";
+import { createAuthoritativeState } from "../src/state/index.js";
 import { PerformanceRegistry, type PerformanceObserver } from "../src/diagnostics/performance.js";
 import { createD1IntegratedHousehold, d1IntegratedCompilerRequest } from "./fixtures/d1IntegratedHousehold.js";
 import { taxHouseholdFixture } from "./fixtures/t1aTaxHouseholds.js";
@@ -40,6 +42,92 @@ function meter() {
 }
 
 describe("portable sparse household replay checkpoints", () => {
+  it.each([
+    { months: 1, quote: "100.4471698917043012", value: "151710.3400023864283547769060929684" },
+    { months: 12, quote: "105.499999999999999718", value: "159800.303359604263937192554053000926" },
+    { months: 36, quote: "117.424137499999999055", value: "178982.682646823536858179569432928635" },
+  ])("cold restores the exact Golden quote and replays the final month of $months", ({ months, quote, value }) => {
+    const f = fixture(months);
+    const restored = transported(f);
+    expect(restored.periods).toHaveLength(months);
+    expect(canonicalSerialize(restored.periods)).toBe(canonicalSerialize(f.source.periods));
+    expect(canonicalSerialize(restored.runMetadata)).toBe(canonicalSerialize(f.source.runMetadata));
+    const executable = restored.replay.kernel.executable;
+    const returnInput = executable.investmentInput!.returns.find(item => item.targetPositionId === ids.brokerageInvestment);
+    expect(returnInput?.priceRounding).toMatchObject({ scale: 18, mode: "half_even" });
+    expect(executable.reconciledOpeningState.positions[ids.brokerageInvestment]!.price.equals(money("100"))).toBe(true);
+
+    const selected = restored.periods.at(-1)!;
+    const metrics = meter();
+    const replay = replayHouseholdForecastWindow(restored, selected.period, metrics.observer);
+    expect(metrics.counters().replayCheckpointResumes).toBe(months === 36 ? 1 : 0);
+    expect(canonicalSerialize(replay.periods)).toBe(canonicalSerialize(f.detail().periods.slice(-1)));
+    expect(canonicalSerialize(replay.state)).toBe(canonicalSerialize(f.source.state));
+    const brokerage = replay.state.positions[ids.brokerageInvestment]!;
+    expect(brokerage.price.equals(money(quote))).toBe(true);
+    expect(brokerage.quantity.equals(Quantity.parse("509.955482081557", SHARE))).toBe(true);
+    expect(selected.investmentValue.equals(money(value))).toBe(true);
+  });
+
+  it("rejects a committed one-month archive with a historically cent-rounded sub-cent quote", () => {
+    const { source } = fixture(1);
+    const { runContext, kernel } = source.replay;
+    const base = kernel.executable;
+    const input = base.investmentInput!;
+    const position = base.reconciledOpeningState.positions[ids.brokerageInvestment]!;
+    const priceRounding = new RoundingPolicy(2, "half_up");
+    const legacyKernel = compileHouseholdKernel({
+      scenarioIdentity: base.scenarioIdentity,
+      scenarioBindings: base.scenarioBindings,
+      executionMonths: 1,
+      reconciledPrimitiveState: {},
+      reconciledOpeningState: createAuthoritativeState({
+        accounts: { [position.accountId]: base.reconciledOpeningState.accounts[position.accountId]! },
+        positions: {
+          [position.id]: { ...position, price: money("0.004"), quantity: Quantity.parse("1000", SHARE), carryingValue: money("4") },
+        },
+      }),
+      investmentInput: {
+        ...input, purchases: [],
+        returns: [{
+          ...input.returns.find(item => item.targetPositionId === position.id)!,
+          rate: Rate.fromDecimal("0", rateConvention.effectiveAnnual()),
+          priceRounding,
+        }],
+      },
+    }, runContext.simulationStart);
+    const execute = periodExecution.executePeriodWorkCandidate;
+    // Reproduce the former boundary while committing the archive, including
+    // its original fingerprint, summaries and terminal state.
+    const legacy = vi.spyOn(periodExecution, "executePeriodWorkCandidate").mockImplementation((request, summary) =>
+      execute({
+        ...request,
+        work: request.work.map(item => item.kind === "primitive" && item.request.primitiveId === "P23"
+          ? { ...item, request: { ...item.request, parameters: { ...item.request.parameters, postingRounding: priceRounding } } }
+          : item),
+      }, summary));
+    const restored = (() => {
+      try {
+        const old = runHouseholdKernel({ kernel: legacyKernel, runContext });
+        expect(old.periods).toHaveLength(1);
+        expect(old.periods[0]!.investmentValue.isZero()).toBe(true);
+        const archive = restorePortableHouseholdReplayArtifact(structuredClone(createPortableHouseholdReplayArtifact(old)));
+        expect(replayHouseholdForecastWindow(archive, old.periods[0]!.period).periods[0]!.investmentValue.isZero()).toBe(true);
+        return archive;
+      } finally {
+        legacy.mockRestore();
+      }
+    })();
+    const current = runHouseholdKernel({ kernel: legacyKernel, runContext });
+    expect(canonicalSerialize(current.runMetadata)).toBe(canonicalSerialize(restored.runMetadata));
+    expect(current.periods[0]!.investmentValue.equals(money("4"))).toBe(true);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      expect(() => replayHouseholdForecastWindow(restored, restored.periods[0]!.period)).toThrow(
+        expect.objectContaining({ issues: [expect.objectContaining({ code: "HOUSEHOLD_REPLAY_BASIS_MISMATCH" })] }),
+      );
+    }
+  });
+
   it("round-trips late one and twelve month windows with the same settled detail and bounded actual work", () => {
     const f = fixture(), { source, detail } = f; const original = detail(), restored = transported(f);
     expect(restored).not.toBe(source);

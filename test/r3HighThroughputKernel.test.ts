@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import fc from "fast-check";
 import { PerformanceRegistry, type PerformanceObserver } from "../src/diagnostics/performance.js";
 import type { CompiledHouseholdProjection } from "../src/application/compiler/householdProjection.js";
-import { domainId } from "../src/identity/index.js";
+import { domainId, generatedOccurrenceKey } from "../src/identity/index.js";
 import { createFundingPolicy, fundingPolicyId } from "../src/funding/index.js";
 import { runHouseholdKernel, type HouseholdKernelParticipant, runCompiledHouseholdProjection,
   runHouseholdForecastSummary, replayHouseholdForecastWindow } from "../src/simulation/householdExecution.js";
@@ -13,16 +13,23 @@ import { householdEvidenceProof } from "../src/application/mortgageChartData.js"
 import { createStatementFlowAccumulator, deriveVerticalSliceStatements } from "../src/statements/index.js";
 import { createPrimitiveRuntimeStateStore, executePeriodWorkCandidate, updatePrimitiveRuntimeStateStore, type RunPeriodInput } from "../src/simulation/period.js";
 import { runPeriod as referencePeriod } from "../src/simulation/r3/referencePeriod.js";
+import { runVerticalSlice2 as referenceCashRun } from "../src/simulation/r3/referenceVerticalSlice2.js";
+import { runVerticalSlice4 as referenceLiabilityRun } from "../src/simulation/r3/referenceVerticalSlice4.js";
+import * as runFunctions from "../src/simulation/run.js";
 import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
+import { modeledIncomeFingerprintInput } from "../src/simulation/d2/integration/householdWages/modeledPayroll.js";
 import type { FixedAmortizingLoan } from "../src/simulation/verticalSlice4.js";
 import type { VerticalSlice2Input } from "../src/simulation/verticalSlice2.js";
 import { createAuthoritativeState, createIndexedExecutionState, cloneAuthoritativeState, validateAuthoritativeState,
-  applyAccountingTransactionAtomically, PersistentStringIndex, activeAuthoritativeClaims, authoritativeClaimHistory } from "../src/state/index.js";
+  applyAccountingTransactionAtomically, PersistentStringIndex, activeAuthoritativeClaims, authoritativeClaimHistory,
+  requalifyD2SettlementReceiptHistory } from "../src/state/index.js";
 import { authoritativeStateChangesSince, registerAuthoritativeIdentity } from "../src/state/index.js";
 import { createObligation, executionSettlementHistory, appendSettlementIdentity, settlementIdentityAppendsSince, normalizeExecutionClaim, materializeClaimLifecycle, assertClaimInvariant } from "../src/semantics/claim.js";
 import { instant } from "../src/time/index.js";
 import { Quantity, Rate, RoundingPolicy, SHARE, USD, money, rateConvention, ratePeriod } from "../src/values/index.js";
 import { authorModeledIncomeFixture, compileModeledIncomeFixture } from "./fixtures/modeledIncome.js";
+import { employerWage } from "./fixtures/employerWage.js";
+import { registerHouseholdWageOriginalProvider } from "../src/simulation/d2/integration/householdWages/index.js";
 import { patchPersonalObject } from "../src/application/personalMvp.js";
 
 const ids = {
@@ -52,7 +59,8 @@ const compiled = (lateFailure = false, withAsset = false, runContext = context()
 
 import { ValidationError } from "../src/diagnostics/index.js";
 import { compileHouseholdKernel, applyHouseholdExecutionOverlay } from "../src/simulation/r3/compiledHousehold.js";
-import { runCompiledHouseholdProjection as referenceRun } from "../src/simulation/r3/referenceHouseholdExecution.js";
+import { firstReferenceDependencyOrder, linearizations,
+  runCompiledHouseholdProjection as referenceRun } from "../src/simulation/r3/referenceHouseholdExecution.js";
 import { firstDependencyOrder, indexReachability } from "../src/simulation/r3/ordering.js";
 import { dependencyOrders } from "../src/simulation/r3/referenceOrdering.js";
 import { compareReachableStates, createReachableStateCounters } from "../src/simulation/r3/reachableStates.js";
@@ -153,7 +161,10 @@ describe("R3 reusable deterministic household kernel", () => {
       context: { runId: "funded-allocation", dataClassification: "synthetic", modelCounts: {},
         executionLocation: "local_node", cacheState: "not_applicable" },
     });
-    expect(ambiguous).toEqual(referenceRun({ compiled: funded, runContext: context() }));
+    const stoppedReference = referenceRun({ compiled: funded, runContext: context() });
+    expect(ambiguous).toEqual(stoppedReference);
+    expect(stoppedReference).not.toHaveProperty("reachedThrough");
+    expect(stoppedReference.stoppedAt).toBe(start);
     expect(ambiguous.status).toBe("incomplete");
     expect(ambiguous.diagnostics.some(issue => issue.code === "HOUSEHOLD_CONTENTION_UNRESOLVED")).toBe(false);
     expect(registry.latest("engine.schedule_contention")!.resources!.structuralCounters!.contentionFallbackInvocations).toBeGreaterThan(0);
@@ -541,7 +552,12 @@ describe("R3 reusable deterministic household kernel", () => {
     expect(basis.periods).toEqual(summary.periods);
     const selected = detail.periods[1]!;
     expect(selected.transactions.some(tx => tx.type === "income")).toBe(true);
-    expect(replayHouseholdForecastWindow(basis, selected.period).periods).toEqual([selected]);
+    const restored = replayHouseholdForecastWindow(basis, selected.period);
+    expect(restored.periods).toEqual([selected]);
+    const reference = referenceRun({ compiled: direct.value.kernel.executable, runContext });
+    expect(reference.status).toBe("completed");
+    expect(restored.periods[0]!.transactions).toEqual(reference.periods[1]!.transactions);
+    expect(restored.periods[0]!.cash).toEqual(reference.periods[1]!.cash);
     const altered = patchPersonalObject(model, "Income", ids.income, { amount: "121" });
     for (const transport of [artifact, { ...artifact }]) {
       expect(() => restoreHouseholdForecastEvidence(transport)).toThrow(/BASIS_MISMATCH/);
@@ -618,6 +634,260 @@ describe("R3 reusable deterministic household kernel", () => {
     }), { numRuns: 8, seed: 53 });
   });
 
+  it.each([2, 25])("retains the standalone reference VS2 metadata over %i periods", months => {
+    const runContext = createRunContext({
+      ...context(),
+      simulationEnd: instant(new Date(Date.UTC(2026, months, 1)).toISOString()),
+    });
+    const openingState = opening();
+    const input = qualifiedCashFlow("120", runContext, months);
+    const fingerprint = runFunctions.createInputFingerprint({
+      runContext, openingState, model: modeledIncomeFingerprintInput(input), assumptions: { months },
+    });
+    const result = referenceCashRun({ runContext, openingState, input, months });
+    expect(result.status).toBe("completed");
+    expect(result.periods).toHaveLength(months);
+    expect(result.reachedThrough).toBe(runContext.simulationEnd);
+    expect(result).not.toHaveProperty("stoppedAt");
+    expect(result.runMetadata).toEqual(runFunctions.createRunMetadata(runContext, fingerprint));
+  });
+
+  it("retains standalone VS2 metadata and rolls back a duplicate event after a committed month", () => {
+    const months = 25;
+    const runContext = createRunContext({ ...context(), simulationEnd: instant("2028-02-01T00:00:00.000Z") });
+    const terminationEventId = domainId("event", "93000000-0000-4000-8000-000000000071");
+    const issued = compileModeledIncomeFixture(runContext, months, {
+      householdId: ids.household, personId: ids.owner, accountId: ids.cash, accountType: "checking",
+      retirementBindings: [{ incomeId: ids.income, terminationEventId, baselineDate: "2026-02-10" }],
+      incomes: [{ id: ids.income, type: "salary", amount: "100", startDate: "2025-12-15" }],
+    });
+    const input = { ...cashFlow, incomes: issued.incomes, events: issued.events };
+    const termination = issued.incomes[0]!.primitiveIds.termination!;
+    const key = generatedOccurrenceKey({
+      scenarioId: runContext.scenarioId, primitiveInstanceId: termination,
+      scheduledAt: issued.events.find(event => event.id === terminationEventId)!.effectiveAt,
+      semanticEffectType: "event:termination", economicTargetId: ids.income,
+    });
+    const openingState = createAuthoritativeState({ ...opening(), identities: { generatedOccurrenceKeys: [key] } });
+    const result = referenceCashRun({ runContext, openingState, input, months });
+    expect(result.status).toBe("incomplete");
+    expect(result.periods).toHaveLength(1);
+    expect(result.reachedThrough).toBe(end);
+    expect(result.stoppedAt).toBe(end);
+    expect(result.primitiveState[termination]).toMatchObject({ primitiveId: "P30", state: { terminated: false } });
+    expect(result.diagnostics.some(issue => issue.code === "DUPLICATE_GENERATED_OCCURRENCE")).toBe(true);
+    const fingerprint = runFunctions.createInputFingerprint({
+      runContext, openingState, model: modeledIncomeFingerprintInput(input), assumptions: { months },
+    });
+    expect(result.runMetadata).toEqual(runFunctions.createRunMetadata(runContext, fingerprint));
+  });
+
+  it("retains standalone VS4 metadata when duplicate debt service stops the first month", () => {
+    const runContext = context();
+    const compiledInput = integrated("0");
+    const input = compiledInput.liabilityInput!;
+    const loan = input.loans[0]!;
+    const key = generatedOccurrenceKey({
+      scenarioId: runContext.scenarioId, primitiveInstanceId: loan.primitiveIds.schedule,
+      scheduledAt: loan.paymentSchedule.anchor, semanticEffectType: "liability-payment",
+      economicTargetId: loan.principalLiabilityId,
+    });
+    const openingState = createAuthoritativeState({
+      ...compiledInput.reconciledOpeningState, identities: { generatedOccurrenceKeys: [key] },
+    });
+    const primitiveState = compiledInput.reconciledPrimitiveState;
+    const result = referenceLiabilityRun({ runContext, openingState, primitiveState, input, months: 1 });
+    expect(result.status).toBe("incomplete");
+    expect(result.periods).toHaveLength(0);
+    expect(result).not.toHaveProperty("reachedThrough");
+    expect(result.stoppedAt).toBe(start);
+    expect(result.state).toEqual(openingState);
+    expect(result.primitiveState).toEqual(primitiveState);
+    expect(result.diagnostics.some(issue => issue.code === "DUPLICATE_GENERATED_OCCURRENCE")).toBe(true);
+    const fingerprint = runFunctions.createInputFingerprint({
+      runContext, openingState, primitiveState, model: input, executionPlan: { months: 1 },
+    });
+    expect(result.runMetadata).toEqual(runFunctions.createRunMetadata(runContext, fingerprint));
+  });
+
+  it("fingerprints standalone reference VS4 and fingerprints the composed household only once", () => {
+    const runContext = context(2), months = 2;
+    const input = integrated("120", true, runContext, months);
+    const secondIncomeId = domainId("income", "93000000-0000-4000-8000-000000000075");
+    const issued = compileModeledIncomeFixture(runContext, months, {
+      householdId: ids.household, personId: ids.owner, accountId: ids.cash, accountType: "checking",
+      incomes: [
+        { id: ids.income, type: "salary", amount: "120", startDate: "2026-01-15" },
+        { id: secondIncomeId, type: "salary", amount: "30", startDate: "2026-01-20" },
+      ],
+    });
+    const openingState = input.reconciledOpeningState;
+    const primitiveState = input.reconciledPrimitiveState;
+    const model = input.liabilityInput!;
+    const fingerprint = runFunctions.createInputFingerprint({
+      runContext, openingState, primitiveState, model, executionPlan: { months },
+    });
+    expect(referenceLiabilityRun({ runContext, openingState, primitiveState, input: model, months }).runMetadata)
+      .toEqual(runFunctions.createRunMetadata(runContext, fingerprint));
+
+    const createFingerprint = vi.spyOn(runFunctions, "createInputFingerprint");
+    try {
+      const request = { compiled: {
+        ...input, cashFlowInput: { ...cashFlow, incomes: issued.incomes, events: issued.events },
+      }, runContext };
+      const result = referenceRun(request);
+      expect(result.status).toBe("completed");
+      expect(createFingerprint).toHaveBeenCalledTimes(1);
+      expect(result.runMetadata.inputFingerprint).toBe(createFingerprint.mock.results[0]!.value);
+      for (const period of result.periods) {
+        expect(period.transactions.filter(tx => tx.type === "income")).toHaveLength(2);
+        expect(period.transactions.some(tx => tx.type === "mortgage_principal_payment")).toBe(true);
+      }
+    } finally {
+      createFingerprint.mockRestore();
+    }
+  });
+
+  it.each([2, 4, 8, 20])("preserves each signed wage and the archived source checks over %i periods", months => {
+    const runContext = createRunContext({
+      ...context(),
+      simulationEnd: instant(new Date(Date.UTC(2026, months, 1)).toISOString()),
+    });
+    const signed = employerWage(runContext, {
+      householdId: ids.household, personId: ids.owner, incomeId: ids.income, bankAccountId: ids.cash,
+      employerId: "r3-reference-scaling-employer", firstPayday: "2026-01-15", gross: "100",
+      allowLaterObservation: true,
+    });
+    const input = {
+      ...compiled(false, false, runContext, months),
+      reconciledOpeningState: createAuthoritativeState({
+        ...opening(),
+        accounts: { [ids.cash]: { id: ids.cash, kind: "checking", ownerId: ids.household, cash: money("10") } },
+      }),
+      cashFlowInput: { ...cashFlow, incomes: [signed.income] },
+    };
+    const request = { compiled: input, runContext };
+    const registry = new PerformanceRegistry();
+    let tick = 0;
+    const result = referenceRun(request, {
+      clock: { now: () => tick++ }, sink: registry,
+      context: { runId: "reference-wage-scaling", dataClassification: "synthetic", modelCounts: {},
+        executionLocation: "local_node", cacheState: "not_applicable" },
+    });
+    const optimized = runCompiledHouseholdProjection(request);
+    for (const kind of Object.keys(optimized.state.identities) as (keyof typeof optimized.state.identities)[]) {
+      const identities = result.state.identities[kind];
+      expect(Object.keys(identities), kind).toEqual(Object.keys(optimized.state.identities[kind]));
+      expect(Object.isFrozen(identities), kind).toBe(true);
+    }
+    expect(result).toEqual(optimized);
+    expect(result.status).toBe("completed");
+    expect(result.reachedThrough).toBe(runContext.simulationEnd);
+    expect(result.periods).toHaveLength(months);
+    expect(registry.latest("engine.period_fork")?.resources?.structuralCounters).toMatchObject({
+      referenceMonthForks: months, referenceInstantForks: months, referenceFinalOrderDescriptors: months,
+      referenceOpeningForks: 1, referenceOpeningSourceAdmissions: 1,
+      referenceCashPreparations: months + 1, referenceCashExecutions: months,
+      referenceEventIdentityMerges: months, referenceEventOccurrenceIdentitiesAppended: 0,
+      referenceCommitValidations: months,
+    });
+    const proofs = result.state.d2PostedTransactions!;
+    expect(Object.keys(proofs)).toHaveLength(months);
+    for (const [index, row] of result.periods.entries()) {
+      const original = signed.originalAt(row.period);
+      expect(row.transactions).toEqual([original.transaction]);
+      expect(row.cash).toEqual(money(String(110 + index * 100)));
+      expect(proofs[original.transaction.id]!.transaction).toEqual(original.transaction);
+    }
+
+    const archivedState = canonicalSerialize(result.state);
+    const cold = createAuthoritativeState(result.state);
+    expect(cold).toEqual(result.state);
+    const laterObservation = instant("2026-01-01T00:00:00.000Z");
+    const laterContext = createRunContext({ ...runContext, asOf: laterObservation, dataCutoff: laterObservation });
+    for (const observation of [runContext, laterContext]) {
+      const before = { ...signed.reads };
+      requalifyD2SettlementReceiptHistory(cold, observation);
+      expect(signed.reads.employer - before.employer).toBe(months);
+      expect(signed.reads.bank - before.bank).toBe(months);
+      expect(canonicalSerialize(cold)).toBe(archivedState);
+    }
+    const wageFailure = "Independent economic ORIGINAL missing, amended, withdrawn or journal changed";
+    const bankFailure = "Household BANK route original unavailable or changed";
+    for (const [mode, failure] of [
+      ["withdrawn", wageFailure], ["missing", wageFailure], ["changed", wageFailure],
+      ["late", wageFailure], ["duplicate", wageFailure], ["bank_missing", bankFailure],
+      ["bank_owner", bankFailure], ["bank_other_person", bankFailure], ["bank_permission", bankFailure],
+    ] as const) {
+      signed.source.mode = mode;
+      try {
+        expect(() => requalifyD2SettlementReceiptHistory(cold, laterContext), mode).toThrow(failure);
+        expect(() => createAuthoritativeState(result.state), mode).toThrow(failure);
+        expect(() => referenceRun({ runContext, compiled: {
+          ...input, cashFlowInput: { ...input.cashFlowInput, incomes: [] },
+          reconciledOpeningState: result.state, reconciledPrimitiveState: result.primitiveState,
+        } }), mode).toThrow(failure);
+        expect(canonicalSerialize(cold)).toBe(archivedState);
+        expect(canonicalSerialize(result.state)).toBe(archivedState);
+      } finally {
+        signed.source.mode = "available";
+      }
+    }
+    const transaction = result.periods[0]!.transactions[0]!;
+    const tampered = {
+      ...result.state,
+      d2PostedTransactions: { ...proofs, [transaction.id]: {
+        ...proofs[transaction.id]!,
+        transaction: { ...transaction, legs: transaction.legs.map(leg => ({ ...leg, amount: money("101") })) },
+      } },
+    };
+    const tamperedBefore = canonicalSerialize(tampered);
+    expect(() => createAuthoritativeState(tampered)).toThrow(wageFailure);
+    expect(canonicalSerialize(tampered)).toBe(tamperedBefore);
+    expect(canonicalSerialize(result.state)).toBe(archivedState);
+  }, 20_000);
+
+  it("rejects a wage inventory whose coverage stops before the replay cutoff", () => {
+    const runContext = context();
+    const signed = employerWage(runContext, {
+      householdId: ids.household, personId: ids.owner, incomeId: ids.income, bankAccountId: ids.cash,
+      employerId: "r3-partial-wage-inventory", firstPayday: "2026-01-15", gross: "100", allowLaterObservation: true,
+    });
+    const source = signed.income.householdWageSource!;
+    const publisherId = `${source.original.publisherId}:coverage`;
+    let covered = true;
+    registerHouseholdWageOriginalProvider({
+      publisherId,
+      readOriginals: ({ sourceId, context }) => ({
+        version: "household-wage-inventory/v1", publisherId, sourceId, context,
+        checkedAt: context.asOf, completeThrough: covered ? context.dataCutoff : runContext.dataCutoff,
+        completeness: "complete",
+        originals: [signed.originalAt({ start, end })],
+      }),
+    });
+    const compiledInput = {
+      ...compiled(),
+      reconciledOpeningState: createAuthoritativeState({
+        ...opening(),
+        accounts: { [ids.cash]: { id: ids.cash, kind: "checking", ownerId: ids.household, cash: money("10") } },
+      }),
+      cashFlowInput: { ...cashFlow, incomes: [{
+        ...signed.income, householdWageSource: { ...source, original: { ...source.original, publisherId } },
+      }] },
+    };
+    const result = referenceRun({ compiled: compiledInput, runContext });
+    expect(result.status).toBe("completed");
+    const cold = createAuthoritativeState(result.state);
+    const archive = canonicalSerialize(cold);
+    const laterObservation = instant("2026-01-01T00:00:00.000Z");
+    const laterContext = createRunContext({ ...runContext, asOf: laterObservation, dataCutoff: laterObservation });
+    requalifyD2SettlementReceiptHistory(cold, laterContext);
+    covered = false;
+    expect(() => requalifyD2SettlementReceiptHistory(cold, laterContext))
+      .toThrow("Independent economic ORIGINAL missing, amended, withdrawn or journal changed");
+    expect(canonicalSerialize(cold)).toBe(archive);
+  });
+
   it("matches a bounded Golden Household with all supported domains", () => {
     const request = createGoldenHouseholdForecastRequest();
     const compiler = { ...request.compiler,
@@ -644,11 +914,14 @@ describe("R3 reusable deterministic household kernel", () => {
     expect(compiledInput.executionKernel).toBeDefined();
   });
 
-  it("preserves event eligibility and primitive commit frontiers", () => {
+  it.each([
+    { retirement: "2026-01-10", endingCash: "10" },
+    { retirement: "2026-01-20", endingCash: "110" },
+  ])("preserves event eligibility and primitive commit frontiers for retirement on $retirement", ({ retirement, endingCash }) => {
     const event = domainId("event", "93000000-0000-4000-8000-000000000070");
     const issued = compileModeledIncomeFixture(context(), 1, {
       householdId: ids.household, personId: ids.owner, accountId: ids.cash, accountType: "checking",
-      retirementBindings: [{ incomeId: ids.income, terminationEventId: event, baselineDate: "2026-01-10" }],
+      retirementBindings: [{ incomeId: ids.income, terminationEventId: event, baselineDate: retirement }],
       incomes: [{ id: ids.income, type: "salary", amount: "100", startDate: "2025-12-15" }],
     });
     const input = { ...compiled(), cashFlowInput: {
@@ -659,12 +932,51 @@ describe("R3 reusable deterministic household kernel", () => {
     const result = runCompiledHouseholdProjection({ compiled: input, runContext: context() });
     expect(result).toEqual(referenceRun({ compiled: input, runContext: context() }));
     expect(result.status).toBe("completed");
-    expect(result.state.accounts[ids.cash]!.cash.equals(money("10"))).toBe(true);
-    expect(result.primitiveState[issued.incomes[0]!.primitiveIds.termination!]?.primitiveId).toBe("P30");
+    expect(result.state.accounts[ids.cash]!.cash.equals(money(endingCash))).toBe(true);
+    const termination = result.primitiveState[issued.incomes[0]!.primitiveIds.termination!];
+    expect(termination?.primitiveId).toBe("P30");
+    if (termination?.primitiveId !== "P30") throw new Error("Expected committed termination");
+    expect(termination.state.terminated).toBe(true);
+    expect(result.state.identities.generatedOccurrenceKeys).toContain(termination.state.occurrenceId);
   });
 
-  it("matches required-service and dependent extra-principal semantics over two bounded periods", () => {
-    const input = integrated("120", true, context(2), 2);
+  it("commits an expense activation without a cash occurrence and retains its identity in later periods", () => {
+    const runContext = context(2);
+    const event = domainId("event", "93000000-0000-4000-8000-000000000072");
+    const activation = primitive("73");
+    const { recurrence, growthBaseAt, growthRate } = cashFlow.incomes[0]!;
+    const fundingPolicy = integrated("0").liabilityInput!.loans[0]!.fundingPolicy;
+    const compiledInput = {
+      ...compiled(false, false, runContext, 2),
+      cashFlowInput: {
+        ...cashFlow,
+        incomes: [],
+        events: [{ id: event, targetId: ids.expense, kind: "activation" as const, effectiveAt: instant("2026-01-20T00:00:00.000Z") }],
+        expenses: [{
+          id: ids.expense, ownerId: ids.owner, baseMonthlyAmount: money("5"), start,
+          recurrence, activationEventId: event, paymentAccountId: ids.cash, payableLiabilityId: ids.payable,
+          fundingPolicy, inflationRate: growthRate, inflationBaseAt: growthBaseAt,
+          primitiveIds: { recurrence: primitive("74"), indexGrowth: primitive("75"), inflationLink: primitive("76"), activation },
+        }],
+      },
+    };
+    const request = { compiled: compiledInput, runContext };
+    const result = referenceRun(request);
+    expect(result).toEqual(runCompiledHouseholdProjection(request));
+    expect(result.status).toBe("completed");
+    expect(result.periods[0]!.transactions).toHaveLength(0);
+    expect(result.periods[1]!.cash).toEqual(money("5"));
+    const runtime = result.primitiveState[activation];
+    if (runtime?.primitiveId !== "P27") throw new Error("Expected committed activation");
+    expect(runtime.state.activated).toBe(true);
+    expect(result.state.identities.generatedOccurrenceKeys.filter(key => key === runtime.state.occurrenceId)).toHaveLength(1);
+  });
+
+  it.each([
+    { income: "120", principal: "40", extra: "10", funding: "fully_satisfied" },
+    { income: "0", principal: "100", extra: "0", funding: "unfunded" },
+  ])("matches required service and extra principal with income $income", ({ income, principal, extra, funding }) => {
+    const input = integrated(income, true, context(2), 2);
     const loan = input.liabilityInput!.loans[0]!;
     const selected = { ...input, executionMonths: 2,
       liabilityInput: { ...input.liabilityInput!, loans: [{ ...loan, extraPrincipalPayments: [{
@@ -676,7 +988,10 @@ describe("R3 reusable deterministic household kernel", () => {
     const result = runCompiledHouseholdProjection({ compiled: selected, runContext: context(2) });
     expect(result).toEqual(referenceRun({ compiled: selected, runContext: context(2) }));
     expect(result.status).toBe("completed");
-    expect(result.periods[0]!.liability!.liabilities[0]!.extraPrincipalPaid.equals(money("10"))).toBe(true);
+    const first = result.periods[0]!.liability!.liabilities[0]!;
+    expect(first.extraPrincipalPaid).toEqual(money(extra));
+    expect(first.endingPrincipal).toEqual(money(principal));
+    expect(first.scheduledFundingStatus).toBe(funding);
   });
 
   it("keeps diagnostic clocks and sinks outside financial control flow", () => {
@@ -843,6 +1158,8 @@ describe("R3 reusable deterministic household kernel", () => {
       const expected = permutations(items).filter(order => edges.every(edge =>
         order.findIndex(item => item.id === edge.before) < order.findIndex(item => item.id === edge.after)))[0];
       expect(firstDependencyOrder([...items].reverse(), [...edges].reverse())).toEqual(expected);
+      expect(firstReferenceDependencyOrder([...items].reverse(), [...edges].reverse()))
+        .toEqual(linearizations(items, edges)[0]);
       expect([...dependencyOrders([...items].reverse(), edges)][0]).toEqual(expected);
       const reaches = indexReachability(edges);
       for (const edge of edges) expect(reaches(edge.before, edge.after)).toBe(true);
@@ -850,6 +1167,16 @@ describe("R3 reusable deterministic household kernel", () => {
     expect(firstDependencyOrder([descriptor("a"), descriptor("b")], [{ before: "a", after: "b" }, { before: "b", after: "a" }])).toBeUndefined();
     expect([...dependencyOrders([descriptor("a"), descriptor("b")], [{ before: "a", after: "b" }, { before: "b", after: "a" }])]).toEqual([]);
     expect(firstDependencyOrder(Array.from({ length: 24 }, (_, index) => descriptor(String(index).padStart(2, "0"))), [])).toHaveLength(24);
+    const duplicate = { ...descriptor("a"), domain: "replacement" };
+    const items = [descriptor("B"), descriptor("a"), descriptor("b"), duplicate];
+    const edges = [{ before: "b", after: "B" }, { before: "b", after: "B" },
+      { before: "absent", after: "b" }, { before: "a", after: "absent" }];
+    expect(firstReferenceDependencyOrder(items, edges)).toEqual([duplicate, items[2], items[0]]);
+    expect(firstReferenceDependencyOrder(items, edges)).toEqual(linearizations(items, edges)[0]);
+    const cycle = [...edges, { before: "B", after: "b" }];
+    expect(firstReferenceDependencyOrder(items, cycle)).toBeUndefined();
+    expect(linearizations(items, cycle)).toEqual([]);
+    expect(firstReferenceDependencyOrder(items, [{ before: "B", after: "B" }])).toBeUndefined();
   });
 
   it("supports cross-domain class policies and unchanged canonical fingerprints for reordered economics", () => {

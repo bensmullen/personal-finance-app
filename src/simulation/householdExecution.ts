@@ -24,6 +24,7 @@ import {
 } from "../lineage/index.js";
 import {
   assertAuthoritativeStateCurrency,
+  admitS4OpeningSources,
   cloneAuthoritativeState,
   createIndexedExecutionState,
   createAuthoritativeState,
@@ -165,7 +166,8 @@ export interface HouseholdKernelParticipant {
   readonly economicInputs: unknown;
   readonly prepare: (context: RunContext, period: Period, opening: OperationState, work?: readonly HouseholdWorkDescriptor[], tier?: "summary" | "detail") => PreparedOperationParticipant<HouseholdOperationFacts>;
   /** Pure observer of actual executed economics, including summary execution. */
-  readonly observe?: (descriptor: HouseholdWorkDescriptor, facts: HouseholdOperationFacts, runtime: Readonly<Record<string, unknown>>) => Readonly<Record<string, unknown>>;
+  readonly observe?: (descriptor: HouseholdWorkDescriptor, facts: HouseholdOperationFacts, runtime: Readonly<Record<string, unknown>>,
+    observation?: { readonly postingProofs: AuthoritativeState["d2PostedTransactions"]; readonly context: RunContext }) => Readonly<Record<string, unknown>>;
 }
 
 /** Explicit reusable boundary for repeated deterministic evaluations. */
@@ -421,6 +423,9 @@ const runCompiledHouseholdProjectionInternal = (
     compiled.reconciledOpeningState,
     runContext.baseCurrency,
   );
+  admitS4OpeningSources(compiled.reconciledOpeningState, runContext);
+  if (periodRetention?.resume !== undefined)
+    admitS4OpeningSources(periodRetention.resume.state, runContext);
   let state = createIndexedExecutionState(cloneAuthoritativeState(compiled.reconciledOpeningState), counts => performance.counters(counts));
   let primitiveState = createPrimitiveRuntimeStateStore(
     compiled.reconciledPrimitiveState,
@@ -621,7 +626,7 @@ const runCompiledHouseholdProjectionInternal = (
           let runtime = operationRuntime(nextState);
           for (const participant of participants) if (participant.observe !== undefined) {
             performance.counters({ [`participant.${participant.id}.observations`]: 1 });
-            runtime = participant.observe(descriptor, result.facts, runtime);
+            runtime = participant.observe(descriptor, result.facts, runtime, { postingProofs: nextState.d2PostedTransactions, context: runContext });
           }
           restoreOperationRuntime(nextState, runtime);
           if (tier === "summary") performance.counters({ summaryOperationsExecuted: 1 });

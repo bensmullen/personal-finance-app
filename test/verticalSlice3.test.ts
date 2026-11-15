@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { createFundingPolicy, fundingPolicyId, resolveFunding } from "../src/funding/index.js";
 import { domainId } from "../src/identity/index.js";
 import { createAuthoritativeState } from "../src/state/index.js";
-import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
+import { canonicalSerialize, createRunContext, runId, scenarioId } from "../src/simulation/run.js";
+import { runVerticalSlice3 as runReferenceVerticalSlice3 } from "../src/simulation/r3/referenceVerticalSlice3.js";
 import { claimId, createObligation, createSettlementProposal, recognitionId, settlementProposalId } from "../src/semantics/index.js";
 import { instant, utcMonthlyPeriods } from "../src/time/index.js";
 import { Quantity, Rate, RoundingPolicy, SHARE, USD, money, rateConvention, ratePeriod } from "../src/values/index.js";
@@ -78,7 +79,155 @@ const baseInput = (): VerticalSlice3Input => ({
   ],
 });
 
+const zeroReturnHolding = (
+  unitPrice = "0.004",
+  units = "1000",
+  openingValue = "4.00",
+  quoteRounding = priceRounding,
+) => {
+  const position = {
+    id: ids.position,
+    accountId: ids.brokerage,
+    quantity: Quantity.parse(units, SHARE),
+    price: money(unitPrice),
+    carryingValue: money(openingValue),
+  };
+  const openingState = createAuthoritativeState({
+    accounts: {
+      [ids.brokerage]: { id: ids.brokerage, ownerId: ids.owner, kind: "brokerage", cash: money("0") },
+    },
+    positions: { [ids.position]: position },
+  });
+  const input: VerticalSlice3Input = {
+    householdId: ids.household,
+    ownerId: ids.owner,
+    baseCurrency: USD,
+    valuationAccountingPolicy: "economic_only",
+    ruleCatalog: [],
+    transfers: [],
+    purchases: [],
+    fees: [],
+    returns: [{
+      targetPositionId: ids.position,
+      accountId: ids.brokerage,
+      rate: monthlyRate("0"),
+      returnBasis,
+      timing: "end_of_period_on_opening_quantity",
+      priceRounding: quoteRounding,
+      primitiveIds: { compounding: primitive(4), markToMarket: primitive(5) },
+    }],
+  };
+  return { input, openingState, runContext: context(), months: 1 };
+};
+
 describe("Vertical Slice 3 savings and investments", () => {
+  it("executes the owned sub-cent zero-return holding through P23 and P26 without posting a journal", () => {
+    const fixture = zeroReturnHolding();
+    const month = utcMonthlyPeriods(start, 1)[0]!;
+    const before = createAuthoritativeState(fixture.openingState);
+    const openingPosition = before.positions[ids.position]!;
+    expect(openingPosition.price.times(openingPosition.quantity.amount).equals(money("4.00"))).toBe(true);
+
+    const prepared = prepareVerticalSlice3Period(fixture.runContext, fixture.input, month, fixture.openingState);
+    expect(prepared.operations).toHaveLength(1);
+    const valuation = prepared.operations[0];
+    if (valuation?.kind !== "valuation") throw new Error("Expected one prepared valuation");
+    expect(valuation.returnConfiguration.targetPositionId).toBe(ids.position);
+    expect(valuation.descriptor.primitiveInstanceId).toBe(primitive(5));
+    expect(valuation.closingPrice.equals(prepared.closingPrices[ids.position]!)).toBe(true);
+
+    const result = runVerticalSlice3(fixture);
+    expect(result.status).toBe("completed");
+    expect(result.reachedThrough).toBe(month.end);
+    expect(result.periods).toHaveLength(1);
+    const period = result.periods[0]!;
+    expect(period.period).toEqual(month);
+    const closingPosition = result.state.positions[ids.position]!;
+    expect(closingPosition.price.equals(valuation.closingPrice)).toBe(true);
+    expect(closingPosition.id).toBe(openingPosition.id);
+    expect(closingPosition.accountId).toBe(openingPosition.accountId);
+    expect(closingPosition.quantity.equals(openingPosition.quantity)).toBe(true);
+    expect(closingPosition.carryingValue.equals(money("4.00"))).toBe(true);
+    expect(period.portfolioValue.equals(valuation.marketValue)).toBe(true);
+    expect(period.unrealizedGain.equals(period.portfolioValue.minus(money("4.00")))).toBe(true);
+    expect(period.effects).toHaveLength(1);
+    expect(period.effects[0]).toMatchObject({
+      kind: "valuation",
+      sourceOccurrenceKey: valuation.descriptor.occurrenceIdentity,
+    });
+    expect(period.effects[0]!.amount?.equals(period.unrealizedGain)).toBe(true);
+    expect(period.transactions).toEqual([]);
+    expect(result.state.identities.postedTransactionIds).toEqual([]);
+    expect(result.state.accounts[ids.brokerage]!.cash.equals(money("0.00"))).toBe(true);
+    expect(result.state.accounts[ids.brokerage]!.ownerId).toBe(ids.owner);
+    expect(fixture.openingState.positions[ids.position]!.price.equals(money("0.004"))).toBe(true);
+    expect(fixture.openingState.positions[ids.position]!.quantity.equals(Quantity.parse("1000", SHARE))).toBe(true);
+    expect(fixture.openingState.positions[ids.position]!.carryingValue.equals(money("4.00"))).toBe(true);
+    expect(fixture.openingState.accounts[ids.brokerage]!.cash.equals(money("0.00"))).toBe(true);
+    expect(fixture.openingState.identities).toEqual(before.identities);
+  });
+
+  it.each([
+    { rate: "0", quotes: ["0.004"], values: ["4.00"], gains: ["0"] },
+    { rate: "0.1", quotes: ["0.0044", "0.00484"], values: ["4.40", "4.84"], gains: ["0.40", "0.44"] },
+    { rate: "-0.1", quotes: ["0.0036"], values: ["3.60"], gains: ["-0.40"] },
+  ])("preserves exact sub-cent value at periodic return $rate with 2dp configured", ({ rate, quotes, values, gains }) => {
+    const base = zeroReturnHolding();
+    const months = quotes.length;
+    const fixture = {
+      ...base, months, runContext: context(months),
+      input: { ...base.input, returns: [{ ...base.input.returns[0]!, rate: monthlyRate(rate) }] },
+    };
+    const prepared = prepareVerticalSlice3Period(fixture.runContext, fixture.input, utcMonthlyPeriods(start, months)[0]!, fixture.openingState);
+    expect(prepared.closingPrices[ids.position]!.equals(money(quotes[0]!))).toBe(true);
+    const optimized = runVerticalSlice3(fixture);
+    const reference = runReferenceVerticalSlice3(fixture);
+    for (const result of [optimized, reference]) {
+      expect(result.status).toBe("completed");
+      expect(result.state.positions[ids.position]!.price.equals(money(quotes.at(-1)!))).toBe(true);
+      expect(result.periods.map(period => period.portfolioValue.toJSON())).toEqual(values.map(value => money(value).toJSON()));
+      expect(result.periods.map(period => period.unrealizedGain.toJSON())).toEqual(gains.map(gain => money(gain).toJSON()));
+      for (const period of result.periods) {
+        expect(period.effects).toHaveLength(1);
+        expect(period.transactions).toHaveLength(0);
+        expect(period.accountValues[ids.brokerage]!.equals(period.portfolioValue)).toBe(true);
+      }
+    }
+    expect(canonicalSerialize(runVerticalSlice3(fixture))).toBe(canonicalSerialize(optimized));
+  });
+
+  it.each([
+    { unitPrice: "0.01", units: "1000", value: "10.00", quoteRounding: priceRounding },
+    { unitPrice: "0.004", units: "0", value: "0.00", quoteRounding: priceRounding },
+    { unitPrice: "5.00", units: "2", value: "10.00", quoteRounding: priceRounding },
+    { unitPrice: "0.004", units: "1000", value: "4.00", quoteRounding: new RoundingPolicy(3, "half_up") },
+    { unitPrice: "0.0040000000000000001", units: "1000", value: "4.0000000000000001", quoteRounding: priceRounding },
+  ])("values $units units at \$$unitPrice at zero return ($quoteRounding.scale quote decimals)", ({ unitPrice, units, value, quoteRounding }) => {
+    const fixture = zeroReturnHolding(unitPrice, units, value, quoteRounding);
+    const result = runVerticalSlice3(fixture);
+    expect(result.status).toBe("completed");
+    expect(result.periods).toHaveLength(1);
+    expect(result.state.positions[ids.position]!.price.equals(money(unitPrice))).toBe(true);
+    const period = result.periods[0]!;
+    expect(period.portfolioValue.equals(money(value))).toBe(true);
+    expect(period.unrealizedGain.equals(money("0.00"))).toBe(true);
+    expect(period.transactions).toEqual([]);
+  });
+
+  it("rejects an unsupported loss below minus 100% without changing the sub-cent holding", () => {
+    const fixture = zeroReturnHolding();
+    const request = {
+      ...fixture,
+      input: { ...fixture.input, returns: [{ ...fixture.input.returns[0]!, rate: monthlyRate("-1.01") }] },
+    };
+    for (const result of [runVerticalSlice3(request), runReferenceVerticalSlice3(request)]) {
+      expect(result.status).toBe("incomplete");
+      expect(result.periods).toHaveLength(0);
+      expect(result.diagnostics.some(issue => issue.code === "PRIMITIVE_INPUT_INVALID")).toBe(true);
+      expect(canonicalSerialize(result.state)).toBe(canonicalSerialize(fixture.openingState));
+    }
+  });
+
   it("prepares eligible operation mechanics and executes them against one candidate like standalone VS3", () => {
     const input = baseInput();
     const prepared = prepareVerticalSlice3Period(context(), input, utcMonthlyPeriods(start, 1)[0]!, opening());
@@ -197,8 +346,8 @@ describe("Vertical Slice 3 savings and investments", () => {
     expect(result.status).toBe("completed");
     expect(result.periods).toHaveLength(24);
     expect(result.periods[0]!.portfolioValue.amount.toString()).toBe("110.000000000001");
-    expect(result.periods[11]!.portfolioValue.amount.toString()).toBe("1278.59754708127644");
-    expect(result.periods[23]!.portfolioValue.amount.toString()).toBe("2706.46359695042716");
+    expect(result.periods[11]!.portfolioValue.amount.toString()).toBe("1278.250301319682534766761112077915");
+    expect(result.periods[23]!.portfolioValue.amount.toString()).toBe("2707.34648531913850009168574366382");
     expect(result.state.accounts[ids.checking]!.cash.equals(money("600"))).toBe(true);
     expect(result.periods.every((item) => item.realizedGain.isZero() && item.cashInvestmentIncome.isZero())).toBe(true);
   });
@@ -226,8 +375,8 @@ describe("Vertical Slice 3 savings and investments", () => {
     const invested = runVerticalSlice3({ runContext: contextFrom(investmentStart, 24, "42000000-0000-4000-8000-000000000005"), openingState: cashFlow.state, input: investmentInput, months: 24 });
     expect(invested.status).toBe("completed");
     expect(invested.state.accounts[ids.checking]!.cash.equals(money("2400"))).toBe(true);
-    expect(invested.periods[23]!.portfolioValue.amount.toString()).toBe("2706.46359695042716");
-    expect(invested.periods[23]!.statements.netWorth.compare(money("5206.46359695042716"))).toBe(0);
+    expect(invested.periods[23]!.portfolioValue.amount.toString()).toBe("2707.34648531913850009168574366382");
+    expect(invested.periods[23]!.statements.netWorth.compare(money("5207.34648531913850009168574366382"))).toBe(0);
   });
 
   it("rejects public VS3 horizons that do not exactly match the RunContext", () => {
