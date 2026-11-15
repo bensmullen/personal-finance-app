@@ -938,7 +938,6 @@
       "owner_stage": "R3-independent-frozen-reference-performance",
       "blocking_gate": "D2_SOURCE_FEASIBILITY_FRAMEWORK",
       "depends_on": [
-        68,
         277
       ],
       "spec_requirement_ids": [
