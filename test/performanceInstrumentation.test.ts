@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createApplicationPerformanceObserver, translateMeteredCost, requireCompletedPerformanceForecast, requireFullHorizonPerformanceForecast, createPerformanceComparisonValidation, createPerformanceEvidenceSample } from "../src/application/performance.js";
 import { PerformanceRegistry, createPerformanceSession, type PerformanceContext } from "../src/diagnostics/performance.js";
-import { runPersonalHouseholdForecast, comparePersonalHouseholdScenarioIntents } from "../src/application/householdProjection.js";
+import { compileHouseholdKernelForRun, runPersonalHouseholdForecast, comparePersonalHouseholdScenarioIntents } from "../src/application/householdProjection.js";
 import { createRealisticPerformanceFixture, createStressPerformanceFixture, createPerformanceScalingFixtures } from "./fixtures/performanceHouseholds.js";
 import { compileHouseholdProjection } from "../src/application/compiler/householdProjection.js";
 import { runCompiledHouseholdProjection } from "../src/simulation/householdExecution.js";
@@ -16,7 +16,8 @@ import { ForecastController, type ForecastWorkerPort } from "../ui/forecast/cont
 import type { ForecastWorkerRequest, ForecastWorkerResponse } from "../ui/forecast/protocol.js";
 import { calculationFingerprint, toForecastWorkerResult } from "../src/application/interactiveForecast.js";
 import { createGoldenHouseholdDraft } from "../src/application/personalMvp.js";
-import { createGoldenHouseholdForecastRequest, createGoldenHouseholdScenarioIntents } from "../src/application/goldenHousehold.js";
+import { createGoldenHouseholdForecastRequest, createGoldenHouseholdScenarioIntents, GOLDEN_HOUSEHOLD_IDS } from "../src/application/goldenHousehold.js";
+import { qualifyModeledPayroll } from "../src/simulation/d2/integration/householdWages/modeledPayroll.js";
 import { createOutputCapabilityMerger, mergeOutputCapabilities } from "../src/simulation/r3/capabilities.js";
 import { createTaxDiagnosticKey, taxDiagnostic, taxOutputCapabilities, type TaxOutputCapabilities, type TaxCapabilityDiagnostic } from "../src/simulation/tax/contracts.js";
 
@@ -32,6 +33,47 @@ const oneMonth = <T extends ReturnType<typeof createRealisticPerformanceFixture>
 }) as T;
 
 describe("performance instrumentation", () => {
+  it("digests every JSON-visible field without expanding shared replay content into a single string", async () => {
+    const url = new URL("../tools/ci/forecast-feasibility.mjs", import.meta.url).href;
+    const { digestForecastReadModel: digest } = await import(url) as {
+      digestForecastReadModel: (value: unknown) => string;
+    };
+    const basis = { encoded: "a".repeat(8_191) + "\ud800\udc00", integrity: "replay-integrity" };
+    const point = (day: string) => ({
+      traceRefs: [{ replayArtifact: { basis, start: day } }],
+      outputCapabilities: { cash: { diagnostics: [{ code: "PFA-TAX-009", catalogRef: "catalog:0" }] } },
+      cash: { amount: "100.00", currency: "USD" },
+    });
+    const model = {
+      status: "incomplete",
+      diagnosticCatalogs: { entries: [{ id: "catalog:0", content: "law" }] },
+      points: [point("2026-01-01"), point("2026-02-01")],
+    };
+    const independent = JSON.parse(JSON.stringify(model)) as typeof model;
+    expect(digest(independent)).toBe(digest(model));
+    for (const change of [
+      (copy: typeof model) => { copy.status = "completed"; },
+      (copy: typeof model) => { copy.diagnosticCatalogs.entries[0]!.content = "new law"; },
+      (copy: typeof model) => { copy.points.reverse(); },
+      (copy: typeof model) => { copy.points[1]!.outputCapabilities.cash.diagnostics[0]!.catalogRef = "catalog:1"; },
+      (copy: typeof model) => { copy.points[1]!.cash.amount = "100.01"; },
+      (copy: typeof model) => { copy.points[1]!.traceRefs[0]!.replayArtifact.basis.encoded = basis.encoded.slice(0, -1) + "\udc01"; },
+    ]) {
+      const changed = JSON.parse(JSON.stringify(model)) as typeof model;
+      change(changed);
+      expect(digest(changed)).not.toBe(digest(model));
+    }
+    const keyed = { toJSON: (key: string) => key };
+    const projected = { money: money("1.25", USD), keyed, slots: [undefined, , keyed, NaN], omitted: undefined };
+    expect(digest(projected)).toBe(digest(JSON.parse(JSON.stringify(projected))));
+    expect(digest({ toJSON: () => ({ toJSON: () => "ignored", amount: "1" }) })).toBe(digest({ amount: "1" }));
+    expect(digest({ a: 1, b: 2 })).not.toBe(digest({ b: 2, a: 1 }));
+    expect(digest([null])).not.toBe(digest([null, null]));
+    const cycle: { self?: unknown } = {};
+    cycle.self = cycle;
+    expect(() => digest(cycle)).toThrow("Cyclic forecast read model");
+  });
+
   it.each([8, 20, 120])("publishes %i growing snapshots using prefix identity and only their new merge suffix", months => {
     const registry = new PerformanceRegistry();
     const session = createPerformanceSession({ context, clock: { now: () => 0 }, sink: registry });
@@ -474,6 +516,71 @@ describe("performance instrumentation", () => {
       { unit: "compute", ratePerUnit: "0.012", currency: "USD" }, { unit: "transfer", ratePerUnit: "0.003", currency: "USD" },
     ])).toEqual([{ currency: "USD", amount: "0.021", units: { compute: "1.25", transfer: "2" } }]);
     expect(translateMeteredCost({ metering: "not_metered" }, [])).toEqual([]);
+  });
+
+  it.each([
+    [24, "2028-01-01", "2027-07-01"],
+    [120, "2036-01-01", "2035-07-01"],
+    [360, "2056-01-01", "2055-07-01"],
+    [649, "2080-02-01", "2079-08-01"],
+  ] as const)("aligns the %i-month realistic fixture and admits its modeled salary sources", (months, end, retirement) => {
+    const baseline = createRealisticPerformanceFixture();
+    const fixture = months === 24 ? baseline : createRealisticPerformanceFixture(months);
+    const { model, request } = fixture;
+    const { compiler } = request;
+    const cashFlow = compiler.cashFlow!;
+    const bindings = cashFlow.retirementBindings!;
+    expect(fixture.id).toBe("realistic-household");
+    expect(fixture.dimensions.horizonMonths).toBe(months);
+    expect(request.runIdentity).toBe(baseline.request.runIdentity);
+    expect(model.objects.Income).toEqual(baseline.model.objects.Income);
+    expect(model.objects.Scenario).toEqual(baseline.model.objects.Scenario!.map(scenario => ({
+      ...(scenario as Record<string, unknown>), end_date: end,
+    })));
+    expect(bindings).toEqual(baseline.request.compiler.cashFlow!.retirementBindings!.map(binding => ({
+      ...binding, baselineDate: retirement,
+    })));
+    expect(bindings).toHaveLength(3);
+    for (const binding of bindings) {
+      expect(model.objects.Event).toContainEqual(expect.objectContaining({
+        event_id: binding.canonicalEventId, start_date: retirement,
+      }));
+    }
+    for (const settings of [cashFlow, compiler.investments, compiler.liabilities]) {
+      expect(settings).toMatchObject({
+        scenarioId: GOLDEN_HOUSEHOLD_IDS.rootScenario,
+        simulationStart: "2026-01-01", simulationEnd: end, months,
+      });
+    }
+
+    const atMidnight = (date: string) => instant(`${date}T00:00:00.000Z`);
+    const runContext = createRunContext({
+      runId: runId(request.runIdentity), scenarioId: scenarioId(GOLDEN_HOUSEHOLD_IDS.rootScenario),
+      asOf: atMidnight(request.asOf), dataCutoff: atMidnight(request.dataCutoff),
+      simulationStart: atMidnight(cashFlow.simulationStart), simulationEnd: atMidnight(end),
+      baseCurrency: Currency.of(cashFlow.baseCurrency),
+    });
+    const compiled = compileHouseholdKernelForRun(model, compiler, runContext);
+    if (compiled.status !== "compiled") throw new Error(JSON.stringify(compiled.diagnostics));
+    const { executable } = compiled.value;
+    const sources = executable.cashFlowInput!;
+    expect(executable.executionMonths).toBe(months);
+    expect(sources.incomes.map(stream => stream.id).sort()).toEqual(bindings.map(binding => binding.incomeId).sort());
+    for (const stream of sources.incomes) {
+      const retirementBinding = bindings.find(binding => binding.incomeId === stream.id)!;
+      const bank = executable.reconciledOpeningState.accounts[stream.depositAccountId];
+      const admitted = qualifyModeledPayroll(stream, sources.householdId, bank, runContext);
+      expect(stream.modeledPayroll?.issuer).toBe("canonical-forecast/v1");
+      expect(admitted.nonSalaryType).toBeUndefined();
+      expect(admitted).toMatchObject({ runId: runContext.runId, dataCutoff: runContext.dataCutoff });
+      expect(admitted.events).toContainEqual(expect.objectContaining({
+        id: retirementBinding.terminationEventId, targetId: stream.id,
+        kind: "termination", effectiveAt: atMidnight(retirement),
+      }));
+      expect(() => qualifyModeledPayroll(stream, sources.householdId, bank, {
+        ...runContext, runId: runId("91000000-0000-4000-8000-000000000901"),
+      })).toThrow("MODELED_PAYROLL_NOT_ADMITTED");
+    }
   });
 
   it("provides executable distinct synthetic fixtures with explicit gaps", () => {
