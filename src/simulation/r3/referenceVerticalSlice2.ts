@@ -70,6 +70,7 @@ import {
 } from "../run.js";
 import {
   createPrimitiveRuntimeStateStore,
+  occurrenceIdOf,
   runPeriod,
   type PeriodWork,
   type PrimitiveRuntimeStateStore,
@@ -433,6 +434,7 @@ export interface PreparedVerticalSlice2Period {
   readonly primitiveStateFrontier: Instant;
   /** Only P27/P30 entries authored by event preparation; safe to merge into shared runtime. */
   readonly eventPrimitiveTransition: PrimitiveRuntimeStateStore;
+  readonly eventOccurrenceIdentities: readonly GeneratedOccurrenceKey[];
   readonly descriptors: readonly HouseholdWorkDescriptor[];
   readonly occurrences: readonly PreparedVerticalSlice2Occurrence[];
   readonly diagnostics: readonly ValidationIssue[];
@@ -560,7 +562,9 @@ export const prepareVerticalSlice2Period = (
   }
   const ordered = withLocalOrdering(input, occurrences);
   const eventPrimitiveTransition = createPrimitiveRuntimeStateStore(Object.fromEntries(eventResult.primitiveOutputs.filter((output) => output.primitiveId === "P27" || output.primitiveId === "P30").map((output) => [output.primitiveInstanceId, eventResult.primitiveState[output.primitiveInstanceId]!])));
-  const prepared = Object.freeze({ period: Object.freeze({ ...period }), state: eventResult.closingState, primitiveState: eventResult.primitiveState, primitiveStateFrontier: subtractMilliseconds(period.end, 1), eventPrimitiveTransition, descriptors: Object.freeze(ordered.map((item) => item.descriptor)), occurrences: ordered, diagnostics: Object.freeze([...eventResult.diagnostics]), traceRefs: mergeTraceRefs(...eventResult.primitiveOutputs.filter((output) => output.effects.length > 0).map((output) => output.traceRefs)) ?? Object.freeze([]) });
+  const eventOccurrenceIdentities = Object.freeze(eventResult.primitiveOutputs.flatMap(output =>
+    output.effects.map(occurrenceIdOf).filter(id => id !== undefined)));
+  const prepared = Object.freeze({ period: Object.freeze({ ...period }), state: eventResult.closingState, primitiveState: eventResult.primitiveState, primitiveStateFrontier: subtractMilliseconds(period.end, 1), eventPrimitiveTransition, eventOccurrenceIdentities, descriptors: Object.freeze(ordered.map((item) => item.descriptor)), occurrences: ordered, diagnostics: Object.freeze([...eventResult.diagnostics]), traceRefs: mergeTraceRefs(...eventResult.primitiveOutputs.filter((output) => output.effects.length > 0).map((output) => output.traceRefs)) ?? Object.freeze([]) });
   preparedContexts.set(prepared, Object.freeze({ ...runContext }));
   preparedIncomeSources.set(prepared, new Map(input.incomes.map(stream => [stream.id, {
     reference: stream.modeledPayroll,
@@ -631,17 +635,20 @@ interface VerticalSlice2InternalRunInput extends VerticalSlice2RunInput {
   readonly targetPeriods?: readonly Period[];
 }
 
-const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): VerticalSlice2RunResult => {
+const runVerticalSlice2Internal = <Metadata extends Partial<Pick<VerticalSlice2RunResult, "runMetadata">>>(
+  request: VerticalSlice2InternalRunInput,
+  metadata: (months: number) => Metadata,
+): Omit<VerticalSlice2RunResult, "runMetadata"> & Metadata => {
   const months = request.months ?? 360;
   const periods = request.targetPeriods ?? utcMonthlyPeriods(request.runContext.simulationStart, months);
   validateInput(request, periods, request.targetPeriods !== undefined);
   const requestedHorizon = Object.freeze({ start: periods[0]!.start, end: periods[periods.length - 1]!.end });
-  const runMetadata = createRunMetadata(request.runContext, createInputFingerprint({
-    runContext: request.runContext,
-    openingState: request.openingState,
-    model: modeledIncomeFingerprintInput(request.input),
-    assumptions: { months },
-  }));
+  const runMetadata = metadata(months);
+  const finish = (body: Omit<VerticalSlice2RunResult, "runMetadata">) => {
+    const result = Object.assign(body, runMetadata);
+    Object.freeze(result);
+    return result;
+  };
   let committedState = cloneAuthoritativeState(request.openingState);
   let committedPrimitiveState = createPrimitiveRuntimeStateStore(request.primitiveState);
   const committedPeriods: VerticalSlice2PeriodResult[] = [];
@@ -658,7 +665,9 @@ const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): Ver
         primitiveState: committedPrimitiveState,
         work: eventWork(request, targetPeriod),
       });
-      let state = cloneAuthoritativeState(eventResult.closingState);
+      // runPeriod owns and validates its closing candidate. It is private to
+      // this occurrence and can be discarded wholesale if cash work fails.
+      let state = eventResult.closingState;
       const recognitions: RecognitionFact[] = [];
       const proposals: SettlementProposal[] = [];
       const settlements: Settlement[] = [];
@@ -898,9 +907,8 @@ const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): Ver
     } catch (error) {
       if (!(error instanceof ValidationError)) throw error;
       const diagnostics = [...runDiagnostics, ...error.issues];
-      return Object.freeze({
+      return finish({
         status: "incomplete",
-        runMetadata,
         requestedHorizon,
         stoppedAt: targetPeriod.start,
         ...(committedPeriods.length === 0 ? {} : { reachedThrough: committedPeriods[committedPeriods.length - 1]!.period.end }),
@@ -913,9 +921,8 @@ const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): Ver
     }
   }
 
-  return Object.freeze({
+  return finish({
     status: "completed",
-    runMetadata,
     requestedHorizon,
     reachedThrough: requestedHorizon.end,
     state: committedState,
@@ -939,7 +946,7 @@ const executeReferenceCashPeriod = (
   const result = runVerticalSlice2Internal({ runContext: request.runContext, input: request.input, openingState, primitiveState, months: 1, targetPeriods: Object.freeze([period]),
     ...(modeledSourceIncome === undefined ? {} : { modeledSourceIncome }),
     ...(modeledSourceEvents === undefined ? {} : { modeledSourceEvents }),
-    ...(preparedEventTraceRefs === undefined ? {} : { preparedEventTraceRefs }) });
+    ...(preparedEventTraceRefs === undefined ? {} : { preparedEventTraceRefs }) }, () => ({}));
   if (result.status !== "completed" || result.periods[0] === undefined) {
     throw new ValidationError(result.diagnostics);
   }
@@ -1029,7 +1036,14 @@ export const runVerticalSlice2 = (request: VerticalSlice2RunInput): VerticalSlic
     runContext: request.runContext, openingState: request.openingState, input: request.input,
     ...(request.months === undefined ? {} : { months: request.months }),
     ...(request.primitiveState === undefined ? {} : { primitiveState: request.primitiveState }),
-  }) : runVerticalSlice2Prepared(request);
+  }, months => ({
+    runMetadata: createRunMetadata(request.runContext, createInputFingerprint({
+      runContext: request.runContext,
+      openingState: request.openingState,
+      model: modeledIncomeFingerprintInput(request.input),
+      assumptions: { months },
+    })),
+  })) : runVerticalSlice2Prepared(request);
 };
 
 export const createVerticalSlice2PrimitiveId = (value: string): PrimitiveInstanceId => domainId("primitive-instance", value);
