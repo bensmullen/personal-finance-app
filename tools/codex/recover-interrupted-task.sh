@@ -5,7 +5,8 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: PFM_CRASH_RECOVERY_CONFIRMED=1 bash tools/codex/recover-interrupted-task.sh \
+Usage: PFM_CRASH_RECOVERY_CONFIRMED=1 PFM_CRASH_RECOVERY_ISSUE=<issue-number> \
+  bash tools/codex/recover-interrupted-task.sh \
   <interrupted-worktree> <interrupted-branch> <recovery-branch> <expected-checkpoint-SHA> [recovery-worktree]
 
 First close/stop the old Codex writer (or confirm its process ended after a crash).
@@ -24,6 +25,10 @@ old_branch="$2"
 new_branch="$3"
 expected="$4"
 target="${5:-}"
+issue="${PFM_CRASH_RECOVERY_ISSUE:-}"
+case "$issue" in
+  ''|*[!0-9]*) echo "CRASH_RECOVERY_FAIL set PFM_CRASH_RECOVERY_ISSUE to the original issue number" >&2; exit 64 ;;
+esac
 case "$old_branch:$new_branch" in
   codex/*:codex/*|codex/*:agent/*|agent/*:codex/*|agent/*:agent/*) ;;
   *) echo "CRASH_RECOVERY_FAIL both branches must be codex/* or agent/*" >&2; exit 64 ;;
@@ -31,6 +36,7 @@ esac
 [ "$old_branch" != "$new_branch" ] || {
   echo "CRASH_RECOVERY_FAIL recovery MUST use a distinct branch" >&2; exit 1
 }
+git check-ref-format "refs/heads/$old_branch" && git check-ref-format "refs/heads/$new_branch" || usage
 case "$expected" in
   *[!0-9a-fA-F]*|"") echo "CRASH_RECOVERY_FAIL expected SHA must be hexadecimal" >&2; exit 64 ;;
 esac
@@ -46,6 +52,9 @@ old_dir="$(cd "$old_dir" 2>/dev/null && pwd -P)" || {
 [ "$old_dir" != "$canonical" ] || { echo "CRASH_RECOVERY_FAIL source must be a separate task worktree" >&2; exit 1; }
 [ "$(git -C "$old_dir" rev-parse --show-toplevel 2>/dev/null)" = "$old_dir" ] || {
   echo "CRASH_RECOVERY_FAIL source is not its own Git worktree root" >&2; exit 1
+}
+[ "$(git -C "$old_dir" rev-parse --path-format=absolute --git-common-dir)" = "$(git -C "$canonical" rev-parse --path-format=absolute --git-common-dir)" ] || {
+  echo "CRASH_RECOVERY_FAIL source is not linked to the canonical checkout" >&2; exit 1
 }
 [ "$(git -C "$old_dir" branch --show-current)" = "$old_branch" ] || {
   echo "CRASH_RECOVERY_FAIL interrupted worktree branch mismatch" >&2; exit 1
@@ -100,28 +109,70 @@ for ref in "$old_branch" "$new_branch"; do
     echo "CRASH_RECOVERY_FAIL $ref already has different remote history; no push performed" >&2; exit 1
   }
 done
+
+# Use only pinned objects from the verified remote, independent of checkout age.
+export GIT_NO_REPLACE_OBJECTS=1
+git -C "$canonical" fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+main="$(git -C "$canonical" rev-parse --verify refs/remotes/origin/main)"
+if [ -n "${PFM_RECOVERY_MAIN_SHA:-}" ] && [ "$main" != "$PFM_RECOVERY_MAIN_SHA" ]; then
+  echo "CRASH_RECOVERY_FAIL origin/main changed since the recovery entry was verified" >&2
+  exit 1
+fi
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/pfm-crash-recovery.XXXXXXXX")"
+trap 'rm -rf -- "$tmp"' EXIT
+extract_helper() {
+  local entry="$1" destination="$2" blob
+  blob="$(git -C "$canonical" rev-parse --verify "$main:$entry")" &&
+    [ "$(git -C "$canonical" cat-file -t "$blob")" = blob ] &&
+    git -C "$canonical" cat-file blob "$blob" > "$destination" &&
+    [ "$(git -C "$canonical" hash-object --no-filters "$destination")" = "$blob" ] || {
+      echo "CRASH_RECOVERY_FAIL cannot verify origin/main helper $entry" >&2; exit 1
+    }
+}
+extract_helper tools/codex/bootstrap-pr.sh "$tmp/bootstrap-pr.sh"
+extract_helper .codex/hooks/pfm-policy.py "$tmp/pfm-policy.py"
+verify_issue() {
+  python3 "$tmp/pfm-policy.py" --recovery-issue "$old_dir" "$old_branch" "$new_branch" "$issue"
+}
+issue_sha="$(verify_issue)"
+case "$issue_sha" in
+  ''|*[!0-9a-f]*) echo "CRASH_RECOVERY_FAIL trusted policy did not verify the issue" >&2; exit 1 ;;
+esac
+[ "${#issue_sha}" = 64 ] || { echo "CRASH_RECOVERY_FAIL invalid issue digest" >&2; exit 1; }
+verify_source() {
+  [ "$(git -C "$old_dir" branch --show-current)" = "$old_branch" ] &&
+    [ "$(git -C "$old_dir" rev-parse HEAD)" = "$head" ] &&
+    [ -z "$(git -C "$old_dir" status --porcelain=v1 --untracked-files=all)" ] &&
+    [ "$(git -C "$old_dir" remote get-url origin)" = "$old_origin" ] &&
+    [ "$(git -C "$canonical" remote get-url origin)" = "$old_origin" ] &&
+    [ "$(git -C "$old_dir" remote get-url --push --all origin)" = "$old_origin" ] &&
+    [ "$(remote_head main)" = "$main" ] &&
+    [ "$(verify_issue)" = "$issue_sha" ] || {
+      echo "CRASH_RECOVERY_FAIL source, origin/main or issue changed during recovery" >&2; exit 1
+    }
+}
+verify_source
+for ref in "$old_branch" "$new_branch"; do
+  actual="$(remote_head "$ref")"
+  [ -z "$actual" ] || [ "$actual" = "$head" ] || {
+    echo "CRASH_RECOVERY_FAIL $ref changed before publication" >&2; exit 1
+  }
+done
 echo "CRASH_RECOVERY_VERIFIED old_path=$old_dir old_branch=$old_branch checkpoint=$head"
 # These are ordinary, non-force pushes. The original checkpoint stays published
 # under its historical branch, and recovery has its own independent branch.
-git -C "$old_dir" push --no-follow-tags -u origin "HEAD:refs/heads/$old_branch"
-git -C "$old_dir" push --no-follow-tags origin "HEAD:refs/heads/$new_branch"
+git -C "$old_dir" -c remote.origin.mirror=false push --atomic --no-follow-tags origin \
+  "$head:refs/heads/$old_branch" "$head:refs/heads/$new_branch"
 for ref in "$old_branch" "$new_branch"; do
   [ "$(remote_head "$ref")" = "$head" ] || {
     echo "CRASH_RECOVERY_FAIL post-push branch mismatch; original work preserved" >&2; exit 1
   }
 done
-[ "$(git -C "$old_dir" rev-parse HEAD)" = "$head" ] || {
-  echo "CRASH_RECOVERY_FAIL old worktree changed during recovery" >&2; exit 1
-}
-[ -z "$(git -C "$old_dir" status --porcelain=v1 --untracked-files=all)" ] || {
-  echo "CRASH_RECOVERY_FAIL old worktree became dirty during recovery" >&2; exit 1
-}
+verify_source
+git -C "$old_dir" branch --set-upstream-to="origin/$old_branch" "$old_branch" >/dev/null
 echo "CRASH_RECOVERY_PUBLISHED original=$old_branch recovery=$new_branch head=$head"
-helper_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 cd "$canonical"
-if [ -n "$target" ]; then
-  bash "$helper_dir/bootstrap-pr.sh" resume "$new_branch" "$target"
-else
-  bash "$helper_dir/bootstrap-pr.sh" resume "$new_branch"
-fi
-echo "CRASH_RECOVERY_NOTE verify the LIVE GitHub issue TARGET_BRANCH=$new_branch before submitting its PFM_TASK_ISSUE in a fresh Codex conversation; this helper never rewrites authorizations or old task receipts."
+args=(resume "$new_branch")
+if [ -n "$target" ]; then args+=("$target"); fi
+PFM_RECOVERY_MAIN_SHA="$main" PFM_RECOVERY_HEAD="$head" bash "$tmp/bootstrap-pr.sh" "${args[@]}"
+echo "CRASH_RECOVERY_NOTE run the printed read-only preflight and verify the LIVE GitHub issue TARGET_BRANCH=$new_branch before submitting PFM_TASK_ISSUE: $issue in a fresh Codex conversation."

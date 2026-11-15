@@ -149,7 +149,7 @@ fs.writeFileSync(
 );
 const issueAccepted = hook(
   "UserPromptSubmit",
-  { prompt: "Please execute PFM_TASK_ISSUE: 49. Do not rely on multiline prompt transport." },
+  { prompt: "Please execute PFM_TASK_ISSUE: 49. Do not rely on multiline prompt transport.", turn_id: "issue-preview" },
   { PFM_POLICY_TEST_ISSUE_BODY_FILE: issueFixture },
 );
 assert(
@@ -351,6 +351,7 @@ assert(blockedStop?.continue === true, "explicit clean BLOCKED state should be a
 
 sessionId = "policy-self-test-checkpoint";
 assert(hook("UserPromptSubmit", { prompt }).hookSpecificOutput, "checkpoint fixture needs a fresh session grant");
+assert(JSON.stringify(pre("mkdir -p src/new")) === "{}", "checkpoint fixture admits a write first");
 fs.writeFileSync(path.join(hookRepo, "src", "allowed.ts"), "export const value = 3;\n");
 const dirtyBlocked = hook("Stop", {
   last_assistant_message: "TASK_STATUS: BLOCKED\nBLOCKER: external semantic decision required",
@@ -373,7 +374,9 @@ assert(checkpointComplete.decision === "block" && checkpointComplete.reason.incl
 // Each recovery scenario has an isolated local bare origin; no network publication.
 const realGit = mustRun("sh", ["-c", "command -v git"]).stdout.trim();
 let recoveryIndex = 0;
-const recoveryFixture = () => {
+const edit = { tool_name: "apply_patch",
+  tool_input: { command: "*** Begin Patch\n*** Update File: src/allowed.ts\n@@\n-export const value = 2;\n+export const value = 3;\n*** End Patch" } };
+const recoveryFixture = ({ initial = "active" } = {}) => {
   const directory = path.join(temp, "recovery-" + ++recoveryIndex);
   const repository = path.join(directory, "repo");
   const remote = path.join(directory, "remote.git");
@@ -402,8 +405,12 @@ const recoveryFixture = () => {
     return JSON.parse(result.stdout);
   };
   const start = (extra = {}) => invoke("UserPromptSubmit", { prompt: "PFM_TASK_ISSUE: 85", ...extra });
-  const accepted = start();
-  assert(accepted.hookSpecificOutput?.additionalContext.includes("authorization accepted"), "clean starts unchanged");
+  const claim = (extra = {}) => invoke("PreToolUse", { ...edit, ...extra });
+  if (initial !== "none") {
+    const accepted = start();
+    assert(accepted.hookSpecificOutput?.additionalContext.includes("authorization accepted"), "clean starts unchanged");
+    if (initial === "active") assert(JSON.stringify(claim()) === "{}", "fixture admits first writer");
+  }
   const dirty = () => fs.appendFileSync(path.join(repository, "src/allowed.ts"), "// interrupted work\n");
   const snapshot = () => ({ head: git("rev-parse", "HEAD"), status: git("status", "--porcelain=v1"),
     diff: git("diff"), staged: git("diff", "--cached") });
@@ -412,8 +419,98 @@ const recoveryFixture = () => {
     assert(!calls.some((line) => /^(reset|clean|stash|checkout|switch|rebase|merge |cherry-pick|restore)\b/.test(line)
       || /--force|--amend|--delete/.test(line)), "recovery must not discard/rewrite/force work");
   };
-  return { repository, remote, git, invoke, start, dirty, snapshot, issue, assertNoUnsafeCommands };
+  return { repository, remote, git, invoke, start, claim, dirty, snapshot, issue, assertNoUnsafeCommands };
 };
+
+// Issue #309 reported BLOCKED at 5467100e1a6fdce932fc0a040f8877d34b9cce6e
+// with no edits and no successful Stop. Replay the hook sequence on a
+// synthetic clean checkpoint, then compare it to a sealed legacy ACTIVE grant.
+for (const legacy of [false, true]) {
+  const f = recoveryFixture({ initial: "prepared" });
+  const runtime = path.join(f.repository, ".codex/runtime");
+  const latest = path.join(runtime, "latest-task.json");
+  const pointer = JSON.parse(fs.readFileSync(latest));
+  const stateFile = path.join(runtime, pointer.path);
+  const state = JSON.parse(fs.readFileSync(stateFile));
+  assert(state.PREPARED && !state.ACTIVE, "prompt with no tools creates no exclusive writer");
+  if (legacy) {
+    delete state.PREPARED;
+    delete state.TURN_ID;
+    state.ACTIVE = true;
+    const data = JSON.stringify(state);
+    fs.writeFileSync(stateFile, data);
+    fs.writeFileSync(latest, JSON.stringify({ ...pointer, sha256: createHash("sha256").update(data).digest("hex") }));
+  }
+  const before = f.snapshot();
+  const bytes = fs.readFileSync(latest, "utf8");
+  assert(JSON.stringify(f.invoke("PreToolUse", {
+    tool_name: "github_issue_read", tool_input: { number: 85 },
+  })) === "{}", "read-only issue lookup remains available");
+  const preflight = f.invoke("PreToolUse", { tool_name: "Bash",
+    tool_input: { command: "node tools/codex/limited-local-verification.mjs --illegal" } });
+  assert(preflight.hookSpecificOutput?.permissionDecision === "deny", "denied preflight acquires no ownership");
+  assert(fs.readFileSync(latest, "utf8") === bytes, "read or denied tool changed receipt");
+  const foreign = f.start({ session_id: "fresh-after-missing-stop" });
+  assert(legacy ? foreign.reason?.includes("Active foreign writer") : foreign.hookSpecificOutput,
+    "missing Stop fences legacy ACTIVE but permits superseding PREPARED");
+  assert(JSON.stringify(f.snapshot()) === JSON.stringify(before), "no-edit replay preserves Git");
+}
+
+{
+  const f = recoveryFixture({ initial: "prepared" });
+  assert(f.start().reason.includes("Duplicate"), "duplicate turn cannot mint a second receipt");
+  assert(f.claim({ tool_input: { command: "*** Begin Patch\n*** End Patch" } })
+    .hookSpecificOutput?.permissionDecision === "deny", "empty patch cannot claim writer");
+  const outsideMove = f.claim({ tool_input: { command:
+    "*** Begin Patch\n*** Update File: src/allowed.ts\n*** Move to: src/outside.ts\n*** End Patch" } });
+  assert(outsideMove.hookSpecificOutput?.permissionDecision === "deny", "patch move checks destination");
+  fs.appendFileSync(f.issue, "\nNew handoff details after preparation.\n");
+  assert(f.claim().hookSpecificOutput?.permissionDecisionReason.includes("TASK_ISSUE_INTEGRITY"),
+    "stale issue digest cannot acquire writer");
+  const before = f.snapshot();
+  assert(f.invoke("Stop", { last_assistant_message: "TASK_STATUS: COMPLETE\nACCEPTANCE_STATUS: SATISFIED" })
+    .reason.includes("no implementation commit"), "prepared grant cannot report COMPLETE");
+  const terminal = f.invoke("Stop", { stop_hook_active: true });
+  assert(terminal.continue === false && terminal.stopReason.includes("TASK_INCOMPLETE"),
+    "missing final status closes the clean no-edit turn without accepting completion");
+  assert(JSON.stringify(f.snapshot()) === JSON.stringify(before), "prepared Stop never checkpoints");
+  assert(f.start({ session_id: "fresh-after-closed" }).hookSpecificOutput, "fresh turn can prepare after clean closure");
+}
+
+{
+  const f = recoveryFixture({ initial: "prepared" });
+  f.dirty();
+  const before = f.snapshot();
+  assert(f.claim().hookSpecificOutput?.permissionDecisionReason.includes("STATE_DIRTY"),
+    "first edit cannot claim unexpected dirty state");
+  assert(f.start({ session_id: "fresh-with-dirt" }).reason.includes("STATE_DIRTY"),
+    "new session cannot supersede prepared receipt with unexpected dirty state");
+  assert(JSON.stringify(f.snapshot()) === JSON.stringify(before), "dirty prepared refusals preserve changes");
+}
+
+for (const tamper of ["pointer", "state"]) {
+  const f = recoveryFixture({ initial: "prepared" });
+  const runtime = path.join(f.repository, ".codex/runtime");
+  const latest = path.join(runtime, "latest-task.json");
+  if (tamper === "pointer") fs.rmSync(latest);
+  else fs.appendFileSync(path.join(runtime, "recovery-first.json"), " ");
+  assert(f.claim().hookSpecificOutput?.permissionDecisionReason.includes("STATE_RECOVERY_REQUIRED"),
+    "missing pointer or mismatched state hash must block writer admission");
+  assert(f.invoke("Stop", { last_assistant_message: "TASK_STATUS: COMPLETE\nACCEPTANCE_STATUS: SATISFIED" })
+    .decision === "block", "ambiguous receipt must never accept COMPLETE");
+}
+
+{
+  const f = recoveryFixture();
+  f.dirty();
+  assert(f.invoke("Stop").decision === "block", "first invalid Stop requests a corrected final report");
+  const fallback = f.invoke("Stop", { stop_hook_active: true });
+  assert(fallback.continue === false && fallback.stopReason.includes("TASK_INCOMPLETE"),
+    "terminal invalid Stop must refuse completion");
+  const closed = JSON.parse(fs.readFileSync(path.join(f.repository, ".codex/runtime/recovery-first.json")));
+  assert(!closed.ACTIVE && f.git("status", "--porcelain") === "" && f.git("rev-parse", "HEAD") === f.git("rev-parse", "@{u}"),
+    "terminal invalid Stop can close after checkpointing and sharing in-scope work");
+}
 
 // A PM answering a BLOCKED scope question is a new task authorization, NOT an
 // extension of the old turn. A different Codex chat may own the clean pushed
@@ -461,9 +558,9 @@ const recoveryFixture = () => {
     && grant.includes("NEW, live GitHub issue grant"),
     "updated live issue paths must replace closed receipt with a visible new authorization");
   const newReceipt = JSON.parse(fs.readFileSync(path.join(f.repository, ".codex/runtime/new-chat-authorized.json")));
-  assert(newReceipt.ACTIVE === true && newReceipt.ALLOWED_PATHS.includes("src/outside.ts")
+  assert(newReceipt.PREPARED === true && newReceipt.ACTIVE === false && newReceipt.ALLOWED_PATHS.includes("src/outside.ts")
     && newReceipt.BASE_HEAD === f.git("rev-parse", "HEAD"),
-    "new chat must be active with widened paths and a checkpoint-based head");
+    "new chat must be prepared with widened paths and a checkpoint-based head");
   const inScope = f.invoke("PreToolUse", {
     session_id: "new-chat", turn_id: "authorized", tool_name: "apply_patch",
     tool_input: { command: "*** Begin Patch\n*** Update File: src/outside.ts\n*** End Patch" },
@@ -647,7 +744,7 @@ rejectedRecovery("protected product dirt", (f) => fs.writeFileSync(path.join(f.r
 rejectedRecovery("protected dirt despite broad product scope", (f) => {
   f.git("restore", "src/allowed.ts");
   fs.writeFileSync(f.issue, prompt.replace("- src/allowed.ts", "- ."));
-  f.start();
+  assert(f.start({ turn_id: "broader" }).hookSpecificOutput, "prepare prior broad path scope");
   f.dirty();
   fs.writeFileSync(path.join(f.repository, ".codex/control.txt"), "control\n");
 }, "protected control path");
@@ -688,7 +785,7 @@ rejectedRecovery("prior scope narrower", (f) => {
   fs.writeFileSync(f.issue, prompt.replace("- src/new/**\n", ""));
   // Reauthorize cleanly before interruption under a narrower prior contract.
   f.git("restore", "src/allowed.ts");
-  f.start();
+  assert(f.start({ turn_id: "narrower" }).hookSpecificOutput, "prepare prior narrow path scope");
   fs.mkdirSync(path.join(f.repository, "src/new"), { recursive: true });
   fs.writeFileSync(path.join(f.repository, "src/new/new.ts"), "// outside prior scope\n");
   fs.writeFileSync(f.issue, prompt);
@@ -714,9 +811,10 @@ rejectedRecovery("committed then reverted out-of-scope work", (f) => {
 }, "src/outside.ts");
 
 {
-  const f = recoveryFixture();
+  const f = recoveryFixture({ initial: "none" });
   // Identical inline contracts have stable identity; different semantics do not.
-  f.invoke("UserPromptSubmit", { prompt });
+  assert(f.invoke("UserPromptSubmit", { prompt }).hookSpecificOutput, "prepare inline contract");
+  assert(JSON.stringify(f.claim()) === "{}", "admit inline writer");
   f.dirty();
   const rejected = f.invoke("UserPromptSubmit", { prompt: prompt.replace("implementation only", "implementation differently"), turn_id: "different" });
   assert(rejected.decision === "block" && rejected.reason.includes("provenance"), "changed inline identity blocks");
@@ -911,8 +1009,32 @@ assert 'TASK_INCOMPLETE: POLICY_LOCK_BUSY: Stop' in recursive_stop.get('stopReas
 assert 'Preserve policy.lock and all receipts' in recursive_stop['stopReason']
 allowed(batch(payloads))
 assert snapshot() == before and lock_path.stat().st_ino == inode, 'lock handling changed receipt or lock identity'
+
+def single(payload):
+    child, fd = launch(payload)
+    os.close(fd)
+    return finish(child)
+
+blocked = 'TASK_STATUS: BLOCKED\nBLOCKER: done'
+assert single(dict(payloads[2], session_id='recovery', turn_id='first', last_assistant_message=blocked))['continue']
+for session in ('prepared-one', 'prepared-two'):
+    response = single(dict(hook_event_name='UserPromptSubmit', session_id=session, turn_id='first',
+                           prompt='PFM_TASK_ISSUE: 85'))
+    assert 'hookSpecificOutput' in response, response
+edits = [dict(payloads[1], session_id=session,
+              tool_input=dict(command='*** Begin Patch\n*** Delete File: src/allowed.ts\n*** End Patch'))
+         for session in ('prepared-one', 'prepared-two')]
+loser, winner = batch(edits)
+assert loser['hookSpecificOutput']['permissionDecision'] == 'deny' and winner == {}, (loser, winner)
+claimed = snapshot()
+assert single(dict(payloads[2], session_id='prepared-one', turn_id='first',
+                   last_assistant_message=blocked))['continue']
+assert snapshot() == claimed, 'old prepared Stop changed the active writer receipt'
+assert single(dict(hook_event_name='UserPromptSubmit', session_id='third', turn_id='first',
+                   prompt='PFM_TASK_ISSUE: 85'))['decision'] == 'block'
 `, policy, f.repository], { cwd: f.repository,
-    env: { PFM_POLICY_TEST_ORIGIN: "https://github.com/bensmullen/personal-finance-app.git" } });
+    env: { PFM_POLICY_TEST_ORIGIN: "https://github.com/bensmullen/personal-finance-app.git",
+      PFM_POLICY_TEST_ISSUE_BODY_FILE: f.issue } });
   assert(result.status === 0, "bounded real-lock scenarios must succeed");
   f.assertNoUnsafeCommands();
 }
@@ -995,7 +1117,7 @@ for (const dirty of [false, true]) {
   assert(fs.readFileSync(receipt, 'utf8') === before, 'idempotent old Stop cannot replace new owner');
 }
 {
-  const f = recoveryFixture();
+  const f = recoveryFixture({ initial: "none" });
   const helper = 'tools/codex/limited-local-verification.mjs';
   const command = `node ${helper} test/affected.test.ts`;
   fs.mkdirSync(path.join(f.repository, 'tools/codex'), { recursive: true });
@@ -1008,8 +1130,11 @@ for (const dirty of [false, true]) {
   fs.appendFileSync(path.join(f.repository, '.gitignore'), '.codex/logs/\n');
   f.git('add', '.'); f.git('commit', '-m', 'preflight fixture');
   f.git('update-ref', 'refs/remotes/origin/main', f.git('rev-parse', 'HEAD'));
-  f.start();
+  f.git('push', 'origin', 'codex/policy-self-test');
+  assert(f.start().hookSpecificOutput, 'preflight fixture prepares from shared head');
   const preflight = text => f.invoke('PreToolUse', { tool_name: 'Bash', tool_input: { command: text } });
+  assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'prepared task cannot reserve preflight');
+  assert(JSON.stringify(f.claim()) === '{}', 'first edit admits writer before preflight');
   assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'unaffected named file rejected');
   f.dirty();
   for (const unsafe of [`bash -c '${command}'`, `${command}; echo bypass`, `${command} && true`,
@@ -1156,7 +1281,7 @@ const attachmentMutation = hook(
   {
     tool_name: "apply_patch",
     tool_use_id: "attachment-mutated",
-    tool_input: { command: "*** Begin Patch\\n*** Update File: src/allowed.ts\\n*** End Patch" },
+    tool_input: { command: "*** Begin Patch\n*** Delete File: src/allowed.ts\n*** End Patch" },
   },
   { CODEX_HOME: codexHome },
 );
@@ -1176,6 +1301,9 @@ mustRun("git", ["config", "user.name", "PFM Test"], { cwd: seed });
 mustRun("git", ["config", "user.email", "pfm@example.test"], { cwd: seed });
 fs.writeFileSync(path.join(seed, "file.txt"), "one\n");
 fs.writeFileSync(path.join(seed, ".gitignore"), ".codex/runtime/\n");
+fs.mkdirSync(path.join(seed, "tools/codex"), { recursive: true });
+fs.mkdirSync(path.join(seed, ".codex/hooks"), { recursive: true });
+fs.writeFileSync(path.join(seed, "tools/codex/bootstrap-pr.sh"), "exit 141 # stale bootstrap\n");
 mustRun("git", ["add", "."], { cwd: seed });
 mustRun("git", ["commit", "-m", "one"], { cwd: seed });
 mustRun("git", ["init", "--bare", remote], { cwd: bootstrapRoot });
@@ -1385,11 +1513,18 @@ const crashHead = mustRun('git', ['-C', crashed, 'rev-parse', 'HEAD']).stdout.tr
 const crashReceiptDir = path.join(crashed, '.codex', 'runtime');
 fs.mkdirSync(crashReceiptDir, { recursive: true });
 const crashReceipt = path.join(crashReceiptDir, 'latest-task.json');
-const originalReceiptBytes = '{"ACTIVE":true,"SESSION_ID":"interrupted"}\\n';
+const crashState = JSON.stringify({ ACTIVE: true, SESSION_ID: "interrupted", AUTHORIZATION_ID: "crash-fixture",
+  WORKTREE: fs.realpathSync(crashed), TARGET_BRANCH: "codex/crashed-task", TASK_ISSUE: { number: 309 } });
+fs.writeFileSync(path.join(crashReceiptDir, "interrupted-first.json"), crashState);
+const originalReceiptBytes = JSON.stringify({ path: "interrupted-first.json",
+  sha256: createHash("sha256").update(crashState).digest("hex") });
 fs.writeFileSync(crashReceipt, originalReceiptBytes);
 const crashArgs = [crashHelper, crashed, 'codex/crashed-task',
   'codex/crashed-task-recovery', crashHead.slice(0, 10), recovered];
-const crashEnv = { ...bootstrapEnv, PFM_CRASH_RECOVERY_CONFIRMED: '1' };
+const crashIssue = path.join(bootstrapRoot, "crash-issue.md");
+fs.writeFileSync(crashIssue, prompt.replace("codex/policy-self-test", "codex/crashed-task-recovery"));
+const crashEnv = { ...bootstrapEnv, PFM_CRASH_RECOVERY_CONFIRMED: '1', PFM_CRASH_RECOVERY_ISSUE: "309",
+  PFM_POLICY_TEST_ISSUE_BODY_FILE: crashIssue };
 const deniedUnconfirmed = run('bash', crashArgs, { cwd: source, env: bootstrapEnv });
 assert(deniedUnconfirmed.status !== 0 && deniedUnconfirmed.stderr.includes('CONFIRMED'),
   'crash helper requires explicit operator assurance writer stopped');
@@ -1411,10 +1546,25 @@ const refusedCollision = run('bash', collisionArgs, { cwd: source, env: crashEnv
 assert(refusedCollision.status !== 0 && refusedCollision.stderr.includes('different remote history') &&
   !refusedCollision.stdout.includes('CRASH_RECOVERY_PUBLISHED'),
   'crash recovery must refuse conflicting existing remote branch before any writes');
+const missingHelper = run("bash", crashArgs, { cwd: source, env: crashEnv });
+assert(missingHelper.status !== 0 && missingHelper.stderr.includes("cannot verify origin/main helper"),
+  "missing trusted policy must fail before publication");
+fs.copyFileSync(bootstrap, path.join(seed, "tools/codex/bootstrap-pr.sh"));
+fs.copyFileSync(policy, path.join(seed, ".codex/hooks/pfm-policy.py"));
+mustRun("git", ["-C", seed, "add", "tools/codex/bootstrap-pr.sh", ".codex/hooks/pfm-policy.py"]);
+mustRun("git", ["-C", seed, "commit", "-m", "Publish trusted recovery helpers"]);
+mustRun("git", ["-C", seed, "push", "origin", "main"]);
+const wrongOwner = run("bash", crashArgs, { cwd: source, env: { ...crashEnv, PFM_CRASH_RECOVERY_ISSUE: "310" } });
+assert(wrongOwner.status !== 0 && wrongOwner.stderr.includes("no matching hash-bound active owner"),
+  "wrong issue pointer cannot publish the old checkpoint");
+assert(mustRun("git", ["-C", source, "ls-remote", "--heads", "origin", "refs/heads/codex/crashed-task*"])
+  .stdout.split("\n").filter(Boolean).length === 1, "failed recovery must leave only the collision fixture branch");
 const rescued = mustRun('bash', crashArgs, { cwd: source, env: crashEnv });
 assert(rescued.stdout.includes('CRASH_RECOVERY_PUBLISHED') &&
   rescued.stdout.includes('PR_WORKTREE_READY mode=resume'),
   'exact preserved WIP checkpoint must publish to two remote branches and bootstrap recovery');
+assert(fs.readFileSync(path.join(source, "tools/codex/bootstrap-pr.sh"), "utf8").includes("exit 141") &&
+  rescued.stdout.includes("PR_TASK_RECEIPT status=absent"), "recovery executes pinned bootstrap without updating stale main");
 assertHandoff(rescued, 'resume', recovered, 'codex/crashed-task-recovery');
 assert(fs.readFileSync(crashReceipt, 'utf8') === originalReceiptBytes &&
   mustRun('git', ['-C', crashed, 'rev-parse', 'HEAD']).stdout.trim() === crashHead &&
@@ -1427,6 +1577,27 @@ const repeatCrash = mustRun('bash', crashArgs, { cwd: source, env: crashEnv });
 assert(repeatCrash.stdout.includes('PR_WORKTREE_READY mode=resume') &&
   fs.readFileSync(crashReceipt, 'utf8') === originalReceiptBytes,
   'repeating an exact-SHA recovery is idempotent and preserves the old receipt');
+const originalResume = mustRun("bash", [bootstrap, "resume", "codex/crashed-task", crashed],
+  { cwd: source, env: bootstrapEnv });
+assert(originalResume.stdout.includes("PR_TASK_RECEIPT status=active-foreign-writer"),
+  "Git-ready original worktree still reports active ownership without inferring death");
+const worktreeReceipt = path.join(recovered, ".codex/runtime");
+fs.mkdirSync(worktreeReceipt, { recursive: true });
+for (const [prepared, expected] of [[true, "prepared-non-owning"], [false, "closed"]]) {
+  const stored = JSON.stringify({ ...JSON.parse(crashState), ACTIVE: false, PREPARED: prepared,
+    WORKTREE: fs.realpathSync(recovered), TARGET_BRANCH: "codex/crashed-task-recovery" });
+  fs.writeFileSync(path.join(worktreeReceipt, "diagnosis-first.json"), stored);
+  fs.writeFileSync(path.join(worktreeReceipt, "latest-task.json"), JSON.stringify({
+    path: "diagnosis-first.json", sha256: createHash("sha256").update(stored).digest("hex"),
+  }));
+  const diagnosis = mustRun("bash", [bootstrap, "resume", "codex/crashed-task-recovery", recovered],
+    { cwd: source, env: bootstrapEnv });
+  assert(diagnosis.stdout.includes("PR_TASK_RECEIPT status=" + expected), "valid receipt status " + expected);
+}
+fs.appendFileSync(path.join(worktreeReceipt, "diagnosis-first.json"), " ");
+const tampered = mustRun("bash", [bootstrap, "resume", "codex/crashed-task-recovery", recovered],
+  { cwd: source, env: bootstrapEnv });
+assert(tampered.stdout.includes("PR_TASK_RECEIPT status=malformed-or-tampered"), "receipt digest mismatch is visible");
 
 fs.rmSync(temp, { recursive: true, force: true });
 console.log(
