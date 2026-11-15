@@ -363,6 +363,7 @@ if (invoked && args[0] === '--probe' && args.length === 3) {
   let referenceEquality = 'not measured';
   let referenceEvidence = 'not measured';
   let referencePhases = 'not measured';
+  let referenceCpuProfile = 'not measured';
   let parityFailure;
   if (executed && manual) {
     try {
@@ -422,12 +423,41 @@ if (invoked && args[0] === '--probe' && args.length === 3) {
           // Reviewer-only real-clock measurements on the unchanged frozen runner.
           // The signed source-qualified economic comparison remains unmodified.
           const referenceRegistry = new PerformanceRegistry();
-          const reference = referenceRun({ compiled: executable, runContext }, {
-            clock: { now: () => performance.now() }, sink: referenceRegistry,
-            context: { runId: `qa326-reference:${months}`, fixtureId: fixture.id,
-              dataClassification: 'synthetic', modelCounts: fixture.coverage.canonicalObjectCounts,
-              executionLocation: 'local_node', runtime: process.version, cacheState: 'not_applicable' },
-          });
+          // QA-only function-level CPU evidence for short 8/20-month probes.
+          // No source/financial/ordering semantics are modified; 120+ probes run
+          // unprofiled under the original 120-second and 2048-MiB ceilings.
+          let cpuSession;
+          if (months <= 20) {
+            try {
+              const { Session } = await import('node:inspector/promises');
+              cpuSession = new Session();
+              cpuSession.connect();
+              await cpuSession.post('Profiler.enable');
+              await cpuSession.post('Profiler.start');
+            } catch {
+              cpuSession?.disconnect();
+              cpuSession = undefined;
+              referenceCpuProfile = 'unavailable';
+            }
+          }
+          let reference;
+          try {
+            reference = referenceRun({ compiled: executable, runContext }, {
+              clock: { now: () => performance.now() }, sink: referenceRegistry,
+              context: { runId: `qa326-reference:${months}`, fixtureId: fixture.id,
+                dataClassification: 'synthetic', modelCounts: fixture.coverage.canonicalObjectCounts,
+                executionLocation: 'local_node', runtime: process.version, cacheState: 'not_applicable' },
+            });
+          } finally {
+            if (cpuSession) {
+              try {
+                const { profile } = await cpuSession.post('Profiler.stop');
+                writeFileSync(resolve(directory, `${months}.reference.cpuprofile`), JSON.stringify(profile));
+                referenceCpuProfile = 'captured';
+              } catch { referenceCpuProfile = 'unavailable'; }
+              finally { cpuSession.disconnect(); }
+            }
+          }
           referencePhases = Object.fromEntries(PERFORMANCE_PHASES.map(phase =>
             [phase, referenceRegistry.latest(phase) ?? 'not measured']));
           stages.end(reference.periods.length);
@@ -457,7 +487,7 @@ if (invoked && args[0] === '--probe' && args.length === 3) {
     worker: { status: 'not measured', reason: 'existing synthetic fixture executes local_node; worker evidence remains #181-owned' },
     financialEquality: { repeatExecution: equality, optimizedVsReference: referenceEquality,
       scope: 'shared compiled-kernel economics; frozen reference tax-participant coverage and worker transport not measured' },
-    referenceEvidence, referencePhases, ...(parityFailure === undefined ? {} : { parityFailure }) };
+    referenceEvidence, referencePhases, referenceCpuProfile, ...(parityFailure === undefined ? {} : { parityFailure }) };
   writeFileSync(resolve(directory, `${months}.json`), JSON.stringify(evidence, null, 2) + '\n');
   stages.end(applicationCoverage.periodCount);
   if (!executed || (manual && (parityFailure || equality !== 'equal' || referenceEquality !== 'equal'))) process.exitCode = 1;
