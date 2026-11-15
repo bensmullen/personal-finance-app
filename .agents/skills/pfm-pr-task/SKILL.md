@@ -81,6 +81,11 @@ conditions when useful. Their exact headings are not parser requirements.
   repository mutation claims the writer under the policy lock. The bounded
   preflight can run after writer admission. A fresh authenticated turn may
   supersede an unused prepared receipt at a proven clean checkpoint.
+- Until the first admitted edit, use simple read-only shell commands such as
+  `git status`, `git show HEAD:path`, `rg -n 'pattern' path`, or `cat path`.
+  Use separate calls for inspection. Shell wrappers, substitutions, pipelines,
+  redirection, and unrecognized Git options are denied without an active grant.
+  Unexpected drift from a prepared checkpoint requires operator diagnosis.
 - Edit only `ALLOWED_PATHS`.
 - Before writing any high-cardinality/periodic diagnostic, worker/API payload,
   saved result, cached snapshot, or read model, inspect how much large identical

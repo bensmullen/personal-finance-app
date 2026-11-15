@@ -159,7 +159,8 @@ pointer = root / '.codex/runtime/latest-task.json'
 if not pointer.exists() and not pointer.is_symlink():
     for candidate in pointer.parent.glob('*.json'):
         try:
-            if json.loads(candidate.read_bytes()).get('ACTIVE') is True:
+            state = json.loads(candidate.read_bytes())
+            if state.get('ACTIVE') is True or state.get('PREPARED') is True:
                 print('malformed-or-tampered')
                 break
         except (OSError, ValueError, AttributeError):
@@ -292,25 +293,28 @@ if [ -n "${PFM_RECOVERY_HEAD:-}" ]; then
 fi
 
 if [ -n "$owner" ]; then
-  git -C "$owner" branch --set-upstream-to="$remote_tracking" "$branch" >/dev/null
+  owner_receipt="$(receipt_status "$owner")"
   if [ -n "$(git -C "$owner" status --porcelain=v1 --untracked-files=normal)" ]; then
     printf 'PR_BOOTSTRAP_FAIL existing branch worktree is dirty: %s\n' "$owner" >&2
     exit 1
   fi
   local_head="$(git -C "$owner" rev-parse HEAD)"
   if [ "$local_head" = "$remote_head" ]; then
+    case "$owner_receipt" in
+      absent|closed) git -C "$owner" branch --set-upstream-to="$remote_tracking" "$branch" >/dev/null ;;
+    esac
     verify_ready "$owner" "$remote_head"
     exit 0
   fi
   if git merge-base --is-ancestor "$local_head" "$remote_head"; then
-    owner_receipt="$(receipt_status "$owner")"
     case "$owner_receipt" in
-      absent|closed|prepared-non-owning) ;;
+      absent|closed) ;;
       *)
         printf 'PR_BOOTSTRAP_FAIL fast-forward needs receipt ownership diagnosis: path=%s status=%s\n' "$owner" "$owner_receipt" >&2
         exit 1 ;;
     esac
     git -C "$owner" merge --ff-only "$remote_target" >/dev/null
+    git -C "$owner" branch --set-upstream-to="$remote_tracking" "$branch" >/dev/null
     verify_ready "$owner" "$remote_head"
     exit 0
   fi

@@ -456,6 +456,95 @@ for (const legacy of [false, true]) {
   assert(JSON.stringify(f.snapshot()) === JSON.stringify(before), "no-edit replay preserves Git");
 }
 
+for (const initial of ["none", "prepared"]) {
+  const f = recoveryFixture({ initial });
+  const grant = { session_id: "recovery", turn_id: "first" };
+  const shell = (event, command) => f.invoke(event, {
+    ...grant, tool_name: "Bash", tool_use_id: "prepared-shell", tool_input: { command },
+  });
+  const latest = path.join(f.repository, ".codex/runtime/latest-task.json");
+  const receipt = () => fs.existsSync(latest) ? fs.readFileSync(latest, "utf8") : null;
+  const before = f.snapshot();
+  const originalReceipt = receipt();
+  for (const command of [
+    "git status --porcelain=v1", "git show HEAD:src/allowed.ts", "cat src/allowed.ts",
+    "sed -n '1,3p;5p' src/allowed.ts",
+  ]) {
+    assert(JSON.stringify(shell("PreToolUse", command)) === "{}", "read-only command admitted: " + command);
+    assert(JSON.stringify(shell("PermissionRequest", command)) === "{}", "read-only command uses normal permission");
+    mustRun("bash", ["-c", command], { cwd: f.repository });
+    assert(JSON.stringify(shell("PostToolUse", command)) === "{}", "read-only tool leaves prepared state intact");
+  }
+  assert(JSON.stringify(shell("PreToolUse", "rg -n 'export|const' src")) === "{}",
+    "quoted search syntax remains available without a writer");
+  for (const command of [
+    `python3 -c 'from pathlib import Path; Path("src/untracked-outside.ts").write_text("x")'`,
+    `node -e 'require("fs").writeFileSync("src/outside.ts", "x")'`,
+    `sh -c 'git add src/allowed.ts'`,
+    `bash -c 'touch src/outside.ts'`,
+    "git -C . add src/allowed.ts", "git -C . commit --allow-empty -m unauthorized",
+    "git -C . checkout main", "git show --output=src/outside.ts",
+    "cat $(touch src/outside.ts)", 'cat "`touch src/outside.ts`"',
+    "alias cat='touch src/outside.ts'; cat", "cat src/allowed.ts > src/outside.ts",
+    "rg --pre sh x src", "sed -n '1w src/outside.ts' src/allowed.ts",
+    "mkdir -p src/not-allowed", 'mkdir -p src/new/"$(touch src/outside.ts)"',
+  ]) {
+    assert(shell("PreToolUse", command).hookSpecificOutput?.permissionDecision === "deny",
+      "unsafe shell must be rejected before execution: " + command);
+    assert(shell("PermissionRequest", command).hookSpecificOutput?.decision?.behavior === "deny",
+      "direct permission request must not admit unknown shell: " + command);
+    assert(receipt() === originalReceipt, "denied command without PostToolUse cannot claim writer");
+    assert(JSON.stringify(shell("PostToolUse", command)) === "{}", "denied command left no checkpoint drift");
+  }
+  assert(receipt() === originalReceipt && JSON.stringify(f.snapshot()) === JSON.stringify(before),
+    "inspection and denied tools preserve HEAD, index, worktree and latest receipt");
+  if (initial === "prepared") {
+    const owner = { session_id: "new-owner" };
+    assert(f.start(owner).hookSpecificOutput && JSON.stringify(f.claim(owner)) === "{}",
+      "a fresh authenticated session supersedes the unused grant and claims the writer");
+    const active = receipt();
+    assert(shell("PreToolUse", "bash -c 'touch src/outside.ts'").hookSpecificOutput?.permissionDecision === "deny",
+      "stale prepared turn cannot use the current owner's shell access");
+    assert(JSON.stringify(shell("PreToolUse", "git status")) === "{}", "stale turn can still inspect");
+    assert(JSON.stringify(shell("PostToolUse", "git status")) === "{}" && receipt() === active,
+      "stale PostToolUse leaves the new owner intact");
+  }
+}
+
+for (const drift of ["tracked", "untracked", "staged", "index flag", "published HEAD"]) {
+  const f = recoveryFixture({ initial: "prepared" });
+  const latest = path.join(f.repository, ".codex/runtime/latest-task.json");
+  const pointer = fs.readFileSync(latest, "utf8");
+  const receiptPath = path.join(path.dirname(latest), JSON.parse(pointer).path);
+  const receipt = fs.readFileSync(receiptPath, "utf8");
+  // Simulate a side effect that escaped PreToolUse. PostToolUse must diagnose
+  // the checkpoint itself, even when the reported command is read-only.
+  if (drift === "tracked") fs.appendFileSync(path.join(f.repository, "src/outside.ts"), "// unexpected\n");
+  if (drift === "untracked") fs.writeFileSync(path.join(f.repository, "src/untracked-outside.ts"), "x");
+  if (drift === "staged") {
+    f.dirty();
+    f.git("add", "src/allowed.ts");
+  }
+  if (drift === "index flag") f.git("update-index", "--assume-unchanged", "src/allowed.ts");
+  if (drift === "published HEAD") {
+    f.git("commit", "--allow-empty", "-m", "unexpected clean HEAD change");
+    f.git("push", "origin", "codex/policy-self-test");
+  }
+  const before = f.snapshot();
+  const observed = f.invoke("PostToolUse", { tool_name: "Bash", tool_input: { command: "git status" } });
+  const expected = drift === "index flag" ? "prepared index changed"
+    : drift === "published HEAD" ? "prepared branch or HEAD changed" : "STATE_DIRTY";
+  assert(observed.continue === false && observed.stopReason.includes("STATE_RECOVERY_REQUIRED")
+    && observed.stopReason.includes(expected), "PostToolUse detects " + drift);
+  assert(f.start({ session_id: "after-unexpected-drift" }).reason.includes(expected),
+    "fresh prompt cannot supersede checkpoint after " + drift);
+  assert(f.invoke("Stop", { last_assistant_message: "TASK_STATUS: BLOCKED\nBLOCKER: unexpected checkpoint drift" })
+    .reason.includes(expected), "prepared Stop cannot close a changed checkpoint");
+  assert(JSON.stringify(f.snapshot()) === JSON.stringify(before) &&
+    fs.readFileSync(latest, "utf8") === pointer && fs.readFileSync(receiptPath, "utf8") === receipt,
+    "drift guard preserves work and both receipt files");
+}
+
 {
   const f = recoveryFixture({ initial: "prepared" });
   assert(f.start().reason.includes("Duplicate"), "duplicate turn cannot mint a second receipt");
@@ -1598,6 +1687,31 @@ fs.appendFileSync(path.join(worktreeReceipt, "diagnosis-first.json"), " ");
 const tampered = mustRun("bash", [bootstrap, "resume", "codex/crashed-task-recovery", recovered],
   { cwd: source, env: bootstrapEnv });
 assert(tampered.stdout.includes("PR_TASK_RECEIPT status=malformed-or-tampered"), "receipt digest mismatch is visible");
+
+const preparedBytes = JSON.stringify({ ...JSON.parse(crashState), ACTIVE: false, PREPARED: true,
+  BASE_HEAD: crashHead, WORKTREE: fs.realpathSync(recovered), TARGET_BRANCH: "codex/crashed-task-recovery" });
+const preparedStatePath = path.join(worktreeReceipt, "diagnosis-first.json");
+const preparedPointerPath = path.join(worktreeReceipt, "latest-task.json");
+const preparedPointer = JSON.stringify({
+  path: "diagnosis-first.json", sha256: createHash("sha256").update(preparedBytes).digest("hex"),
+});
+fs.writeFileSync(preparedStatePath, preparedBytes);
+fs.rmSync(preparedPointerPath);
+const orphaned = mustRun("bash", [bootstrap, "resume", "codex/crashed-task-recovery", recovered],
+  { cwd: source, env: bootstrapEnv });
+assert(orphaned.stdout.includes("PR_TASK_RECEIPT status=malformed-or-tampered"),
+  "missing prepared pointer remains visible as receipt ambiguity");
+fs.writeFileSync(preparedPointerPath, preparedPointer);
+const advancedCommit = mustRun("git", ["-C", recovered, "commit-tree", crashHead + "^{tree}",
+  "-p", crashHead, "-m", "external checkpoint advance"]).stdout.trim();
+mustRun("git", ["-C", recovered, "push", "origin", advancedCommit + ":refs/heads/codex/crashed-task-recovery"]);
+const refusedAdvance = run("bash", [bootstrap, "resume", "codex/crashed-task-recovery", recovered],
+  { cwd: source, env: bootstrapEnv });
+assert(refusedAdvance.status !== 0 && refusedAdvance.stderr.includes("status=prepared-non-owning")
+  && mustRun("git", ["-C", recovered, "rev-parse", "HEAD"]).stdout.trim() === crashHead
+  && fs.readFileSync(preparedStatePath, "utf8") === preparedBytes
+  && fs.readFileSync(preparedPointerPath, "utf8") === preparedPointer,
+  "bootstrap must preserve the existing checkpoint and receipt when a prepared branch is behind");
 
 fs.rmSync(temp, { recursive: true, force: true });
 console.log(

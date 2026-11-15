@@ -445,17 +445,32 @@ def clean_closed_checkpoint(root, target):
             final.stdout.split() == [remote_head, f"refs/heads/{target}"])
 
 
-def prepared_checkpoint_error(root, state):
-    target = state["TARGET_BRANCH"]
-    head = state["BASE_HEAD"]
-    status = run_git(["status", "--porcelain=v1", "--untracked-files=all"], root)
+def prepared_index_digest(root):
+    index = subprocess.run(["git", "ls-files", "--stage", "-v", "-z"], cwd=root, capture_output=True)
+    if index.returncode:
+        raise ValueError("Cannot inspect the prepared checkpoint index")
+    return hashlib.sha256(index.stdout).hexdigest()
+
+
+def prepared_local_error(root, state):
+    status = run_git(["--no-optional-locks", "status", "--porcelain=v1", "--untracked-files=all"], root)
     if status.returncode or status.stdout:
         return "STATE_DIRTY: prepared task requires a proven clean worktree"
-    if not head or current_branch(root) != target or git_value(["rev-parse", "HEAD"], root) != head:
+    head = state["BASE_HEAD"]
+    if not head or current_branch(root) != state["TARGET_BRANCH"] or git_value(["rev-parse", "HEAD"], root) != head:
         return "prepared branch or HEAD changed"
-    operation_error = git_operation_error(root)
-    if operation_error:
-        return operation_error
+    digest = state.get("PREPARED_INDEX_SHA256")
+    if digest is not None and prepared_index_digest(root) != digest:
+        return "prepared index changed"
+    return git_operation_error(root)
+
+
+def prepared_checkpoint_error(root, state):
+    error = prepared_local_error(root, state)
+    if error:
+        return error
+    target = state["TARGET_BRANCH"]
+    head = state["BASE_HEAD"]
     ok, reason = safe_push(f"git push origin {target}", root, target)
     if not ok:
         return reason
@@ -807,6 +822,92 @@ def tokens(command):
         return command.split()
 
 
+# Accept one simple command with literal arguments. Quoted search patterns can
+# contain shell punctuation, but only single quotes can quote substitutions.
+SHELL_LITERAL = r"""(?:[a-zA-Z0-9_./:@%+=,-]|'[^'\n\r]*'|"[^"\\`$\n\r]*")+"""
+
+
+def literal_shell_args(command):
+    word = SHELL_LITERAL
+    if not re.fullmatch(rf"[ \t]*{word}(?:[ \t]+{word})*[ \t]*", command):
+        return []
+    return shlex.split(command)
+
+
+def read_only_shell(command):
+    parts = literal_shell_args(command)
+    if not parts:
+        return False
+    name, *args = parts
+    if name in {"pwd", "cat", "ls", "head", "tail", "wc"}:
+        options = {
+            "pwd": {"-L", "-P"},
+            "cat": {"-n", "-b", "-s", "-v", "-e", "-t"},
+            "ls": {"-a", "-A", "-l", "-la", "-al", "-d", "-h", "-1"},
+            "head": {"-n", "-c"},
+            "tail": {"-n", "-c"},
+            "wc": {"-l", "-w", "-c", "-m"},
+        }
+        return all(not arg.startswith("-") or arg in options[name] or arg == "--" for arg in args)
+    if name == "sed":
+        return (args[:1] == ["-n"] and len(args) >= 3 and
+                all(re.fullmatch(r"\d+(?:,\d+)?p", script) for script in args[1].split(";")) and
+                all(not arg.startswith("-") for arg in args[2:]))
+    if name == "rg":
+        options = {
+            "-n", "-i", "-F", "-S", "-l", "-c", "-H", "-N", "-o", "-v", "-w",
+            "--files", "--hidden", "--no-ignore", "--no-heading", "--line-number",
+            "--fixed-strings", "--count", "--stats",
+        }
+        values = {"-g", "--glob", "-e", "--regexp", "-A", "-B", "-C", "-m", "--max-count"}
+        arguments = iter(args)
+        for arg in arguments:
+            if arg == "--":
+                return True
+            if arg in values:
+                if next(arguments, None) is None:
+                    return False
+            elif arg.startswith("-") and arg not in options:
+                return False
+        return True
+    if name == "git":
+        if args[:1] == ["--no-pager"]:
+            args = args[1:]
+        if not args:
+            return False
+        subcommand, *args = args
+        if subcommand == "branch":
+            return args == ["--show-current"]
+        if subcommand == "worktree":
+            return args in (["list"], ["list", "--porcelain"])
+        options = {
+            "status": {"-s", "-b", "-sb", "--short", "--branch", "--porcelain",
+                       "--porcelain=v1", "--porcelain=v2", "--untracked-files=all",
+                       "--untracked-files=normal", "--untracked-files=no"},
+            "show": {"--stat", "--name-only", "--name-status", "--oneline", "--no-patch",
+                     "--no-ext-diff", "--no-textconv"},
+            "diff": {"--stat", "--name-only", "--name-status", "--cached", "--staged",
+                     "--no-ext-diff", "--no-textconv", "--check"},
+            "rev-parse": {"--show-toplevel", "--git-dir", "--git-common-dir", "--short",
+                          "--verify", "--abbrev-ref", "--symbolic-full-name"},
+            "log": {"--oneline", "--stat", "--name-only", "--name-status", "--no-patch",
+                    "--no-ext-diff", "--no-textconv", "-n"},
+            "ls-files": {"--stage", "--cached", "--others", "--exclude-standard", "-z"},
+        }
+        if subcommand not in options:
+            return False
+        for arg in args:
+            if arg == "--":
+                return True
+            if not arg.startswith("-") or arg in options[subcommand]:
+                continue
+            if subcommand == "log" and re.fullmatch(r"-[1-9][0-9]*", arg):
+                continue
+            return False
+        return True
+    return False
+
+
 def patch_paths(command):
     return re.findall(r"(?m)^\*\*\* (?:(?:Update|Add|Delete) File|Move to):[ \t]*(.+?)[ \t]*$", command)
 
@@ -844,13 +945,14 @@ def likely_shell_write(command):
 
 
 def safe_mkdir(command, root, patterns):
-    if any(token in command for token in ("&&", "||", ";", "|", ">", "<")):
+    parts = literal_shell_args(command)
+    if parts[:2] != ["mkdir", "-p"]:
         return False
-    parts = tokens(command)
-    if not parts or parts[0] != "mkdir":
-        return False
-    paths = [part for part in parts[1:] if not part.startswith("-")]
-    return bool(paths) and all(direct_worktree_path(root, path) and allowed(path, patterns) for path in paths)
+    paths = parts[2:]
+    return bool(paths) and all(
+        path and not path.startswith("-") and path == path.strip() and "\\" not in path and
+        direct_worktree_path(root, path) and allowed(path, patterns) for path in paths
+    )
 
 
 def is_local_verification(command):
@@ -1141,6 +1243,9 @@ def user_prompt(payload, root):
             if orphan.get('ACTIVE'):
                 emit({"decision": "block", "reason": receipt_diagnostic(root, state) + " Missing receipt with active prior provenance."})
                 return
+            if orphan.get("PREPARED"):
+                emit({"decision": "block", "reason": receipt_diagnostic(root, state) + " Missing receipt with prepared prior provenance."})
+                return
     if prior and prior.get('SESSION_ID') != state['SESSION_ID']:
         emit({"decision": "block", "reason": receipt_diagnostic(root, state) + " Active foreign writer; activation refused."})
         return
@@ -1150,6 +1255,11 @@ def user_prompt(payload, root):
     if owner and owner.get("TARGET_BRANCH") != target:
         emit({"decision": "block", "reason": receipt_diagnostic(root, state) + " Receipt branch mismatch."})
         return
+    if owner and owner.get("PREPARED"):
+        error = prepared_local_error(root, owner)
+        if error:
+            emit({"decision": "block", "reason": "STATE_RECOVERY_REQUIRED: " + error})
+            return
     closed_owner = owner is not None and not owner.get("ACTIVE") and not owner.get("PREPARED")
     unpublished_closed_base = (closed_owner and owner["BASE_HEAD"] == state["BASE_HEAD"] and
                                not git_value(["rev-parse", "@{u}"], root))
@@ -1190,6 +1300,7 @@ def user_prompt(payload, root):
             reason = "closed task checkpoint: " if closed_owner else ""
             emit({"decision": "block", "reason": "STATE_RECOVERY_REQUIRED: " + reason + error})
             return
+        state["PREPARED_INDEX_SHA256"] = prepared_index_digest(root)
     save_state(root, payload, state)
 
     issue_metadata = state.get("TASK_ISSUE")
@@ -1248,17 +1359,31 @@ def pre_tool(payload, root):
         deny("Subagents are disabled for PFM implementation turns.")
         return
 
-    if state is None:
-        if mutation or (tool == "Bash" and 'limited-local-verification' in command):
-            deny("No active PFM task authorization. Repository mutation is blocked.")
-            return
-        emit({})
+    current = state is not None and current_grant(root, payload, state)
+    matching_branch = current and current_branch(root) == state["TARGET_BRANCH"]
+    if not matching_branch:
+        if tool == "apply_patch" or (tool == "Bash" and not read_only_shell(command)):
+            if state is None:
+                deny("No active PFM task authorization. Bash is limited to verified read-only inspection.")
+            elif not current:
+                deny(receipt_diagnostic(root, state))
+            else:
+                deny("TASK_BRANCH_DRIFT: current branch no longer matches the authorized task branch.")
+        else:
+            emit({})
         return
 
-    if not current_grant(root, payload, state):
-        if mutation or (tool == "Bash" and 'limited-local-verification' in command):
-            deny(receipt_diagnostic(root, state))
+    if tool == "Bash" and state.get("PREPARED"):
+        if read_only_shell(command):
+            emit({})
             return
+        if not safe_mkdir(command, root, state["ALLOWED_PATHS"]):
+            deny("Prepared task Bash requires a verified read-only command or authorized mkdir -p. Use apply_patch for file edits.")
+            return
+        if all((root / path).is_dir() for path in literal_shell_args(command)[2:]):
+            deny("All requested directories already exist. No writer was admitted.")
+            return
+        mutation = True
 
     if mutation:
         attachment_error = attachment_integrity_error(state)
@@ -1266,18 +1391,12 @@ def pre_tool(payload, root):
             deny(attachment_error)
             return
 
-    if current_branch(root) != state["TARGET_BRANCH"]:
-        if mutation or (tool == "Bash" and 'limited-local-verification' in command):
-            deny("TASK_BRANCH_DRIFT: current branch no longer matches the authorized task branch.")
-            return
-
     if tool == "Bash":
         if re.search(r'(^|\s)gh[ \t]+', command) and not re.match(r'^gh[ \t]+pr[ \t]+create[ \t]+', command):
             deny('GitHub CLI is publication-only; CI polling/watching is prohibited.')
             return
         if re.search(r'(^|\s)(node|npx|bash|sh|env|python[0-9]*)[ \t]+[^\n]*limited-local-verification', command):
-            error = ("Bounded preflight requires an admitted writer" if not state.get("ACTIVE")
-                     else limited_preflight(command, root, state))
+            error = limited_preflight(command, root, state)
             if error:
                 deny(error)
             else:
@@ -1359,20 +1478,20 @@ def permission_request(payload, root):
     command = str((payload.get("tool_input") or {}).get("command") or "")
     is_push = bool(re.search(r"(^|\s)git\s+push(\s|$)", command))
     is_pr_create = bool(re.search(r"(^|\s)gh\s+pr\s+create(\s|$)", command))
+    state = load_state(root, payload)
+    if not (state and state.get("ACTIVE") and current_grant(root, payload, state) and
+            current_branch(root) == state["TARGET_BRANCH"]):
+        if read_only_shell(command):
+            emit({})
+        else:
+            reason = receipt_diagnostic(root, state) if state else "No active PFM task authorization."
+            emit({"hookSpecificOutput": {
+                "hookEventName": "PermissionRequest",
+                "decision": {"behavior": "deny", "message": reason},
+            }})
+        return
     if not is_push and not is_pr_create:
         emit({})
-        return
-
-    state = load_state(root, payload)
-    if state is None:
-        emit(
-            {
-                "hookSpecificOutput": {
-                    "hookEventName": "PermissionRequest",
-                    "decision": {"behavior": "deny", "message": "No active PFM task authorization."},
-                }
-            }
-        )
         return
 
     attachment_error = attachment_integrity_error(state)
@@ -1397,7 +1516,7 @@ def permission_request(payload, root):
         failure = actionable_preflight_failure(root, state)
         if failure:
             ok, reason = False, failure
-    if not state.get('ACTIVE') or not current_grant(root, payload, state):
+    if not current_grant(root, payload, state):
         ok, reason = False, receipt_diagnostic(root, state)
     decision = {"behavior": "allow"} if ok else {"behavior": "deny", "message": f"Unsafe {label} blocked: {reason}"}
     emit({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": decision}})
@@ -1405,8 +1524,20 @@ def permission_request(payload, root):
 
 def post_tool(payload, root):
     state = load_state(root, payload)
-    if state is None or not state.get("ACTIVE") or not current_grant(root, payload, state):
+    if state is None or not current_grant(root, payload, state):
         emit({})
+        return
+
+    if state.get("PREPARED"):
+        error = prepared_local_error(root, state)
+        if error and current_grant(root, payload, state):
+            emit({
+                "continue": False,
+                "stopReason": "STATE_RECOVERY_REQUIRED: " + error,
+                "systemMessage": "Prepared checkpoint changed before writer admission. Preserve Git changes and receipts for operator diagnosis.",
+            })
+        else:
+            emit({})
         return
 
     attachment_error = attachment_integrity_error(state)
