@@ -46,17 +46,30 @@ describe("performance instrumentation", () => {
     });
     const model = {
       status: "incomplete",
+      asOf: "2026-01-01",
+      dataCutoff: "2025-12-31",
+      source: { originalId: "original:0", originalDate: "2025-12-30", bankId: "bank:0" },
+      postedProof: { transactionId: "transaction:0", amount: "100.00" },
       diagnosticCatalogs: { entries: [{ id: "catalog:0", content: "law" }] },
-      points: [point("2026-01-01"), point("2026-02-01")],
+      points: [point("2026-01-01"), point("2026-02-01"), point("2026-03-01")],
     };
     const independent = JSON.parse(JSON.stringify(model)) as typeof model;
     expect(digest(independent)).toBe(digest(model));
     for (const change of [
       (copy: typeof model) => { copy.status = "completed"; },
+      (copy: typeof model) => { copy.asOf = "2026-01-02"; },
+      (copy: typeof model) => { copy.dataCutoff = "2025-12-30"; },
+      (copy: typeof model) => { copy.source.originalId = "original:1"; },
+      (copy: typeof model) => { copy.source.originalDate = "2025-12-29"; },
+      (copy: typeof model) => { copy.source.bankId = "bank:1"; },
+      (copy: typeof model) => { copy.postedProof.transactionId = "transaction:1"; },
       (copy: typeof model) => { copy.diagnosticCatalogs.entries[0]!.content = "new law"; },
       (copy: typeof model) => { copy.points.reverse(); },
+      (copy: typeof model) => { copy.points[0]!.cash.amount = "100.01"; },
       (copy: typeof model) => { copy.points[1]!.outputCapabilities.cash.diagnostics[0]!.catalogRef = "catalog:1"; },
+      (copy: typeof model) => { copy.points[2]!.outputCapabilities.cash.diagnostics[0]!.code = "PFA-TAX-008"; },
       (copy: typeof model) => { copy.points[1]!.cash.amount = "100.01"; },
+      (copy: typeof model) => { copy.points[2]!.cash.amount = "100.01"; },
       (copy: typeof model) => { copy.points[1]!.traceRefs[0]!.replayArtifact.basis.encoded = basis.encoded.slice(0, -1) + "\udc01"; },
     ]) {
       const changed = JSON.parse(JSON.stringify(model)) as typeof model;
@@ -69,9 +82,75 @@ describe("performance instrumentation", () => {
     expect(digest({ toJSON: () => ({ toJSON: () => "ignored", amount: "1" }) })).toBe(digest({ amount: "1" }));
     expect(digest({ a: 1, b: 2 })).not.toBe(digest({ b: 2, a: 1 }));
     expect(digest([null])).not.toBe(digest([null, null]));
+    expect(digest({ status: "unavailable", points: [] })).toBe(digest({ status: "unavailable", points: [] }));
+    const stopped = { ...model, stoppedAt: "2026-03-01", points: model.points.slice(0, 2) };
+    expect(digest(stopped)).toBe(digest(JSON.parse(JSON.stringify(stopped))));
+    expect(digest(stopped)).not.toBe(digest({ ...stopped, stoppedAt: "2026-03-02" }));
+    expect(() => digest(undefined)).toThrow("Missing forecast read model");
+    expect(() => digest({ amount: 1n })).toThrow("Do not know how to serialize a BigInt");
+    const { rawJSON } = JSON as typeof JSON & { rawJSON?: (text: string) => unknown };
+    if (rawJSON) expect(() => digest({ amount: rawJSON("1") })).toThrow("Unsupported raw JSON");
     const cycle: { self?: unknown } = {};
     cycle.self = cycle;
     expect(() => digest(cycle)).toThrow("Cyclic forecast read model");
+  });
+
+  it("accounts for repeated replay owners and unique encoded content independently", async () => {
+    const url = new URL("../tools/ci/forecast-feasibility.mjs", import.meta.url).href;
+    const { digestForecastReadModel: digest } = await import(url) as {
+      digestForecastReadModel: (value: unknown, observe?: (work: Record<string, number>) => void) => string;
+    };
+    const encoded = "a".repeat(8_191) + "\ud800\"\\\n";
+    const basis = { version: "household-replay/v3", encoded, integrity: "fixture-integrity" };
+    const model = (bases: readonly (typeof basis)[]) => ({
+      points: bases.map((basis, index) => ({ traceRefs: [{ replayArtifact: { basis, start: index } }] })),
+    });
+    const measure = (value: unknown) => {
+      let work!: Record<string, number>;
+      const fingerprint = digest(value, counts => { work = counts; });
+      return { fingerprint, work };
+    };
+    // The forecast producer publishes a single frozen replay basis through
+    // every period anchor. Content hashing is already amortized, but with
+    // content-only memoization each anchor looks up the same large string.
+    const aliases = measure(model(Array.from({ length: 8 }, () => basis)));
+    expect(aliases.work).toMatchObject({
+      repeatedContainerVisits: 7, longStringVisits: 8, longStringCodeUnits: encoded.length * 8,
+      longStringContentLookups: 8, hashedLongStringCodeUnits: encoded.length,
+    });
+    const independent = measure(JSON.parse(JSON.stringify(model(Array.from({ length: 8 }, () => basis)))));
+    expect(independent.fingerprint).toBe(aliases.fingerprint);
+    expect(independent.work.repeatedContainerVisits).toBe(0);
+    const frozen = Object.freeze({ ...basis });
+    const shared = measure(model(Array.from({ length: 8 }, () => frozen)));
+    expect(shared.fingerprint).toBe(independent.fingerprint);
+    expect(shared.work).toMatchObject({
+      repeatedContainerVisits: 7, longStringVisits: 8, longStringCodeUnits: encoded.length * 8,
+      frozenEncodingHits: 7, longStringContentLookups: 1, hashedLongStringCodeUnits: encoded.length,
+    });
+    const unique = measure(model(Array.from({ length: 8 }, (_, index) => ({
+      ...basis, encoded: String(index) + encoded.slice(1),
+    }))));
+    expect(unique.work.hashedLongStringCodeUnits).toBe(encoded.length * 8);
+    expect(unique.fingerprint).not.toBe(aliases.fingerprint);
+    const otherRun = measure(model([Object.freeze({ ...basis, encoded: encoded.replace("\ud800", "\ud801") })]));
+    expect(otherRun.work).toMatchObject({ frozenEncodingHits: 0, hashedLongStringCodeUnits: encoded.length });
+    expect(otherRun.fingerprint).not.toBe(digest(model([frozen])));
+
+    let reads = 0;
+    const accessor = Object.freeze({
+      get encoded() { return reads++ === 0 ? encoded : "b" + encoded.slice(1); },
+    });
+    const readBoth = measure([accessor, accessor]);
+    expect(readBoth.work).toMatchObject({ frozenEncodingHits: 0, longStringContentLookups: 2 });
+    expect(readBoth.fingerprint).toBe(digest([{ encoded }, { encoded: "b" + encoded.slice(1) }]));
+    expect(reads).toBe(2);
+    const keyed = Object.freeze({ ...basis, toJSON(key: string) {
+      return key === "first" ? this : { ...basis, encoded: "b" + encoded.slice(1) };
+    } });
+    expect(digest({ first: keyed, second: keyed })).toBe(digest({
+      first: basis, second: { ...basis, encoded: "b" + encoded.slice(1) },
+    }));
   });
 
   it.each([8, 20, 120])("publishes %i growing snapshots using prefix identity and only their new merge suffix", months => {

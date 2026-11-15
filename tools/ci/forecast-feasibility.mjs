@@ -39,10 +39,17 @@ const safeErrorNames = new Set(['RangeError', 'ReferenceError', 'SyntaxError', '
 // scalar boundaries. Each long string is hashed once by content. In particular,
 // period replay anchors all carry the same large encoded replay basis, which
 // JSON.stringify would expand once per anchor into a single output string.
-export function digestForecastReadModel(root) {
+export function digestForecastReadModel(root, observe) {
   const hash = createHash('sha256');
   const longStrings = new Map();
+  const frozenEncodings = new WeakMap();
   const active = new Set();
+  const seen = observe ? new WeakSet() : undefined;
+  const work = observe ? {
+    containerVisits: 0, repeatedContainerVisits: 0, longStringVisits: 0, longStringCodeUnits: 0,
+    longStringContentLookups: 0, longStringLookupMs: 0, hashedLongStringCodeUnits: 0, longStringHashMs: 0,
+    frozenEncodingHits: 0,
+  } : undefined;
   const chunkSize = 8_192;
   let buffer = '';
   const write = token => {
@@ -52,21 +59,52 @@ export function digestForecastReadModel(root) {
       buffer = '';
     }
   };
-  const writeString = value => {
+  const writeString = (value, encodingOwner) => {
     if (value.length < chunkSize) {
       write(JSON.stringify(value));
       return;
     }
+    if (work) {
+      work.longStringVisits++;
+      work.longStringCodeUnits += value.length;
+    }
+    const cached = encodingOwner === undefined ? undefined : frozenEncodings.get(encodingOwner);
+    if (cached !== undefined) {
+      if (work) work.frozenEncodingHits++;
+      write(cached);
+      return;
+    }
+    const lookupStarted = work ? performance.now() : 0;
     let digest = longStrings.get(value);
+    if (work) {
+      work.longStringContentLookups++;
+      work.longStringLookupMs += performance.now() - lookupStarted;
+    }
     if (digest === undefined) {
+      const hashStarted = work ? performance.now() : 0;
       const content = createHash('sha256');
       for (let offset = 0; offset < value.length; offset += chunkSize) {
         content.update(value.slice(offset, offset + chunkSize), 'utf16le');
       }
       digest = content.digest('hex');
+      if (work) {
+        work.hashedLongStringCodeUnits += value.length;
+        work.longStringHashMs += performance.now() - hashStarted;
+      }
+      const insertStarted = work ? performance.now() : 0;
       longStrings.set(value, digest);
+      if (work) work.longStringLookupMs += performance.now() - insertStarted;
     }
-    write(`~${value.length}:${digest}`);
+    const token = `~${value.length}:${digest}`;
+    // Every replay anchor in a run points to the same frozen basis. An own
+    // frozen data property proves its encoding cannot change between visits.
+    // Accessors, proxies and mutable owners still use normal JSON traversal.
+    if (encodingOwner !== undefined && !types.isProxy(encodingOwner) &&
+        Object.isFrozen(encodingOwner) &&
+        Object.getOwnPropertyDescriptor(encodingOwner, 'encoded')?.value === value) {
+      frozenEncodings.set(encodingOwner, token);
+    }
+    write(token);
   };
   const jsonValue = (value, key) => {
     if ((value !== null && (typeof value === 'object' || typeof value === 'function')) ||
@@ -81,9 +119,9 @@ export function digestForecastReadModel(root) {
     return value;
   };
   const omitted = value => value === undefined || typeof value === 'function' || typeof value === 'symbol';
-  const visit = value => {
+  const visit = (value, encodingOwner) => {
     if (typeof value === 'string') {
-      writeString(value);
+      writeString(value, encodingOwner);
       return;
     }
     if (typeof value === 'bigint') throw new TypeError('Do not know how to serialize a BigInt');
@@ -93,6 +131,11 @@ export function digestForecastReadModel(root) {
     }
     if (JSON.isRawJSON?.(value)) throw new TypeError('Unsupported raw JSON in forecast read model');
     if (active.has(value)) throw new TypeError('Cyclic forecast read model');
+    if (work) {
+      work.containerVisits++;
+      if (seen.has(value)) work.repeatedContainerVisits++;
+      else seen.add(value);
+    }
     active.add(value);
     if (Array.isArray(value)) {
       const length = value.length;
@@ -110,7 +153,7 @@ export function digestForecastReadModel(root) {
         if (omitted(item)) continue;
         writeString(key);
         write(':');
-        visit(item);
+        visit(item, key === 'encoded' ? value : undefined);
         write(',');
       }
       write('}');
@@ -120,7 +163,9 @@ export function digestForecastReadModel(root) {
   const value = jsonValue(root, '');
   if (omitted(value)) throw new TypeError('Missing forecast read model');
   visit(value);
-  return hash.update(buffer).digest('hex');
+  const digest = hash.update(buffer).digest('hex');
+  observe?.(work);
+  return digest;
 }
 
 const record = value => {
@@ -201,7 +246,7 @@ function createProbeStages(months, manual) {
   const probeStarted = performance.now();
   let stage;
   let started;
-  const append = (event, periodCount) => {
+  const append = (event, periodCount, digestWork) => {
     if (!manual) return;
     const now = performance.now();
     const { heapUsed, rss } = process.memoryUsage();
@@ -209,7 +254,8 @@ function createProbeStages(months, manual) {
     // contain only fixed labels, timings, resource samples and array lengths.
     appendFileSync(file, JSON.stringify({ event, stage, probeElapsedMs: now - probeStarted,
       stageElapsedMs: now - started, heapUsedBytesSample: heapUsed, rssBytesSample: rss,
-      ...(periodCount === undefined ? {} : { periodCount }) }) + '\n');
+      ...(periodCount === undefined ? {} : { periodCount }),
+      ...(digestWork === undefined ? {} : { digestWork }) }) + '\n');
   };
   return {
     get current() { return stage; },
@@ -218,7 +264,7 @@ function createProbeStages(months, manual) {
       started = performance.now();
       append('BEGIN');
     },
-    end(periodCount) { append('END', periodCount); },
+    end(periodCount, digestWork) { append('END', periodCount, digestWork); },
   };
 }
 
@@ -373,12 +419,10 @@ if (invoked && args[0] === '--probe' && args.length === 3) {
           throw new Error(repeated.message);
         }
         stages.begin('digest_first_full_read_model');
-        const firstDigest = digestForecastReadModel(result);
-        stages.end(result.points?.length);
+        const firstDigest = digestForecastReadModel(result, work => stages.end(result.points?.length, work));
         result = undefined;
         stages.begin('digest_repeat_full_read_model');
-        const repeatedDigest = digestForecastReadModel(repeated);
-        stages.end(repeated.points?.length);
+        const repeatedDigest = digestForecastReadModel(repeated, work => stages.end(repeated.points?.length, work));
         equality = firstDigest === repeatedDigest ? 'equal' : 'different';
       }
       stages.begin('import_parity_modules');
