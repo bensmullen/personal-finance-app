@@ -90,6 +90,13 @@ Hard guarantees:
 - Only the audited, optional bounded verifier may run locally; all other verification and package installation remain prohibited.
 - The current branch must already equal `TARGET_BRANCH` before implementation.
 
+An accepted prompt prepares a hash-bound, non-owning receipt. The first
+permitted repository mutation claims exclusive writer ownership under the
+worktree policy lock. A fresh authenticated turn may supersede a prepared
+receipt at a proven clean checkpoint. Superseded turns cannot claim ownership
+or replace the latest receipt. Once a write is admitted, treat the receipt as
+active until a valid Stop closes it or the operator uses isolated recovery.
+
 Use `apply_patch` for repository content edits so the hook can reject an
 out-of-scope path before mutation. Post-tool scope checks also include untracked
 files, so alternate write mechanisms cannot silently broaden the diff.
