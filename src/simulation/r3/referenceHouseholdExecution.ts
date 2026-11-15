@@ -75,7 +75,6 @@ import type {
   VerticalSlice4LiquidityShortfall,
   VerticalSlice4PeriodResult,
 } from "../verticalSlice4.js";
-import { firstDependencyOrder } from "./ordering.js";
 
 export interface HouseholdProjectionPeriodResult {
   readonly period: Period;
@@ -280,7 +279,7 @@ const policyPrecedes = (
     after.operationClass,
   );
 
-const linearizations = (
+export const linearizations = (
   items: readonly HouseholdWorkDescriptor[],
   edges: readonly { readonly before: string; readonly after: string }[],
 ): readonly (readonly HouseholdWorkDescriptor[])[] => {
@@ -309,6 +308,34 @@ const linearizations = (
   };
   visit(new Set(items.map((item) => item.id)), []);
   return Object.freeze(result.map((order) => Object.freeze(order)));
+};
+
+/** Select the first leaf of the historical lexical traversal without
+ * enumerating its siblings. Each ready item can be removed without affecting
+ * whether the residual graph contains a cycle. */
+export const firstReferenceDependencyOrder = (
+  items: readonly HouseholdWorkDescriptor[],
+  edges: readonly { readonly before: string; readonly after: string }[],
+): readonly HouseholdWorkDescriptor[] | undefined => {
+  const remaining = new Map(items.map((item) => [item.id, item]));
+  const ids = [...remaining.keys()].sort();
+  const predecessors = new Map<string, Set<string>>();
+  for (const { before, after } of edges) {
+    if (!remaining.has(before) || !remaining.has(after)) continue;
+    const incoming = predecessors.get(after) ?? new Set<string>();
+    incoming.add(before);
+    predecessors.set(after, incoming);
+  }
+  const ordered: HouseholdWorkDescriptor[] = [];
+  while (remaining.size > 0) {
+    const ready = ids.find((id) =>
+      remaining.has(id) && ![...(predecessors.get(id) ?? [])].some((before) => remaining.has(before)),
+    );
+    if (ready === undefined) return undefined;
+    ordered.push(remaining.get(ready)!);
+    remaining.delete(ready);
+  }
+  return Object.freeze(ordered);
 };
 
 const outcomeSignature = (execution: InstantExecution): string =>
@@ -371,8 +398,14 @@ const runCompiledHouseholdProjectionInternal = (
     compiled.reconciledOpeningState,
     runContext.baseCurrency,
   );
-  admitS4OpeningSources(compiled.reconciledOpeningState, runContext);
-  let state = cloneAuthoritativeState(compiled.reconciledOpeningState);
+  performance.measure("engine.validate_commit", () => {
+    performance.counters({ referenceOpeningSourceAdmissions: 1 });
+    admitS4OpeningSources(compiled.reconciledOpeningState, runContext);
+  });
+  let state = performance.measure("engine.period_fork", () => {
+    performance.counters({ referenceOpeningForks: 1 });
+    return cloneAuthoritativeState(compiled.reconciledOpeningState);
+  });
   let primitiveState = createPrimitiveRuntimeStateStore(
     compiled.reconciledPrimitiveState,
   );
@@ -422,6 +455,11 @@ const runCompiledHouseholdProjectionInternal = (
             investmentOpening,
             investmentPrimitiveOpening,
           );
+    performance.counters({
+      referenceCashPreparations: Number(cash !== undefined),
+      referenceInvestmentPreparations: Number(investments !== undefined),
+      referenceLiabilityPreparations: Number(liabilities !== undefined),
+    });
     return Object.freeze({
       cash,
       investments,
@@ -593,6 +631,7 @@ const runCompiledHouseholdProjectionInternal = (
             (item) => item.descriptor.id === descriptor.id,
           );
           if (occurrence !== undefined) {
+            performance.counters({ referenceCashExecutions: 1 });
             const result = executePreparedVerticalSlice2Occurrence(
               prepared.cash!,
               occurrence,
@@ -610,6 +649,7 @@ const runCompiledHouseholdProjectionInternal = (
             (item) => item.descriptor.id === descriptor.id,
           );
           if (investment !== undefined) {
+            performance.counters({ referenceInvestmentExecutions: 1 });
             const result = executePreparedVerticalSlice3Operation(
               prepared.investments!,
               investment,
@@ -647,6 +687,7 @@ const runCompiledHouseholdProjectionInternal = (
               )
                 continue;
             }
+            performance.counters({ referenceLiabilityExecutions: 1 });
             const result = executePreparedVerticalSlice4Operation(
               prepared.liabilities!,
               liability,
@@ -698,6 +739,15 @@ const runCompiledHouseholdProjectionInternal = (
         ...(prepared.investments?.traceRefs ?? []),
         ...(prepared.liabilities?.traceRefs ?? []),
       ]);
+      const mergeEventIdentities = (current: AuthoritativeState): AuthoritativeState =>
+        performance.measure("engine.period_fork", () => {
+          performance.counters({
+            referenceEventIdentityMerges: 1,
+            referenceEventPostedIdentitiesMerged: current.identities.postedTransactionIds.length
+              + prepared.cash!.state.identities.postedTransactionIds.length,
+          });
+          return mergeEventPreparationIdentities(current, prepared.cash!);
+        });
       let eventRuntimeCommitted = prepared.cash === undefined;
       for (const at of allAt) {
         if (
@@ -710,8 +760,7 @@ const runCompiledHouseholdProjectionInternal = (
               ...prepared.cash!.eventPrimitiveTransition,
             },
           );
-          candidateState = performance.measure("engine.period_fork", () =>
-            mergeEventPreparationIdentities(candidateState, prepared.cash!));
+          candidateState = mergeEventIdentities(candidateState);
           eventRuntimeCommitted = true;
         }
         const sameInstant = scheduled.value.descriptors.filter(
@@ -771,6 +820,7 @@ const runCompiledHouseholdProjectionInternal = (
               group.some((item) => item.id === edge.after),
           );
           const candidates = performance.measure("engine.schedule_contention", () => linearizations(group, groupEdges));
+          performance.counters({ referenceContentionPreviews: candidates.length });
           const previews = performance.measure("engine.schedule_contention", () => candidates.map((candidate) =>
             executeAt(
               at,
@@ -786,8 +836,10 @@ const runCompiledHouseholdProjectionInternal = (
               candidatePrimitiveState,
             ),
           ));
-          const signatures = performance.measure("engine.schedule_contention", () =>
-            new Set(previews.map(outcomeSignature)));
+          const signatures = performance.measure("engine.schedule_contention", () => {
+            performance.counters({ referenceOutcomeSignatures: previews.length });
+            return new Set(previews.map(outcomeSignature));
+          });
           if (signatures.size > 1) {
             const policy = scheduled.value.policy;
             const policyEdges =
@@ -820,6 +872,7 @@ const runCompiledHouseholdProjectionInternal = (
                   ...(policy === undefined ? [] : [policy.id]),
                 ],
               });
+            performance.counters({ referenceContentionPreviews: constrained.length });
             const constrainedPreviews = performance.measure("engine.schedule_contention", () => constrained.map((candidate) =>
               executeAt(
                 at,
@@ -837,8 +890,10 @@ const runCompiledHouseholdProjectionInternal = (
             ));
             if (
               policy === undefined ||
-              performance.measure("engine.schedule_contention", () =>
-                new Set(constrainedPreviews.map(outcomeSignature)).size > 1)
+              performance.measure("engine.schedule_contention", () => {
+                performance.counters({ referenceOutcomeSignatures: constrainedPreviews.length });
+                return new Set(constrainedPreviews.map(outcomeSignature)).size > 1;
+              })
             ) {
               const policyText =
                 policy === undefined
@@ -875,7 +930,7 @@ const runCompiledHouseholdProjectionInternal = (
         // Contention previews above still compare every admissible outcome.
         const finalOrder = performance.measure("engine.schedule_contention", () => {
           performance.counters({ referenceFinalOrderDescriptors: sameInstant.length });
-          return firstDependencyOrder(sameInstant, resolvedEdges);
+          return firstReferenceDependencyOrder(sameInstant, resolvedEdges);
         });
         if (finalOrder === undefined)
           throw new ValidationError({
@@ -907,8 +962,7 @@ const runCompiledHouseholdProjectionInternal = (
             ...prepared.cash!.eventPrimitiveTransition,
           },
         );
-        candidateState = performance.measure("engine.period_fork", () =>
-          mergeEventPreparationIdentities(candidateState, prepared.cash!));
+        candidateState = mergeEventIdentities(candidateState);
       }
       performance.measure("engine.trace_result", () => {
       if (liabilityPeriods.length > 0) {
@@ -1020,6 +1074,7 @@ const runCompiledHouseholdProjectionInternal = (
       }
       });
       performance.measure("engine.validate_commit", () => {
+        performance.counters({ referenceCommitValidations: 1 });
         validateAuthoritativeState(candidateState);
         assertAuthoritativeStateCurrency(candidateState, runContext.baseCurrency);
         assertPrimitiveRuntimeStateConsistent(candidatePrimitiveState, candidateState);

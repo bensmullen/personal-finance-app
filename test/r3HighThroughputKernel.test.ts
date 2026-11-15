@@ -17,13 +17,15 @@ import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import type { FixedAmortizingLoan } from "../src/simulation/verticalSlice4.js";
 import type { VerticalSlice2Input } from "../src/simulation/verticalSlice2.js";
 import { createAuthoritativeState, createIndexedExecutionState, cloneAuthoritativeState, validateAuthoritativeState,
-  applyAccountingTransactionAtomically, PersistentStringIndex, activeAuthoritativeClaims, authoritativeClaimHistory } from "../src/state/index.js";
+  applyAccountingTransactionAtomically, PersistentStringIndex, activeAuthoritativeClaims, authoritativeClaimHistory,
+  requalifyD2SettlementReceiptHistory } from "../src/state/index.js";
 import { authoritativeStateChangesSince, registerAuthoritativeIdentity } from "../src/state/index.js";
 import { createObligation, executionSettlementHistory, appendSettlementIdentity, settlementIdentityAppendsSince, normalizeExecutionClaim, materializeClaimLifecycle, assertClaimInvariant } from "../src/semantics/claim.js";
 import { instant } from "../src/time/index.js";
 import { Quantity, Rate, RoundingPolicy, SHARE, USD, money, rateConvention, ratePeriod } from "../src/values/index.js";
 import { authorModeledIncomeFixture, compileModeledIncomeFixture } from "./fixtures/modeledIncome.js";
 import { employerWage } from "./fixtures/employerWage.js";
+import { registerHouseholdWageOriginalProvider } from "../src/simulation/d2/integration/householdWages/index.js";
 import { patchPersonalObject } from "../src/application/personalMvp.js";
 
 const ids = {
@@ -53,7 +55,8 @@ const compiled = (lateFailure = false, withAsset = false, runContext = context()
 
 import { ValidationError } from "../src/diagnostics/index.js";
 import { compileHouseholdKernel, applyHouseholdExecutionOverlay } from "../src/simulation/r3/compiledHousehold.js";
-import { runCompiledHouseholdProjection as referenceRun } from "../src/simulation/r3/referenceHouseholdExecution.js";
+import { firstReferenceDependencyOrder, linearizations,
+  runCompiledHouseholdProjection as referenceRun } from "../src/simulation/r3/referenceHouseholdExecution.js";
 import { firstDependencyOrder, indexReachability } from "../src/simulation/r3/ordering.js";
 import { dependencyOrders } from "../src/simulation/r3/referenceOrdering.js";
 import { compareReachableStates, createReachableStateCounters } from "../src/simulation/r3/reachableStates.js";
@@ -619,14 +622,15 @@ describe("R3 reusable deterministic household kernel", () => {
     }), { numRuns: 8, seed: 53 });
   });
 
-  it.each([2, 4])("preserves each signed wage and the archived source checks over %i periods", months => {
+  it.each([2, 4, 8])("preserves each signed wage and the archived source checks over %i periods", months => {
     const runContext = createRunContext({
       ...context(),
-      simulationEnd: instant(months === 2 ? "2026-03-01T00:00:00.000Z" : "2026-05-01T00:00:00.000Z"),
+      simulationEnd: instant(`2026-0${months + 1}-01T00:00:00.000Z`),
     });
     const signed = employerWage(runContext, {
       householdId: ids.household, personId: ids.owner, incomeId: ids.income, bankAccountId: ids.cash,
       employerId: "r3-reference-scaling-employer", firstPayday: "2026-01-15", gross: "100",
+      allowLaterObservation: true,
     });
     const input = {
       ...compiled(false, false, runContext, months),
@@ -650,6 +654,10 @@ describe("R3 reusable deterministic household kernel", () => {
     expect(result.periods).toHaveLength(months);
     expect(registry.latest("engine.period_fork")?.resources?.structuralCounters).toMatchObject({
       referenceMonthForks: months, referenceInstantForks: months, referenceFinalOrderDescriptors: months,
+      referenceOpeningForks: 1, referenceOpeningSourceAdmissions: 1,
+      referenceCashPreparations: months + 1, referenceCashExecutions: months,
+      referenceEventIdentityMerges: months, referenceEventPostedIdentitiesMerged: months ** 2,
+      referenceCommitValidations: months,
     });
     const proofs = result.state.d2PostedTransactions!;
     expect(Object.keys(proofs)).toHaveLength(months);
@@ -661,22 +669,86 @@ describe("R3 reusable deterministic household kernel", () => {
     }
 
     const archivedState = canonicalSerialize(result.state);
-    const fromArchive = {
-      ...request, compiled: { ...input, reconciledOpeningState: result.state },
-    };
+    const cold = createAuthoritativeState(result.state);
     const laterObservation = instant("2026-01-01T00:00:00.000Z");
-    expect(() => referenceRun({
-      ...fromArchive,
-      runContext: createRunContext({ ...runContext, asOf: laterObservation, dataCutoff: laterObservation }),
-    })).toThrow(ValidationError);
-
-    signed.source.mode = "withdrawn";
-    try {
-      expect(() => referenceRun(fromArchive)).toThrow(ValidationError);
-      expect(canonicalSerialize(result.state)).toBe(archivedState);
-    } finally {
-      signed.source.mode = "available";
+    const laterContext = createRunContext({ ...runContext, asOf: laterObservation, dataCutoff: laterObservation });
+    for (const observation of [runContext, laterContext]) {
+      const before = { ...signed.reads };
+      requalifyD2SettlementReceiptHistory(cold, observation);
+      expect(signed.reads.employer - before.employer).toBe(months);
+      expect(signed.reads.bank - before.bank).toBe(months);
+      expect(canonicalSerialize(cold)).toBe(archivedState);
     }
+    const wageFailure = "Independent economic ORIGINAL missing, amended, withdrawn or journal changed";
+    const bankFailure = "Household BANK route original unavailable or changed";
+    for (const [mode, failure] of [
+      ["withdrawn", wageFailure], ["missing", wageFailure], ["changed", wageFailure],
+      ["late", wageFailure], ["duplicate", wageFailure], ["bank_missing", bankFailure],
+      ["bank_owner", bankFailure], ["bank_other_person", bankFailure], ["bank_permission", bankFailure],
+    ] as const) {
+      signed.source.mode = mode;
+      try {
+        expect(() => requalifyD2SettlementReceiptHistory(cold, laterContext), mode).toThrow(failure);
+        expect(() => createAuthoritativeState(result.state), mode).toThrow(failure);
+        expect(canonicalSerialize(cold)).toBe(archivedState);
+        expect(canonicalSerialize(result.state)).toBe(archivedState);
+      } finally {
+        signed.source.mode = "available";
+      }
+    }
+    const transaction = result.periods[0]!.transactions[0]!;
+    const tampered = {
+      ...result.state,
+      d2PostedTransactions: { ...proofs, [transaction.id]: {
+        ...proofs[transaction.id]!,
+        transaction: { ...transaction, legs: transaction.legs.map(leg => ({ ...leg, amount: money("101") })) },
+      } },
+    };
+    const tamperedBefore = canonicalSerialize(tampered);
+    expect(() => createAuthoritativeState(tampered)).toThrow(wageFailure);
+    expect(canonicalSerialize(tampered)).toBe(tamperedBefore);
+    expect(canonicalSerialize(result.state)).toBe(archivedState);
+  });
+
+  it("rejects a wage inventory whose coverage stops before the replay cutoff", () => {
+    const runContext = context();
+    const signed = employerWage(runContext, {
+      householdId: ids.household, personId: ids.owner, incomeId: ids.income, bankAccountId: ids.cash,
+      employerId: "r3-partial-wage-inventory", firstPayday: "2026-01-15", gross: "100", allowLaterObservation: true,
+    });
+    const source = signed.income.householdWageSource!;
+    const publisherId = `${source.original.publisherId}:coverage`;
+    let covered = true;
+    registerHouseholdWageOriginalProvider({
+      publisherId,
+      readOriginals: ({ sourceId, context }) => ({
+        version: "household-wage-inventory/v1", publisherId, sourceId, context,
+        checkedAt: context.asOf, completeThrough: covered ? context.dataCutoff : runContext.dataCutoff,
+        completeness: "complete",
+        originals: [signed.originalAt({ start, end })],
+      }),
+    });
+    const compiledInput = {
+      ...compiled(),
+      reconciledOpeningState: createAuthoritativeState({
+        ...opening(),
+        accounts: { [ids.cash]: { id: ids.cash, kind: "checking", ownerId: ids.household, cash: money("10") } },
+      }),
+      cashFlowInput: { ...cashFlow, incomes: [{
+        ...signed.income, householdWageSource: { ...source, original: { ...source.original, publisherId } },
+      }] },
+    };
+    const result = referenceRun({ compiled: compiledInput, runContext });
+    expect(result.status).toBe("completed");
+    const cold = createAuthoritativeState(result.state);
+    const archive = canonicalSerialize(cold);
+    const laterObservation = instant("2026-01-01T00:00:00.000Z");
+    const laterContext = createRunContext({ ...runContext, asOf: laterObservation, dataCutoff: laterObservation });
+    requalifyD2SettlementReceiptHistory(cold, laterContext);
+    covered = false;
+    expect(() => requalifyD2SettlementReceiptHistory(cold, laterContext))
+      .toThrow("Independent economic ORIGINAL missing, amended, withdrawn or journal changed");
+    expect(canonicalSerialize(cold)).toBe(archive);
   });
 
   it("matches a bounded Golden Household with all supported domains", () => {
@@ -904,6 +976,8 @@ describe("R3 reusable deterministic household kernel", () => {
       const expected = permutations(items).filter(order => edges.every(edge =>
         order.findIndex(item => item.id === edge.before) < order.findIndex(item => item.id === edge.after)))[0];
       expect(firstDependencyOrder([...items].reverse(), [...edges].reverse())).toEqual(expected);
+      expect(firstReferenceDependencyOrder([...items].reverse(), [...edges].reverse()))
+        .toEqual(linearizations(items, edges)[0]);
       expect([...dependencyOrders([...items].reverse(), edges)][0]).toEqual(expected);
       const reaches = indexReachability(edges);
       for (const edge of edges) expect(reaches(edge.before, edge.after)).toBe(true);
@@ -911,6 +985,16 @@ describe("R3 reusable deterministic household kernel", () => {
     expect(firstDependencyOrder([descriptor("a"), descriptor("b")], [{ before: "a", after: "b" }, { before: "b", after: "a" }])).toBeUndefined();
     expect([...dependencyOrders([descriptor("a"), descriptor("b")], [{ before: "a", after: "b" }, { before: "b", after: "a" }])]).toEqual([]);
     expect(firstDependencyOrder(Array.from({ length: 24 }, (_, index) => descriptor(String(index).padStart(2, "0"))), [])).toHaveLength(24);
+    const duplicate = { ...descriptor("a"), domain: "replacement" };
+    const items = [descriptor("B"), descriptor("a"), descriptor("b"), duplicate];
+    const edges = [{ before: "b", after: "B" }, { before: "b", after: "B" },
+      { before: "absent", after: "b" }, { before: "a", after: "absent" }];
+    expect(firstReferenceDependencyOrder(items, edges)).toEqual([duplicate, items[2], items[0]]);
+    expect(firstReferenceDependencyOrder(items, edges)).toEqual(linearizations(items, edges)[0]);
+    const cycle = [...edges, { before: "B", after: "b" }];
+    expect(firstReferenceDependencyOrder(items, cycle)).toBeUndefined();
+    expect(linearizations(items, cycle)).toEqual([]);
+    expect(firstReferenceDependencyOrder(items, [{ before: "B", after: "B" }])).toBeUndefined();
   });
 
   it("supports cross-domain class policies and unchanged canonical fingerprints for reordered economics", () => {
