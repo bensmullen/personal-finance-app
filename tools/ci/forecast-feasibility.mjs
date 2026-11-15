@@ -1,6 +1,6 @@
 // Synthetic scaling diagnosis, never a speed SLA or financial-completeness claim.
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync, openSync, closeSync, existsSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync, openSync, closeSync, existsSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { createHash } from 'node:crypto';
@@ -193,6 +193,35 @@ function coverage(run, periods, expected, boundaries) {
   };
 }
 
+const progressName = months => `${months}.progress.jsonl`;
+const finalStage = 'write_final_artifact';
+
+function createProbeStages(months, manual) {
+  const file = resolve(directory, progressName(months));
+  const probeStarted = performance.now();
+  let stage;
+  let started;
+  const append = (event, periodCount) => {
+    if (!manual) return;
+    const now = performance.now();
+    const { heapUsed, rss } = process.memoryUsage();
+    // A synchronous append survives a subprocess kill between stages. Rows
+    // contain only fixed labels, timings, resource samples and array lengths.
+    appendFileSync(file, JSON.stringify({ event, stage, probeElapsedMs: now - probeStarted,
+      stageElapsedMs: now - started, heapUsedBytesSample: heapUsed, rssBytesSample: rss,
+      ...(periodCount === undefined ? {} : { periodCount }) }) + '\n');
+  };
+  return {
+    get current() { return stage; },
+    begin(name) {
+      stage = name;
+      started = performance.now();
+      append('BEGIN');
+    },
+    end(periodCount) { append('END', periodCount); },
+  };
+}
+
 function compareKernelRuns(summary, reference, expected, executable, summarize, serialize, taxDiagnosticKey) {
   const optimizedCoverage = coverage(summary, summary.periods, expected, value => value.period);
   const referenceCoverage = coverage(reference, reference.periods, expected, value => value.period);
@@ -278,6 +307,9 @@ if (invoked && args[0] === '--probe' && args.length === 3) {
   const months = Number(args[1]);
   if (![8, 20, 120, 360, 649].includes(months) || !['ordinary', 'manual'].includes(args[2])) throw new Error('Invalid probe');
   if (args[2] === 'ordinary' && months > 20) throw new Error('Heavy probe excluded from ordinary CI');
+  const manual = args[2] === 'manual';
+  const stages = createProbeStages(months, manual);
+  stages.begin('setup_application');
   const { createRealisticPerformanceFixture } = await import('../../test/fixtures/performanceHouseholds.ts');
   const { instant, utcMonthlyPeriods } = await import('../../src/time/index.ts');
   const { runPersonalHouseholdForecast } = await import('../../src/application/index.ts');
@@ -303,6 +335,8 @@ if (invoked && args[0] === '--probe' && args.length === 3) {
   const end = compiler.cashFlow.simulationEnd;
   const endInstant = `${end}T00:00:00.000Z`;
   const registry = new PerformanceRegistry();
+  stages.end(expected.length);
+  stages.begin('first_application_run');
   const started = performance.now();
   let result = runPersonalHouseholdForecast(model, request, createApplicationPerformanceObserver(
     { now: () => performance.now() }, { runId: `feasibility:${months}`, fixtureId: fixture.id,
@@ -310,6 +344,8 @@ if (invoked && args[0] === '--probe' && args.length === 3) {
       executionLocation: 'local_node', runtime: process.version, cacheState: 'not_applicable' }, registry));
   const wallMs = performance.now() - started;
   const heapUsedBytes = process.memoryUsage().heapUsed;
+  stages.end(result.points?.length);
+  stages.begin('inspect_application_coverage');
   const applicationCoverage = coverage(result, result.points ?? [], expected,
     point => ({ start: point.periodStart, end: point.periodEnd }));
   const applicationCapabilities = result.points?.at(-1)?.outputCapabilities ?? {};
@@ -322,27 +358,30 @@ if (invoked && args[0] === '--probe' && args.length === 3) {
     !result.diagnostics.some(issue => issue.severity === 'error');
   const { status, executionError, reachedThrough } = result;
   const applicationDiagnosticCounts = diagnosticCounts(result.diagnostics);
+  stages.end(applicationCoverage.periodCount);
   let equality = 'not measured';
   let referenceEquality = 'not measured';
   let referenceEvidence = 'not measured';
   let parityFailure;
-  if (executed && args[2] === 'manual') {
-    let stage = 'repeat_application_run';
+  if (executed && manual) {
     try {
       {
+        stages.begin('repeat_application_run');
         const repeated = runPersonalHouseholdForecast(model, request);
+        stages.end(repeated.points?.length);
         if (repeated.executionError) {
           throw new Error(repeated.message);
         }
-        stage = 'serialize_first';
+        stages.begin('digest_first_full_read_model');
         const firstDigest = digestForecastReadModel(result);
+        stages.end(result.points?.length);
         result = undefined;
-        stage = 'serialize_repeat';
+        stages.begin('digest_repeat_full_read_model');
         const repeatedDigest = digestForecastReadModel(repeated);
-        stage = 'compare_repeats';
+        stages.end(repeated.points?.length);
         equality = firstDigest === repeatedDigest ? 'equal' : 'different';
       }
-      stage = 'select canonical scenario';
+      stages.begin('import_parity_modules');
       // Existing R3 reference contract, scoped to compiled deterministic kernel.
       // Application tax participants and worker transport remain separate evidence.
       const { compileHouseholdKernelForRun } = await import('../../src/application/householdProjection.ts');
@@ -353,42 +392,50 @@ if (invoked && args[0] === '--probe' && args.length === 3) {
       const { createRunContext, runId, scenarioId, canonicalSerialize } = await import('../../src/simulation/run.ts');
       const { Currency } = await import('../../src/values/index.ts');
       const { createTaxDiagnosticKey } = await import('../../src/simulation/tax/contracts.ts');
+      stages.end();
+      stages.begin('select_canonical_scenario');
       const selected = selectScenario(model, {
         capabilityName: 'household_projection', executionLabel: 'Forecast feasibility',
         scenarioId: compiler.cashFlow.scenarioId ?? compiler.investments.scenarioId ?? compiler.liabilities.scenarioId,
         simulationStart: start, simulationEnd: end,
       });
+      stages.end();
       if (selected.status !== 'compiled' || !selected.value.object) {
-        parityFailure = { stage, status: selected.status, diagnosticCounts: diagnosticCounts(selected.diagnostics) };
+        parityFailure = { stage: stages.current, status: selected.status, diagnosticCounts: diagnosticCounts(selected.diagnostics) };
       } else {
-        stage = 'compile source-qualified kernel';
+        stages.begin('compile_source_qualified_kernel');
         const runContext = createRunContext({ runId: runId(request.runIdentity), scenarioId: scenarioId(selected.value.id),
           asOf: instant(`${request.asOf}T00:00:00.000Z`), dataCutoff: instant(`${request.dataCutoff}T00:00:00.000Z`),
           simulationStart: startInstant, simulationEnd: instant(endInstant),
           baseCurrency: Currency.of(compiler.cashFlow.baseCurrency) });
         const compiled = compileHouseholdKernelForRun(model, compiler, runContext);
+        stages.end();
         if (compiled.status !== 'compiled') {
-          parityFailure = { stage, status: compiled.status, diagnosticCounts: diagnosticCounts(compiled.diagnostics) };
+          parityFailure = { stage: stages.current, status: compiled.status, diagnosticCounts: diagnosticCounts(compiled.diagnostics) };
         } else {
           const { executable, kernel } = compiled.value;
-          stage = 'execute optimized summary';
+          stages.begin('execute_optimized_summary');
           const summary = runHouseholdKernel({ kernel, runContext });
-          stage = 'execute frozen reference';
+          stages.end(summary.periods.length);
+          stages.begin('execute_frozen_reference');
           const reference = referenceRun({ compiled: executable, runContext });
-          stage = 'compare kernel runs';
+          stages.end(reference.periods.length);
+          stages.begin('compare_full_shared_kernel_runs');
           referenceEvidence = compareKernelRuns(summary, reference, expected, executable,
             summarizeHouseholdPeriod, canonicalSerialize, createTaxDiagnosticKey());
-          if (referenceEvidence.failure) parityFailure = { stage, reason: referenceEvidence.failure };
+          stages.end();
+          if (referenceEvidence.failure) parityFailure = { stage: stages.current, reason: referenceEvidence.failure };
           if (!referenceEvidence.failure) {
             referenceEquality = referenceEvidence.firstFinancialDifference ? 'different' : 'equal';
           }
         }
       }
     } catch (error) {
-      parityFailure = { stage, error: safeErrorNames.has(error?.name) ? error.name : 'Error', message: safeErrorMessage(error?.message),
+      parityFailure = { stage: stages.current, error: safeErrorNames.has(error?.name) ? error.name : 'Error', message: safeErrorMessage(error?.message),
         ...(Array.isArray(error?.issues) ? { diagnosticCounts: diagnosticCounts(error.issues) } : {}) };
     }
   }
+  stages.begin(finalStage);
   const evidence = { months, fixture: fixture.id, classification: 'synthetic', status,
     executionError: executionError === true, reachedThrough: reachedThrough ?? null,
     periodCount: applicationCoverage.periodCount, executed, financialCompleteness: status === 'completed',
@@ -401,7 +448,8 @@ if (invoked && args[0] === '--probe' && args.length === 3) {
       scope: 'shared compiled-kernel economics; frozen reference tax-participant coverage and worker transport not measured' },
     referenceEvidence, ...(parityFailure === undefined ? {} : { parityFailure }) };
   writeFileSync(resolve(directory, `${months}.json`), JSON.stringify(evidence, null, 2) + '\n');
-  if (!executed || (args[2] === 'manual' && (parityFailure || equality !== 'equal' || referenceEquality !== 'equal'))) process.exitCode = 1;
+  stages.end(applicationCoverage.periodCount);
+  if (!executed || (manual && (parityFailure || equality !== 'equal' || referenceEquality !== 'equal'))) process.exitCode = 1;
 } else if (invoked) {
   if (args.length > 1 || (args[0] && args[0] !== '--manual')) throw new Error('Use no arguments or --manual');
   const mode = args[0] ? 'manual' : 'ordinary';
@@ -416,16 +464,37 @@ if (invoked && args[0] === '--probe' && args.length === 3) {
     // Never read a prior run's artifact as evidence for a killed subprocess.
     const file = resolve(directory, `${horizon}.json`);
     writeFileSync(file, 'null\n');
+    const progress = resolve(directory, progressName(horizon));
+    if (mode === 'manual') writeFileSync(progress, '');
     const started = performance.now();
     const run = spawnSync(process.execPath, [`--max-old-space-size=${mode === 'manual' ? 2048 : 512}`,
       'node_modules/vite-node/vite-node.mjs', 'tools/ci/forecast-feasibility.mjs', '--probe', String(horizon), mode],
     { timeout: mode === 'manual' ? 120_000 : 30_000, killSignal: 'SIGKILL', stdio: ['ignore', fd, fd],
       env: { ...process.env, NODE_OPTIONS: '' } });
     closeSync(fd);
-    const measured = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null;
-    failed = run.status !== 0 || !measured?.executed;
+    const processWallMs = performance.now() - started;
+    let measured = null;
+    try {
+      if (existsSync(file)) measured = JSON.parse(readFileSync(file, 'utf8'));
+    } catch (error) {
+      // A killed writer can leave a partial JSON artifact. Preserve the raw
+      // file and still publish the process failure and progress in summary.
+      if (!run.signal || !(error instanceof SyntaxError)) throw error;
+    }
+    let lastProgress = null;
+    if (mode === 'manual') {
+      // The subprocess may have been killed during the final append. Read
+      // only complete records, retaining the preceding BEGIN in that case.
+      const lines = readFileSync(progress, 'utf8').split('\n');
+      const lastComplete = lines.at(-2);
+      if (lastComplete) lastProgress = JSON.parse(lastComplete);
+    }
+    failed = run.status !== 0 || !measured?.executed || (mode === 'manual' &&
+      (lastProgress?.event !== 'END' || lastProgress.stage !== finalStage ||
+        measured.financialEquality?.repeatExecution !== 'equal' || measured.financialEquality?.optimizedVsReference !== 'equal'));
     probes.push({ months: horizon, processExit: run.status, signal: run.signal,
-      error: run.error?.code ?? null, processWallMs: performance.now() - started,
+      error: run.error?.code ?? null, processWallMs,
+      ...(mode === 'manual' ? { progressFile: progressName(horizon), lastProgress } : {}),
       status: failed ? 'FAIL' : 'PASS', evidence: measured ?? 'not measured' });
   }
   const artifact = { capturedHead: head.stdout.trim(), runtime: process.version, mode,
