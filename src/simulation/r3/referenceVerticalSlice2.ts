@@ -631,17 +631,15 @@ interface VerticalSlice2InternalRunInput extends VerticalSlice2RunInput {
   readonly targetPeriods?: readonly Period[];
 }
 
-const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): VerticalSlice2RunResult => {
+const runVerticalSlice2Internal = <Metadata extends Partial<Pick<VerticalSlice2RunResult, "runMetadata">>>(
+  request: VerticalSlice2InternalRunInput,
+  metadata: (months: number) => Metadata,
+): Omit<VerticalSlice2RunResult, "runMetadata"> & Metadata => {
   const months = request.months ?? 360;
   const periods = request.targetPeriods ?? utcMonthlyPeriods(request.runContext.simulationStart, months);
   validateInput(request, periods, request.targetPeriods !== undefined);
   const requestedHorizon = Object.freeze({ start: periods[0]!.start, end: periods[periods.length - 1]!.end });
-  const runMetadata = createRunMetadata(request.runContext, createInputFingerprint({
-    runContext: request.runContext,
-    openingState: request.openingState,
-    model: modeledIncomeFingerprintInput(request.input),
-    assumptions: { months },
-  }));
+  const runMetadata = metadata(months);
   let committedState = cloneAuthoritativeState(request.openingState);
   let committedPrimitiveState = createPrimitiveRuntimeStateStore(request.primitiveState);
   const committedPeriods: VerticalSlice2PeriodResult[] = [];
@@ -658,7 +656,9 @@ const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): Ver
         primitiveState: committedPrimitiveState,
         work: eventWork(request, targetPeriod),
       });
-      let state = cloneAuthoritativeState(eventResult.closingState);
+      // runPeriod owns and validates its closing candidate. It is private to
+      // this occurrence and can be discarded wholesale if cash work fails.
+      let state = eventResult.closingState;
       const recognitions: RecognitionFact[] = [];
       const proposals: SettlementProposal[] = [];
       const settlements: Settlement[] = [];
@@ -900,7 +900,7 @@ const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): Ver
       const diagnostics = [...runDiagnostics, ...error.issues];
       return Object.freeze({
         status: "incomplete",
-        runMetadata,
+        ...runMetadata,
         requestedHorizon,
         stoppedAt: targetPeriod.start,
         ...(committedPeriods.length === 0 ? {} : { reachedThrough: committedPeriods[committedPeriods.length - 1]!.period.end }),
@@ -915,7 +915,7 @@ const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): Ver
 
   return Object.freeze({
     status: "completed",
-    runMetadata,
+    ...runMetadata,
     requestedHorizon,
     reachedThrough: requestedHorizon.end,
     state: committedState,
@@ -939,7 +939,7 @@ const executeReferenceCashPeriod = (
   const result = runVerticalSlice2Internal({ runContext: request.runContext, input: request.input, openingState, primitiveState, months: 1, targetPeriods: Object.freeze([period]),
     ...(modeledSourceIncome === undefined ? {} : { modeledSourceIncome }),
     ...(modeledSourceEvents === undefined ? {} : { modeledSourceEvents }),
-    ...(preparedEventTraceRefs === undefined ? {} : { preparedEventTraceRefs }) });
+    ...(preparedEventTraceRefs === undefined ? {} : { preparedEventTraceRefs }) }, () => ({}));
   if (result.status !== "completed" || result.periods[0] === undefined) {
     throw new ValidationError(result.diagnostics);
   }
@@ -1029,7 +1029,14 @@ export const runVerticalSlice2 = (request: VerticalSlice2RunInput): VerticalSlic
     runContext: request.runContext, openingState: request.openingState, input: request.input,
     ...(request.months === undefined ? {} : { months: request.months }),
     ...(request.primitiveState === undefined ? {} : { primitiveState: request.primitiveState }),
-  }) : runVerticalSlice2Prepared(request);
+  }, months => ({
+    runMetadata: createRunMetadata(request.runContext, createInputFingerprint({
+      runContext: request.runContext,
+      openingState: request.openingState,
+      model: modeledIncomeFingerprintInput(request.input),
+      assumptions: { months },
+    })),
+  })) : runVerticalSlice2Prepared(request);
 };
 
 export const createVerticalSlice2PrimitiveId = (value: string): PrimitiveInstanceId => domainId("primitive-instance", value);

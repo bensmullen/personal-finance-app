@@ -17,7 +17,8 @@ import {
   assertAuthoritativeStateCurrency,
   admitS4OpeningSources,
   cloneAuthoritativeState,
-  createAuthoritativeIdentityRegistry,
+  createIndexedExecutionState,
+  registerAuthoritativeIdentity,
   validateAuthoritativeState,
   type AuthoritativeState,
 } from "../../state/index.js";
@@ -163,20 +164,24 @@ const display = (context: RunContext) =>
     generatedForecastFactKind: "model_generated" as const,
   });
 
-const mergeEventPreparationIdentities = (
+const appendEventPreparationIdentities = (
   state: AuthoritativeState,
   prepared: PreparedVerticalSlice2Period,
-): AuthoritativeState =>
-  cloneAuthoritativeState({
-    ...state,
-    identities: createAuthoritativeIdentityRegistry({
-      postedTransactionIds: [...state.identities.postedTransactionIds, ...prepared.state.identities.postedTransactionIds],
-      recognitionIds: [...state.identities.recognitionIds, ...prepared.state.identities.recognitionIds],
-      settlementIds: [...state.identities.settlementIds, ...prepared.state.identities.settlementIds],
-      generatedOccurrenceKeys: [...state.identities.generatedOccurrenceKeys, ...prepared.state.identities.generatedOccurrenceKeys],
-      externalIdempotencyKeys: [...state.identities.externalIdempotencyKeys, ...prepared.state.identities.externalIdempotencyKeys],
-    }),
-  });
+): number => {
+  // Reference VS2 event work only evaluates P27/P30. Each emits at most one
+  // generated identity, retained in its resulting primitive state. The
+  // candidate already descends from the same opening and owns its registry.
+  let appended = 0;
+  for (const entry of Object.values(prepared.eventPrimitiveTransition)) {
+    if (entry.primitiveId !== "P27" && entry.primitiveId !== "P30") continue;
+    const occurrence = entry.state.occurrenceId;
+    if (occurrence !== undefined && !state.identities.generatedOccurrenceKeys.includes(occurrence)) {
+      registerAuthoritativeIdentity(state.identities, "generatedOccurrenceKeys", occurrence);
+      appended += 1;
+    }
+  }
+  return appended;
+};
 
 type InstantExecution = {
   readonly state: AuthoritativeState;
@@ -404,7 +409,7 @@ const runCompiledHouseholdProjectionInternal = (
   });
   let state = performance.measure("engine.period_fork", () => {
     performance.counters({ referenceOpeningForks: 1 });
-    return cloneAuthoritativeState(compiled.reconciledOpeningState);
+    return createIndexedExecutionState(cloneAuthoritativeState(compiled.reconciledOpeningState));
   });
   let primitiveState = createPrimitiveRuntimeStateStore(
     compiled.reconciledPrimitiveState,
@@ -739,14 +744,13 @@ const runCompiledHouseholdProjectionInternal = (
         ...(prepared.investments?.traceRefs ?? []),
         ...(prepared.liabilities?.traceRefs ?? []),
       ]);
-      const mergeEventIdentities = (current: AuthoritativeState): AuthoritativeState =>
+      const mergeEventIdentities = (current: AuthoritativeState): void =>
         performance.measure("engine.period_fork", () => {
+          const appended = appendEventPreparationIdentities(current, prepared.cash!);
           performance.counters({
             referenceEventIdentityMerges: 1,
-            referenceEventPostedIdentitiesMerged: current.identities.postedTransactionIds.length
-              + prepared.cash!.state.identities.postedTransactionIds.length,
+            referenceEventOccurrenceIdentitiesAppended: appended,
           });
-          return mergeEventPreparationIdentities(current, prepared.cash!);
         });
       let eventRuntimeCommitted = prepared.cash === undefined;
       for (const at of allAt) {
@@ -760,7 +764,7 @@ const runCompiledHouseholdProjectionInternal = (
               ...prepared.cash!.eventPrimitiveTransition,
             },
           );
-          candidateState = mergeEventIdentities(candidateState);
+          mergeEventIdentities(candidateState);
           eventRuntimeCommitted = true;
         }
         const sameInstant = scheduled.value.descriptors.filter(
@@ -962,7 +966,7 @@ const runCompiledHouseholdProjectionInternal = (
             ...prepared.cash!.eventPrimitiveTransition,
           },
         );
-        candidateState = mergeEventIdentities(candidateState);
+        mergeEventIdentities(candidateState);
       }
       performance.measure("engine.trace_result", () => {
       if (liabilityPeriods.length > 0) {
@@ -1218,7 +1222,9 @@ const runCompiledHouseholdProjectionInternal = (
         ...(committed.length === 0
           ? {}
           : { reachedThrough: committed[committed.length - 1]!.period.end }),
-        state,
+        // Execution ancestry is run-local. A public result must cross cold
+        // opening validation when it is resubmitted to another run.
+        state: { ...state },
         primitiveState,
         periods: Object.freeze(committed),
         diagnostics: Object.freeze(diagnostics),
@@ -1230,7 +1236,7 @@ const runCompiledHouseholdProjectionInternal = (
     runMetadata,
     requestedHorizon,
     reachedThrough: requestedHorizon.end,
-    state,
+    state: { ...state },
     primitiveState,
     periods: Object.freeze(committed),
     diagnostics: Object.freeze(diagnostics),
