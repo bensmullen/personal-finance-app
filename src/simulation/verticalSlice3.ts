@@ -972,6 +972,14 @@ const operationId = (
   at: Instant,
 ): string => `investment-${kind}:${id}:${at}`;
 
+const unitQuoteRounding = (price: Money, configured: RoundingPolicy): RoundingPolicy => {
+  const scale = Math.max(18, configured.scale);
+  // The canonical policy already covers the usual case without formatting a quote.
+  if (scale === configured.scale && price.amount.fitsScale(scale)) return configured;
+  const quoteScale = price.amount.toString().split(".")[1]?.length ?? 0;
+  return new RoundingPolicy(Math.max(scale, quoteScale), configured.mode);
+};
+
 /** Prepares P23/P26 and only the currently eligible end-of-period operations. */
 export const prepareVerticalSlice3Period = (
   runContext: RunContext,
@@ -1009,7 +1017,11 @@ export const prepareVerticalSlice3Period = (
         parameters: {
           returnBasis: item.returnBasis,
           cashFlowTiming: "end_of_period",
-          postingRounding: item.priceRounding,
+          // P23 is compounding a unit quote here, with no cash to settle.
+          postingRounding: unitQuoteRounding(
+            currentState.positions[item.targetPositionId]!.price,
+            item.priceRounding,
+          ),
         },
         context: {
           evaluationInstant: closeAt(period),
