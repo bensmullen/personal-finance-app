@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createApplicationPerformanceObserver, translateMeteredCost, requireCompletedPerformanceForecast, requireFullHorizonPerformanceForecast, createPerformanceComparisonValidation, createPerformanceEvidenceSample } from "../src/application/performance.js";
 import { PerformanceRegistry, createPerformanceSession, type PerformanceContext } from "../src/diagnostics/performance.js";
-import { compileHouseholdKernelForRun, runPersonalHouseholdForecast, comparePersonalHouseholdScenarioIntents } from "../src/application/householdProjection.js";
+import { compileHouseholdKernelForRun, runPersonalHouseholdForecast, comparePersonalHouseholdScenarioIntents, restoreHouseholdForecastEvidence } from "../src/application/householdProjection.js";
+import { householdEvidenceProof } from "../src/application/mortgageChartData.js";
 import { createRealisticPerformanceFixture, createStressPerformanceFixture, createPerformanceScalingFixtures } from "./fixtures/performanceHouseholds.js";
 import { compileHouseholdProjection } from "../src/application/compiler/householdProjection.js";
 import { runCompiledHouseholdProjection } from "../src/simulation/householdExecution.js";
@@ -46,9 +47,12 @@ describe("performance instrumentation", () => {
     });
     const model = {
       status: "incomplete",
+      runId: "forecast:0",
       asOf: "2026-01-01",
       dataCutoff: "2025-12-31",
-      source: { originalId: "original:0", originalDate: "2025-12-30", bankId: "bank:0" },
+      source: { originalId: "original:0", originalDate: "2025-12-30", bankId: "bank:0",
+        ownerId: "person:0", originalFingerprint: "original:fingerprint", wageIssuer: "canonical-forecast/v1" },
+      retirementMilestones: [{ eventId: "retirement:0", incomeId: "income:0" }],
       postedProof: { transactionId: "transaction:0", amount: "100.00" },
       diagnosticCatalogs: { entries: [{ id: "catalog:0", content: "law" }] },
       points: [point("2026-01-01"), point("2026-02-01"), point("2026-03-01")],
@@ -57,12 +61,19 @@ describe("performance instrumentation", () => {
     expect(digest(independent)).toBe(digest(model));
     for (const change of [
       (copy: typeof model) => { copy.status = "completed"; },
+      (copy: typeof model) => { copy.runId = "forecast:1"; },
       (copy: typeof model) => { copy.asOf = "2026-01-02"; },
       (copy: typeof model) => { copy.dataCutoff = "2025-12-30"; },
       (copy: typeof model) => { copy.source.originalId = "original:1"; },
       (copy: typeof model) => { copy.source.originalDate = "2025-12-29"; },
       (copy: typeof model) => { copy.source.bankId = "bank:1"; },
+      (copy: typeof model) => { copy.source.ownerId = "person:1"; },
+      (copy: typeof model) => { copy.source.originalFingerprint = "different:fingerprint"; },
+      (copy: typeof model) => { copy.source.wageIssuer = "canonical-household/v1"; },
+      (copy: typeof model) => { copy.retirementMilestones[0]!.eventId = "retirement:1"; },
+      (copy: typeof model) => { copy.retirementMilestones[0]!.incomeId = "income:1"; },
       (copy: typeof model) => { copy.postedProof.transactionId = "transaction:1"; },
+      (copy: typeof model) => { copy.postedProof.amount = "100.01"; },
       (copy: typeof model) => { copy.diagnosticCatalogs.entries[0]!.content = "new law"; },
       (copy: typeof model) => { copy.points.reverse(); },
       (copy: typeof model) => { copy.points[0]!.cash.amount = "100.01"; },
@@ -77,9 +88,11 @@ describe("performance instrumentation", () => {
       expect(digest(changed)).not.toBe(digest(model));
     }
     const keyed = { toJSON: (key: string) => key };
-    const projected = { money: money("1.25", USD), keyed, slots: [undefined, , keyed, NaN], omitted: undefined };
+    const projected = { money: money("1.25", USD), keyed, slots: [undefined, , keyed, NaN, Infinity, null], omitted: undefined };
     expect(digest(projected)).toBe(digest(JSON.parse(JSON.stringify(projected))));
     expect(digest({ toJSON: () => ({ toJSON: () => "ignored", amount: "1" }) })).toBe(digest({ amount: "1" }));
+    const returnedFunction = Object.assign(() => {}, { toJSON: () => { throw new Error("Unexpected hook"); } });
+    expect(digest({ omitted: { toJSON: () => returnedFunction } })).toBe(digest({}));
     expect(digest({ a: 1, b: 2 })).not.toBe(digest({ b: 2, a: 1 }));
     expect(digest([null])).not.toBe(digest([null, null]));
     expect(digest({ status: "unavailable", points: [] })).toBe(digest({ status: "unavailable", points: [] }));
@@ -89,7 +102,10 @@ describe("performance instrumentation", () => {
     expect(() => digest(undefined)).toThrow("Missing forecast read model");
     expect(() => digest({ amount: 1n })).toThrow("Do not know how to serialize a BigInt");
     const { rawJSON } = JSON as typeof JSON & { rawJSON?: (text: string) => unknown };
-    if (rawJSON) expect(() => digest({ amount: rawJSON("1") })).toThrow("Unsupported raw JSON");
+    if (rawJSON) {
+      expect(() => digest({ amount: rawJSON("1") })).toThrow("Unsupported raw JSON");
+      expect(() => rawJSON("{")).toThrow(SyntaxError);
+    }
     const cycle: { self?: unknown } = {};
     cycle.self = cycle;
     expect(() => digest(cycle)).toThrow("Cyclic forecast read model");
@@ -110,9 +126,8 @@ describe("performance instrumentation", () => {
       const fingerprint = digest(value, counts => { work = counts; });
       return { fingerprint, work };
     };
-    // The forecast producer publishes a single frozen replay basis through
-    // every period anchor. Content hashing is already amortized, but with
-    // content-only memoization each anchor looks up the same large string.
+    // Mutable aliases still require traversal. The production replay basis can
+    // reuse the result of its entire JSON-visible subtree instead.
     const aliases = measure(model(Array.from({ length: 8 }, () => basis)));
     expect(aliases.work).toMatchObject({
       repeatedContainerVisits: 7, longStringVisits: 8, longStringCodeUnits: encoded.length * 8,
@@ -125,16 +140,17 @@ describe("performance instrumentation", () => {
     const shared = measure(model(Array.from({ length: 8 }, () => frozen)));
     expect(shared.fingerprint).toBe(independent.fingerprint);
     expect(shared.work).toMatchObject({
-      repeatedContainerVisits: 7, longStringVisits: 8, longStringCodeUnits: encoded.length * 8,
-      frozenEncodingHits: 7, longStringContentLookups: 1, hashedLongStringCodeUnits: encoded.length,
+      repeatedContainerVisits: 0, longStringVisits: 1, longStringCodeUnits: encoded.length,
+      stableContainerHits: 7, longStringContentLookups: 1, hashedLongStringCodeUnits: encoded.length,
     });
+    expect(shared.work.containerVisits).toBe(aliases.work.containerVisits! - 7);
     const unique = measure(model(Array.from({ length: 8 }, (_, index) => ({
       ...basis, encoded: String(index) + encoded.slice(1),
     }))));
     expect(unique.work.hashedLongStringCodeUnits).toBe(encoded.length * 8);
     expect(unique.fingerprint).not.toBe(aliases.fingerprint);
     const otherRun = measure(model([Object.freeze({ ...basis, encoded: encoded.replace("\ud800", "\ud801") })]));
-    expect(otherRun.work).toMatchObject({ frozenEncodingHits: 0, hashedLongStringCodeUnits: encoded.length });
+    expect(otherRun.work).toMatchObject({ stableContainerHits: 0, hashedLongStringCodeUnits: encoded.length });
     expect(otherRun.fingerprint).not.toBe(digest(model([frozen])));
 
     let reads = 0;
@@ -142,7 +158,7 @@ describe("performance instrumentation", () => {
       get encoded() { return reads++ === 0 ? encoded : "b" + encoded.slice(1); },
     });
     const readBoth = measure([accessor, accessor]);
-    expect(readBoth.work).toMatchObject({ frozenEncodingHits: 0, longStringContentLookups: 2 });
+    expect(readBoth.work).toMatchObject({ stableContainerHits: 0, longStringContentLookups: 2 });
     expect(readBoth.fingerprint).toBe(digest([{ encoded }, { encoded: "b" + encoded.slice(1) }]));
     expect(reads).toBe(2);
     const keyed = Object.freeze({ ...basis, toJSON(key: string) {
@@ -151,6 +167,103 @@ describe("performance instrumentation", () => {
     expect(digest({ first: keyed, second: keyed })).toBe(digest({
       first: basis, second: { ...basis, encoded: "b" + encoded.slice(1) },
     }));
+  });
+
+  it("reuses immutable diagnostic entries across distinct cumulative histories", async () => {
+    const url = new URL("../tools/ci/forecast-feasibility.mjs", import.meta.url).href;
+    const { digestForecastReadModel: digest } = await import(url) as {
+      digestForecastReadModel: (value: unknown, observe?: (work: Record<string, number>) => void) => string;
+    };
+    const history = Array.from({ length: 24 }, (_, index) => Object.freeze({
+      code: "PFA-TAX-009",
+      provenance: Object.freeze({ occurrence: index, law: Object.freeze({ catalogRef: "catalog:0" }) }),
+    }));
+    const periods = history.map((_, index) => Object.freeze({ diagnostics: Object.freeze(history.slice(0, index + 1)) }));
+    let shared!: Record<string, number>;
+    let independent!: Record<string, number>;
+    const copied: unknown = JSON.parse(JSON.stringify(periods));
+    expect(digest(periods, work => { shared = work; })).toBe(digest(copied, work => { independent = work; }));
+    const repeatedEntries = 24 * 23 / 2;
+    expect(shared.stableContainerHits).toBe(repeatedEntries);
+    expect(shared.containerVisits).toBe(independent.containerVisits! - 3 * repeatedEntries);
+  });
+
+  it("reads dynamic or mutable descendants on every occurrence", async () => {
+    const url = new URL("../tools/ci/forecast-feasibility.mjs", import.meta.url).href;
+    const { digestForecastReadModel: digest } = await import(url) as {
+      digestForecastReadModel: (value: unknown, observe?: (work: Record<string, number>) => void) => string;
+    };
+    let reads = 0;
+    const mutable = { amount: "1" };
+    const shallow = Object.freeze({ mutable });
+    const proxy = new Proxy(Object.freeze({ amount: "1" }), {
+      get(target, key, receiver) {
+        if (key === "amount") reads++;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const wrapped = Object.freeze({ proxy });
+    const keyed = Object.freeze(Object.create({ toJSON(key: string) { return key; } }) as object);
+    const inheritedSlot = Object.freeze(Object.setPrototypeOf(new Array(1), { get 0() { return ++reads; } }));
+    const input = {
+      first: shallow,
+      get second() { mutable.amount = "2"; return shallow; },
+      proxies: [wrapped, wrapped],
+      left: keyed,
+      right: keyed,
+      holes: [inheritedSlot, inheritedSlot],
+    };
+    const expected = {
+      first: { mutable: { amount: "1" } },
+      second: { mutable: { amount: "2" } },
+      proxies: [{ proxy: { amount: "1" } }, { proxy: { amount: "1" } }],
+      left: "left", right: "right", holes: [[3], [4]],
+    };
+    let work!: Record<string, number>;
+    expect(digest(input, counts => { work = counts; })).toBe(digest(expected));
+    expect(work.stableContainerHits).toBe(0);
+    expect(reads).toBe(4);
+
+    const alias = Object.freeze({ nested: Object.freeze(["before"]) });
+    let fingerprint: string;
+    // An ancestor may already be cached when a sibling installs an inherited
+    // hook affecting one of its descendants.
+    const prior = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON");
+    try {
+      fingerprint = digest({ first: alias, get second() {
+        Object.defineProperty(Array.prototype, "toJSON", {
+          configurable: true, value: (key: string) => `after:${key}`,
+        });
+        return alias;
+      } });
+    } finally {
+      if (prior) Object.defineProperty(Array.prototype, "toJSON", prior);
+      else Reflect.deleteProperty(Array.prototype, "toJSON");
+    }
+    expect(fingerprint).toBe(digest({ first: { nested: ["before"] }, second: { nested: "after:nested" } }));
+  });
+
+  it("detects a full-model replay change and preserves cold source admission", async () => {
+    const url = new URL("../tools/ci/forecast-feasibility.mjs", import.meta.url).href;
+    const { digestForecastReadModel: digest } = await import(url) as {
+      digestForecastReadModel: (value: unknown) => string;
+    };
+    const model = createGoldenHouseholdDraft();
+    const result = runPersonalHouseholdForecast(model, oneMonth(createGoldenHouseholdForecastRequest()));
+    if (result.status === "unavailable") throw new Error(JSON.stringify(result.diagnostics));
+    const copy = JSON.parse(JSON.stringify(result)) as typeof result;
+    const cold = householdEvidenceProof(copy.points);
+    if (!cold) throw new Error("Expected application replay evidence");
+    expect(digest(copy)).toBe(digest(result));
+    expect(restoreHouseholdForecastEvidence(cold, model).periods).toHaveLength(1);
+    const tampered = { ...cold, encoded: `${cold.encoded} ` };
+    const changed = { ...copy, points: copy.points.map(point => ({ ...point,
+      traceRefs: point.traceRefs.map(ref => !ref.replayArtifact ? ref : {
+        ...ref, replayArtifact: { basis: tampered, start: point.periodStart, end: point.periodEnd },
+      }),
+    })) };
+    expect(digest(changed)).not.toBe(digest(result));
+    expect(() => restoreHouseholdForecastEvidence(tampered, model)).toThrow(/BASIS_MISMATCH/);
   });
 
   it.each([8, 20, 120])("publishes %i growing snapshots using prefix identity and only their new merge suffix", months => {

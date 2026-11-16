@@ -35,44 +35,24 @@ const safeMessages = new Set([
 const safeErrorMessage = message => safeMessages.has(message) ? bounded(message) : 'Message withheld';
 const safeErrorNames = new Set(['RangeError', 'ReferenceError', 'SyntaxError', 'TypeError', 'ValidationError']);
 
-// Hash the entire JSON-visible model in order with explicit container and
-// scalar boundaries. Each long string is hashed once by content. In particular,
-// period replay anchors all carry the same large encoded replay basis, which
-// JSON.stringify would expand once per anchor into a single output string.
+// Each container commits to its ordered JSON-visible children. A cached token
+// and a freshly evaluated copy contribute exactly the same bytes to the parent.
 export function digestForecastReadModel(root, observe) {
-  const hash = createHash('sha256');
   const longStrings = new Map();
-  const frozenEncodings = new WeakMap();
+  const stableContainers = new WeakMap();
   const active = new Set();
   const seen = observe ? new WeakSet() : undefined;
   const work = observe ? {
     containerVisits: 0, repeatedContainerVisits: 0, longStringVisits: 0, longStringCodeUnits: 0,
     longStringContentLookups: 0, longStringLookupMs: 0, hashedLongStringCodeUnits: 0, longStringHashMs: 0,
-    frozenEncodingHits: 0,
+    stableContainerHits: 0,
   } : undefined;
   const chunkSize = 8_192;
-  let buffer = '';
-  const write = token => {
-    buffer += token;
-    if (buffer.length >= chunkSize) {
-      hash.update(buffer);
-      buffer = '';
-    }
-  };
-  const writeString = (value, encodingOwner) => {
-    if (value.length < chunkSize) {
-      write(JSON.stringify(value));
-      return;
-    }
+  const stringToken = value => {
+    if (value.length < chunkSize) return JSON.stringify(value);
     if (work) {
       work.longStringVisits++;
       work.longStringCodeUnits += value.length;
-    }
-    const cached = encodingOwner === undefined ? undefined : frozenEncodings.get(encodingOwner);
-    if (cached !== undefined) {
-      if (work) work.frozenEncodingHits++;
-      write(cached);
-      return;
     }
     const lookupStarted = work ? performance.now() : 0;
     let digest = longStrings.get(value);
@@ -95,16 +75,7 @@ export function digestForecastReadModel(root, observe) {
       longStrings.set(value, digest);
       if (work) work.longStringLookupMs += performance.now() - insertStarted;
     }
-    const token = `~${value.length}:${digest}`;
-    // Every replay anchor in a run points to the same frozen basis. An own
-    // frozen data property proves its encoding cannot change between visits.
-    // Accessors, proxies and mutable owners still use normal JSON traversal.
-    if (encodingOwner !== undefined && !types.isProxy(encodingOwner) &&
-        Object.isFrozen(encodingOwner) &&
-        Object.getOwnPropertyDescriptor(encodingOwner, 'encoded')?.value === value) {
-      frozenEncodings.set(encodingOwner, token);
-    }
-    write(token);
+    return `~${value.length}:${digest}`;
   };
   const jsonValue = (value, key) => {
     if ((value !== null && (typeof value === 'object' || typeof value === 'function')) ||
@@ -118,16 +89,33 @@ export function digestForecastReadModel(root, observe) {
     if (types.isBigIntObject(value)) return BigInt.prototype.valueOf.call(value);
     return value;
   };
-  const omitted = value => value === undefined || typeof value === 'function' || typeof value === 'symbol';
-  const visit = (value, encodingOwner) => {
-    if (typeof value === 'string') {
-      writeString(value, encodingOwner);
-      return;
+  // Ordinary prototypes can acquire a toJSON hook between two visits via a
+  // sibling getter. Recheck these dependencies even on a subtree cache hit.
+  const plainPrototypes = () => Object.getPrototypeOf(Array.prototype) === Object.prototype &&
+    !Object.hasOwn(Object.prototype, 'toJSON') && !Object.hasOwn(Array.prototype, 'toJSON');
+  const stableShape = value => {
+    if (types.isProxy(value) || !Object.isFrozen(value) || Object.hasOwn(value, 'toJSON')) return false;
+    const prototype = Object.getPrototypeOf(value);
+    return (prototype === null || prototype === (Array.isArray(value) ? Array.prototype : Object.prototype)) && plainPrototypes();
+  };
+  const ownData = (value, key) => {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor !== undefined && Object.hasOwn(descriptor, 'value');
+  };
+  const encode = (raw, key) => {
+    const cached = stableContainers.get(raw);
+    if (cached !== undefined && plainPrototypes()) {
+      if (work) work.stableContainerHits++;
+      return cached;
     }
+    const candidate = raw !== null && typeof raw === 'object' && stableShape(raw);
+    const value = jsonValue(raw, key);
+    const scalarStable = raw === null || (typeof raw !== 'object' && typeof raw !== 'function' && typeof raw !== 'bigint');
     if (typeof value === 'bigint') throw new TypeError('Do not know how to serialize a BigInt');
     if (value === null || typeof value !== 'object') {
-      write(JSON.stringify(value));
-      return;
+      // toJSON can return a function. Omit it without invoking its hook.
+      const omitted = value === undefined || typeof value === 'function' || typeof value === 'symbol';
+      return { token: omitted ? undefined : typeof value === 'string' ? stringToken(value) : JSON.stringify(value), stable: scalarStable };
     }
     if (JSON.isRawJSON?.(value)) throw new TypeError('Unsupported raw JSON in forecast read model');
     if (active.has(value)) throw new TypeError('Cyclic forecast read model');
@@ -137,33 +125,53 @@ export function digestForecastReadModel(root, observe) {
       else seen.add(value);
     }
     active.add(value);
-    if (Array.isArray(value)) {
+    const array = Array.isArray(value);
+    let stable = raw === value && candidate;
+    const hash = createHash('sha256');
+    let buffer = '';
+    const write = token => {
+      buffer += token;
+      if (buffer.length >= chunkSize) {
+        hash.update(buffer);
+        buffer = '';
+      }
+    };
+    if (array) {
       const length = value.length;
       write(`[${length}:`);
       for (let index = 0; index < length; index++) {
-        const item = jsonValue(value[index], String(index));
+        const key = String(index);
+        stable = stable && ownData(value, key);
+        const item = encode(value[index], key);
+        stable = stable && item.stable;
         if (index > 0) write(',');
-        visit(omitted(item) ? null : item);
+        write(item.token ?? 'null');
       }
       write(']');
     } else {
       write('{');
       for (const key of Object.keys(value)) {
-        const item = jsonValue(value[key], key);
-        if (omitted(item)) continue;
-        writeString(key);
+        stable = stable && ownData(value, key);
+        const item = encode(value[key], key);
+        stable = stable && item.stable;
+        if (item.token === undefined) continue;
+        write(stringToken(key));
         write(':');
-        visit(item, key === 'encoded' ? value : undefined);
+        write(item.token);
         write(',');
       }
       write('}');
     }
     active.delete(value);
+    // Container preimages start with '[' or '{'. Their tokens start with '#',
+    // distinct from JSON scalars and the '~' long-string representation.
+    const result = { token: `#${hash.update(buffer).digest('hex')}`, stable };
+    if (stable) stableContainers.set(value, result);
+    return result;
   };
-  const value = jsonValue(root, '');
-  if (omitted(value)) throw new TypeError('Missing forecast read model');
-  visit(value);
-  const digest = hash.update(buffer).digest('hex');
+  const { token } = encode(root, '');
+  if (token === undefined) throw new TypeError('Missing forecast read model');
+  const digest = createHash('sha256').update('forecast-read-model/v2:').update(token).digest('hex');
   observe?.(work);
   return digest;
 }
