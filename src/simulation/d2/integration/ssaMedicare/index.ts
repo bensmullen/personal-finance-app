@@ -1,4 +1,4 @@
-import { type AccountId } from "../../../../accounting/index.js";
+import { accountingTransactionId, type AccountId } from "../../../../accounting/index.js";
 import { ValidationError } from "../../../../diagnostics/index.js";
 import { domainId } from "../../../../identity/index.js";
 import { calculationTraceId, calculationTraceRef } from "../../../../lineage/index.js";
@@ -120,6 +120,7 @@ export function createSsaMedicareParticipant(configuration: SsaMedicareInput): H
     events.some(event => legacyMonths.has(memberMonth(event.personId, event.eventAt))))
     fail("SSA_DUPLICATE_PAYMENT", "Native events require distinct source identities and admitted recipients");
   const dueByMonth = new Map<string, NativeSsaMedicareOccurrence[]>();
+  const liveSourceChecks = new WeakMap<SsaMedicarePaymentRecord, () => void>();
   for (const event of events) {
     instant(event.eventAt);
     const month = event.eventAt.slice(0, 7);
@@ -142,7 +143,13 @@ export function createSsaMedicareParticipant(configuration: SsaMedicareInput): H
         if (isNativeSsaMedicareOriginalInput(receipt.sourceInputs)) {
           if (receipt.payable.paymentAt >= period.start)
             fail("SSA_CHANGED_PAYMENT", "Period opening contains a current or future native SSA installment");
-          validateNativeSsaMedicareReceipt(receipt, context);
+          const source = receipt.sourceInputs as NativeSsaMedicareOriginalInput;
+          // An unchanged receipt can reuse evaluator results within its own
+          // run, but still reads every original again before preparing work.
+          const check = boundToRun(source.context, context) ? liveSourceChecks.get(receipt) : undefined;
+          if (check) check();
+          else validateNativeSsaMedicareReceipt(receipt, context, boundToRun(source.context, context)
+            ? verify => liveSourceChecks.set(receipt, verify) : undefined);
           continue;
         }
         const q = receipt.sourceInputs as ConfirmedSsaMedicarePayment;
@@ -176,7 +183,9 @@ export function createSsaMedicareParticipant(configuration: SsaMedicareInput): H
         validateAuthoritativeState(opening.state);
         if (prior) continue;
         const bank = opening.state.accounts[q.bank.accountId];
-        if (!bank || bank.ownerId !== (bound.nativeHousehold ? input.householdId : q.payable.recipientId) || !["checking", "savings"].includes(bank.kind) || !exact(bank.cash))
+        const bankOwner = native !== undefined ? bound.nativeHousehold?.route?.personOwnerId ?? input.householdId
+          : bound.nativeHousehold ? input.householdId : q.payable.recipientId;
+        if (!bank || bank.ownerId !== bankOwner || !["checking", "savings"].includes(bank.kind) || !exact(bank.cash))
           fail("SSA_BANK_NOT_ADMITTED", "Existing exact recipient-owned checking/savings account required");
         const operationId = `ssa-medicare:${q.payable.paymentId}`;
         if (native !== undefined && work.some(descriptor => descriptor.id.startsWith("cash-expense:") &&
@@ -224,7 +233,7 @@ export function createSsaMedicareParticipant(configuration: SsaMedicareInput): H
       for (const event of dueByMonth.get(descriptor.sequencingInstant.slice(0, 7)) ?? []) {
         if (descriptor.sequencingInstant !== event.eventAt) continue;
         if (descriptor.id === event.eventId) {
-          const proof = observation?.postingProofs?.[event.eventId];
+          const proof = observation?.postingProofs?.[accountingTransactionId(event.eventId)];
           const attachment = proof?.registration.nativeHousehold;
           if (!attachment || !observation || !boundToRun(attachment.context, observation.context))
             fail("SSA_SOURCE_NOT_ADMITTED", "Posted native SSA requires the actual run boundary");
@@ -313,11 +322,15 @@ export function validateSsaMedicareSourceHistory(state: AuthoritativeState, cuto
   }
 }
 
-function validateNativeSsaMedicareReceipt(receipt: SsaMedicarePaymentRecord, observation: Pick<RunContext, "asOf" | "dataCutoff">) {
-  const qualified = qualifyNativeSsaMedicareInput(receipt.sourceInputs as NativeSsaMedicareOriginalInput, observation).payment;
+function validateNativeSsaMedicareReceipt(receipt: SsaMedicarePaymentRecord, observation: Pick<RunContext, "asOf" | "dataCutoff">,
+  retainSourceCheck?: (check: () => void) => void) {
+  let checkSources: (() => void) | undefined;
+  const qualified = qualifyNativeSsaMedicareInput(receipt.sourceInputs as NativeSsaMedicareOriginalInput, observation,
+    retainSourceCheck === undefined ? undefined : check => { checkSources = check; }).payment;
   const { version: _version, id: _id, netBank: _netBank, transaction, recognitions: _recognitions, ...input } = receipt;
   if (!same(qualified, input) || !same(ssaMedicarePaymentJournal(qualified), transaction))
     fail("SSA_CHANGED_PAYMENT", "Committed native SSA receipt no longer matches current originals");
+  if (checkSources !== undefined) retainSourceCheck?.(checkSources);
 }
 
 /** Reconcile independently qualified occurrences against each incremental
@@ -367,7 +380,7 @@ export function validateNativeSsaMedicareFrontiers(
             ref.traceId === coverage.id || ref.traceId === coverage.quote.quoteId))))
         fail("SSA_EXCLUSIVE_REPRESENTATION_REQUIRED", "Restored income or premium stream overlaps source-qualified SSA");
       verifyDistinctWages(cashFlow?.incomes ?? [], raw, context);
-      const proof = frontier.state.d2PostedTransactions?.[event.eventId];
+      const proof = frontier.state.d2PostedTransactions?.[accountingTransactionId(event.eventId)];
       if (!receipt || receipt.version !== "ssa-medicare-payment/v3" || !same(receipt.sourceInputs, source) ||
         !same(receipt.nativeHousehold, qualified.nativeHousehold) || !same(receipt.transaction, ssaMedicarePaymentJournal(qualified)) ||
         proof?.registration.kind !== "ssa_medicare_payment" || proof.registration.paymentKey !== key ||

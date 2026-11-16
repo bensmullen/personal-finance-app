@@ -104,8 +104,8 @@ const zero = money("0");
 
 function readCurrent<T>(reader: Reader<T> | undefined, context: HouseholdBankEventContext) {
   requireOriginal(reader !== undefined);
-  const read = () => immutableConfiguration(reader(context));
-  const inventory = read();
+  const read = () => reader(context);
+  const inventory = immutableConfiguration(read());
   const { householdId, personId, eventId, eventAt, dataCutoff, asOf } = context;
   requireOriginal(inventory !== undefined && inventory.completeness === "complete" &&
     same(inventory.event, { householdId, personId, eventId, eventAt }) &&
@@ -129,16 +129,18 @@ function readCurrent<T>(reader: Reader<T> | undefined, context: HouseholdBankEve
 
 type Observation = Pick<HouseholdBankEventContext, "asOf" | "dataCutoff">;
 
-export function qualifyNativeSsaMedicareInput(input: NativeSsaMedicareOriginalInput, observation?: Observation) {
+export function qualifyNativeSsaMedicareInput(input: NativeSsaMedicareOriginalInput, observation?: Observation,
+  retainSourceCheck?: (check: () => void) => void) {
   try {
-    return rebuildNativeSsaMedicarePayment(immutableConfiguration(input), observation);
+    return rebuildNativeSsaMedicarePayment(immutableConfiguration(input), observation, retainSourceCheck);
   } catch (error) {
     if (error instanceof ValidationError) throw error;
     return fail("SSA_MEDICARE_SOURCE_INCOMPLETE", "Valid current SSA, Medicare and household BANK originals required");
   }
 }
 
-function rebuildNativeSsaMedicarePayment(input: NativeSsaMedicareOriginalInput, observation?: Observation) {
+function rebuildNativeSsaMedicarePayment(input: NativeSsaMedicareOriginalInput, observation?: Observation,
+  retainSourceCheck?: (check: () => void) => void) {
   const c = input.context;
   instant(c.asOf); instant(c.dataCutoff); instant(c.eventAt);
   const { mode, ssaPublisherId, medicarePublisherId, bankCashBefore } = input;
@@ -182,9 +184,9 @@ function rebuildNativeSsaMedicarePayment(input: NativeSsaMedicareOriginalInput, 
         obligationId: claimId(row.claimId), obligationRecognitionId: `medicare-recognition:${row.claimId}`,
         amount: row.memberObligation, partialDeduction: "forbidden", source: instruction.authorizationSource } };
   });
-  const bankRoute = () => qualifyHouseholdBankRoute(s.bank.publisherId, s.bank.sourceId, c);
+  const { publisherId, sourceId } = s.bank;
+  const bankRoute = () => qualifyHouseholdBankRoute(publisherId, sourceId, c);
   const route = bankRoute();
-  requireOriginal(route.personOwnerId === undefined);
   const witness = (family: "ssa" | "medicare", publisherId: string, original: Publication<unknown>): HouseholdEconomicWitness => ({
     original: { version: "household-economic-original/v1", family, publisherId, sourceId: original.id,
       revisionId: original.revision, digest: irmaaOriginalDigest(original) },
@@ -201,7 +203,9 @@ function rebuildNativeSsaMedicarePayment(input: NativeSsaMedicareOriginalInput, 
         witness("ssa", input.ssaPublisherId, ssa.selected), witness("medicare", input.medicarePublisherId, medicare.selected),
       ] },
   };
-  const payment = qualifyRawPayment(raw, householdId, personId, dataCutoff, input, observation);
+  let checkDomainSources: (() => void) | undefined;
+  const payment = qualifyRawPayment(raw, householdId, personId, dataCutoff, input, observation,
+    retainSourceCheck === undefined ? undefined : check => { checkDomainSources = check; });
   if (observation !== undefined && (observation.asOf !== c.asOf || observation.dataCutoff !== c.dataCutoff)) {
     requireOriginal(observation.dataCutoff >= c.dataCutoff && observation.asOf >= c.asOf);
     const observed = { ...c, asOf: observation.asOf, dataCutoff: observation.dataCutoff };
@@ -213,5 +217,17 @@ function rebuildNativeSsaMedicarePayment(input: NativeSsaMedicareOriginalInput, 
   }
   ssa.unchanged(); medicare.unchanged();
   requireOriginal(same(bankRoute(), route));
+  // Keep only fresh read functions and commitments for an unchanged live
+  // run boundary. Later-cutoff admission always rebuilds both originals.
+  if (checkDomainSources !== undefined &&
+      (observation === undefined || observation.asOf === asOf && observation.dataCutoff === dataCutoff)) {
+    const checkSsa = ssa.unchanged, checkMedicare = medicare.unchanged;
+    const checkDomain = checkDomainSources;
+    retainSourceCheck?.(() => {
+      checkDomain();
+      checkSsa(); checkMedicare();
+      requireOriginal(same(bankRoute(), route));
+    });
+  }
   return { payment, raw };
 }

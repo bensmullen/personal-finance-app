@@ -54,12 +54,14 @@ const bank: readonly HouseholdBankOriginal[] = [
   { ...publication, sourceId: "bank-member", kind: "membership", householdId: ids.household, personId: ids.person },
   { ...publication, sourceId: "bank-permission", kind: "permission", householdId: ids.household, personId: ids.person, bankAccountId: ids.bank, direction: "credit" },
 ];
-const secondBank = bank.map(original => {
-  if (original.kind === "account") return { ...original, bankAccountId: second.bank };
+const secondBank: readonly HouseholdBankOriginal[] = bank.map(original => {
+  if (original.kind === "account") return { ...original, bankAccountId: second.bank,
+    owner: { kind: "person", id: second.person } };
   if (original.kind === "membership") return { ...original, personId: second.person };
   if (original.kind === "permission") return { ...original, bankAccountId: second.bank, personId: second.person };
   return original;
 });
+export const bankPermission = { allowSecondCredit: true };
 
 function inventory<K extends "ssa" | "medicare">(context: HouseholdBankEventContext, family: K) {
   const { eventId, eventAt, personId, householdId, asOf, dataCutoff } = context;
@@ -79,7 +81,8 @@ export function registerTestOriginals(): void {
   registerHouseholdBankOriginalProvider({ publisherId: bankPublisherId, readOriginals: query => query.sourceId === "bank-permission" ? {
     version: "household-bank-original-inventory/v1", publisherId: bankPublisherId, query, completeness: "complete",
     checkedAt: query.context.asOf, completeThrough: query.context.dataCutoff,
-    originals: query.context.personId === second.person ? secondBank : bank,
+    originals: query.context.personId === second.person
+      ? secondBank.filter(original => original.kind !== "permission" || bankPermission.allowSecondCredit) : bank,
   } : undefined });
   registerNativeSsaMedicareOriginalProviders({
     ssa: { publisherId: ssaPublisherId, readOriginals: context => inventory(context, "ssa") },
@@ -90,6 +93,7 @@ export function registerTestOriginals(): void {
 export function resetNativeSources(): void {
   resetSources(); documents.clear(); elections.clear();
   extendAward.enabled = false;
+  bankPermission.allowSecondCredit = true;
   faults.unavailable = ""; faults.withdrawn = ""; faults.incomplete = ""; faults.race = ""; faults.reads = 0;
 }
 

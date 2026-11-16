@@ -15,7 +15,7 @@ import { ValidationError } from "../../../../../src/diagnostics/index.js";
 import { expandedWire, replaceWireField, wireField, wireItems } from "../../sharedReceipts/wireFixture.js";
 import { fixture, ids, input, payment } from "../scenario.js";
 import { originalPayment, second } from "../originalScenario.js";
-import { amendMedicare, control, faults, nativeFixture, publish, registerTestOriginals, resetNativeSources } from "./sources.js";
+import { amendMedicare, bankPermission, control, faults, nativeFixture, publish, registerTestOriginals, resetNativeSources } from "./sources.js";
 
 registerTestOriginals();
 beforeEach(resetNativeSources);
@@ -107,13 +107,27 @@ describe("independent native SSA and Medicare originals", () => {
     });
     expect(runHouseholdKernel({ kernel: attach(mismatched.kernel), runContext: mismatched.context }).periods).toHaveLength(0);
     state.accounts[other.bankAccountId] = { ...state.accounts[other.bankAccountId]!, kind: "checking" };
+    const wrongOwner = fixture(1, state, "2026-01");
+    expect(runHouseholdKernel({ kernel: attach(wrongOwner.kernel), runContext: wrongOwner.context }).periods).toHaveLength(0);
+    state.accounts[other.bankAccountId] = { ...state.accounts[other.bankAccountId]!, ownerId: second.person };
     const { kernel, context } = fixture(1, state, "2026-01");
+    bankPermission.allowSecondCredit = false;
+    const refused = runHouseholdKernel({ kernel: attach(kernel), runContext: context });
+    expect(refused.periods).toHaveLength(0);
+    expect(refused.state.accounts[other.bankAccountId]!.cash.equals(money("1000"))).toBe(true);
+    expect(Object.keys(refused.state.d2PostedTransactions ?? {})).toHaveLength(0);
+    bankPermission.allowSecondCredit = true;
     const result = runHouseholdKernel({ kernel: attach(kernel), runContext: context });
     expect(result.periods, JSON.stringify(result.diagnostics)).toHaveLength(1);
     expect(result.state.accounts[ids.bank]!.cash.equals(money("3420"))).toBe(true);
     expect(result.state.accounts[other.bankAccountId]!.cash.equals(money("2380"))).toBe(true);
     expect(Object.keys(result.state.d2PostedTransactions ?? {})).toHaveLength(2);
-    expect(restorePortableHouseholdReplayArtifact(createPortableHouseholdReplayArtifact(result)).periods).toEqual(result.periods);
+    const secondProof = Object.values(result.state.d2PostedTransactions ?? {}).find(proof => proof.transaction.id === other.eventId);
+    expect(secondProof?.registration.nativeHousehold?.route?.personOwnerId).toBe(second.person);
+    const artifact = JSON.parse(JSON.stringify(createPortableHouseholdReplayArtifact(result)));
+    expect(restorePortableHouseholdReplayArtifact(artifact).periods).toEqual(result.periods);
+    bankPermission.allowSecondCredit = false;
+    expect(() => restorePortableHouseholdReplayArtifact(JSON.parse(JSON.stringify(artifact)))).toThrow("HOUSEHOLD_REPLAY_BASIS_MISMATCH");
   });
 
   it("validates nonzero IRMAA and rejects changed same-amount original facts on the next admission", () => {
@@ -272,7 +286,7 @@ it.each(["2026-01", "2027-01"])("rejects a complete omission of %s while cash an
     replaceWireField(wireField(identities, name), "add", { kind: "array", value: [] });
   const encoded = JSON.stringify(wire);
   const integrity = createInputFingerprint({ runContext: context, openingState: encoded });
-  expect.assertions(3);
+  expect.assertions(5);
   try {
     restorePortableHouseholdReplayArtifact({ ...artifact, encoded, integrity });
   } catch (error) {

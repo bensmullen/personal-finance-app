@@ -88,19 +88,19 @@ export function reviewSsaMedicareOriginals(q: SsaMedicarePaymentFacts, cutoff?: 
   // Only independently used originals may supply the evaluator's raw inputs.
   // Reject same-dollar substitutions of filing status, MAGI or tier.
   const docs = new Map<string, Original<unknown>>();
-  const read = <T>(kind: string, query: OriginalQuery, fetch: () => T): T => {
-    const value = capture(`${kind}:${canonicalSerialize(query)}`, fetch);
+  const read = <T>(kind: string, query: OriginalQuery, readInventory: () => T): T => {
+    const value = capture(`${kind}:${canonicalSerialize(query)}`, readInventory);
     const inv = value as { originals?: readonly Original<unknown>[] } | undefined;
     for (const doc of inv?.originals ?? []) docs.set(irmaaOriginalDigest(doc), doc);
     return value;
   };
   const observe = <T extends { readonly query: OriginalQuery; readonly complete: boolean; readonly originals: readonly Original<unknown>[] }>(
-    kind: string, query: OriginalQuery, fetch: (current: OriginalQuery) => T | undefined,
+    kind: string, query: OriginalQuery, readInventory: (current: OriginalQuery) => T | undefined,
   ): T | undefined => {
-    const historical = read(kind, query, () => fetch(query));
+    const historical = read(kind, query, () => readInventory(query));
     if (!native) return historical;
     const observed = { ...query, knownAt: currentCutoff };
-    const current = currentCutoff === query.knownAt ? historical : read(kind, observed, () => fetch(observed));
+    const current = currentCutoff === query.knownAt ? historical : read(kind, observed, () => readInventory(observed));
     need(current !== undefined && historical !== undefined && current.complete === true && same(current.query, observed));
     const known = current.originals.filter(doc => {
       instant(doc.publishedAt); instant(doc.knownAt);

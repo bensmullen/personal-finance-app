@@ -105,7 +105,8 @@ function qualifyPayment(q: SsaMedicarePaymentFacts, householdId: string, personI
 }
 
 export function qualifyRawPayment(q: SsaMedicarePaymentFacts, householdId: string, personId: string, cutoff?: string,
-  originalInput?: NativeSsaMedicareOriginalInput, observation?: Pick<RunContext, "asOf" | "dataCutoff">): SsaMedicarePaymentInput {
+  originalInput?: NativeSsaMedicareOriginalInput, observation?: Pick<RunContext, "asOf" | "dataCutoff">,
+  retainSourceCheck?: (check: () => void) => void): SsaMedicarePaymentInput {
   try {
     const frozen = immutableConfiguration(q);
     if (frozen.originalSources !== undefined && !knownBy(frozen, frozen.originalSources.dataCutoff))
@@ -113,6 +114,7 @@ export function qualifyRawPayment(q: SsaMedicarePaymentFacts, householdId: strin
     const review = reviewSsaMedicareOriginals(frozen, cutoff, observation);
     const qualified = qualifyPayment(frozen, householdId, personId, review.composition, originalInput);
     review.finish();
+    retainSourceCheck?.(review.finish);
     return qualified;
   }
   catch (error) {
