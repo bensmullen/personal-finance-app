@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "as_of": "2026-11-15",
+  "as_of": "2026-11-16",
   "authority": "Roadmap issue allocation only. Financial meaning remains in controlled specifications; GitHub is authoritative for current issue state.",
   "lifecycle": "Every new non-learning product, bug, milestone or framework issue must be registered at creation and linked to an owner stage and first mandatory closeout gate. Deferred means explicitly gated, not forgotten. Closing or moving an issue requires reconciliation here and in roadmap. U1 handoff completed: #94 is superseded by #120 after PR #98 merged; only #120 holds final U1/D1 owner acceptance. #94 technical closeout is not U1 UAT approval; all historical #94 dependency edges now point to #120. D2 parallel reallocation 2026-10-17: #103's unimplemented retirement distribution/RMD scope is consolidated into #146; backend #146/#147/#148 may overlap U1 #120 after approved financial contracts and #149 shared interface freeze. #149 alone owns deferred cross-domain/UI seams and final D2-D acceptance. #114 is merged preparation, not D2 functionality. U1B-C #142 closed after PR #157 merged; U1B-D #161 newly allocated to its own stage, implementation sequential after merged registration PR, not blocked by final #120 UAT. U1B-E requires separate later authorization.",
   "stage_gates": {
@@ -13,7 +13,7 @@
     },
     "D2": {
       "stage": "D2-A/B/C parallel backend; D2-D shared integration and final acceptance",
-      "blocking_transition": "D2-D #149 retains final cross-domain source/posting/tax/replay and S8-5 verification; new #331 is an S8-5A test-only two-person S1–S5 integration witness, not final D2-DET-023 breadth. #332 merged-main D2-A/B source-to-funded-forecast capability audit and #148 C3 health domain original admission may proceed on nonoverlapping paths. Full A/B/C integrated acceptance, #120 uncoached D1+D2 PM UAT and #149 final original/tax/forecast closeout remain mandatory before R5.",
+      "blocking_transition": "D2 #149 remains final cross-domain household S8-5B source/posting/tax/replay owner; new #336 production A1 SSA+C1/C2 Medicare native-original journal authority must independently merge before BLOCKED #331 test-only S8-5A witness can resume. #148 C3 conditional FSA source phase and #332 report-only A/B audit are independently reviewable. Integrated A/B/C actual tax/retirement/529/fixed income breadth and #120 uncoached U1 UAT are still mandatory before R5.",
       "required_issue_numbers": [
         114,
         146,
@@ -31,7 +31,8 @@
         285,
         286,
         331,
-        332
+        332,
+        336
       ]
     },
     "R11": {
@@ -962,7 +963,8 @@
         285,
         286,
         306,
-        326
+        326,
+        336
       ],
       "spec_requirement_ids": [
         "PFA-DET-015",
@@ -971,7 +973,7 @@
         "PFA-DET-023",
         "PFA-TAX-015"
       ],
-      "scope": "PM-approved 2026-11-15 test-only S8-5A two-person single household combined S1–S5 source-qualified payroll+health/SSA, funded retirement/RMD, independent Medicare, FSA, issuer/debt actual BANK settlement, exact-cents financial/no-double-count truth table, archive/rollback/fresh process replay; only test/d2/integrated/jointHousehold/s8Five/**. This bounded witness may expose required producer gaps; no production edits or claim of full A/B/C, tax/worker/UI or final S8-5B closeout. Parent #149 remains open."
+      "scope": "Review 2026-11-16: Codex #331 test-only S8-5A two-person source-qualified S1–S5 witness BLOCKED with zero edits / no PR. Native SSA+deducted Medicare lacks production source-owned exact combined journal authority for v3 canonical state/replay; new prerequisite #336 must merge after independent review before resuming #331. Preserve exact-cent witness, rollback/cold replay and disjoint test/d2/integrated/jointHousehold/s8Five/** owner. Native RMD applied satisfaction remains incomplete without account-scoped J1 annual provenance; no fixture-minted authority or fabricated credit."
     },
     {
       "issue_number": 332,
@@ -991,6 +993,26 @@
         "PFA-INV-028"
       ],
       "scope": "PM-approved 2026-11-15 read-only merged-main A/B full source→issuer→evaluator→funding/accounting→tax/basis→archive/replay→user authoring capability matrix, covering five plan families, backdoor/mega Roth, RMD, retirement/benefits, debt/HELOC/card, TIPS/EE and 529 including qualified/nonqualified and 529→Roth. One report-only path docs/development/d2-prep/d2-ab-capability-gap-review.md, no production or tests. Recommend bounded gap repairs to owner #149 and distinct domain scopes, don't equate closed #146/#147 pure phases with final D2 acceptance."
+    },
+    {
+      "issue_number": 336,
+      "owner_stage": "D2-D-S8-5A-prerequisite-native-ssa-medicare-original-bridge",
+      "blocking_gate": "D2",
+      "depends_on": [
+        276,
+        277,
+        278,
+        285,
+        286
+      ],
+      "spec_requirement_ids": [
+        "PFA-DET-016",
+        "PFA-DET-020",
+        "PFA-DET-023",
+        "PFA-INS-013",
+        "PFA-TAX-015"
+      ],
+      "scope": "PM-APPROVED 2026-11-16 bounded shared source-qualified SSA + benefit-deducted Medicare native posting bridge from existing S1 BANK/A1 SSA/C1 base-premium/C2 IRMAA independent originals to exact canonical one-event journal and native v3 original proof/cold replay; new module src/simulation/d2/integration/ssaMedicare/nativeHouseholdOriginalBridge/** and disjoint tests test/d2/integrated/ssaMedicare/nativeHouseholdOriginalBridge/** only. Must never use test-authored combined journal, duplicate SSA net/cash tax, falsely award applied RMD, widen state trust, or silently skip amendment/withdrawal/cutoff; report BLOCKED on required changed protected/shared interface. Required to unblock #331, not full #149 A/B/C/Tax/UAT closure."
     }
   ],
   "legacy_open_task_reconciliation": {
