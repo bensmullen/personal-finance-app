@@ -10,7 +10,8 @@ import {
 import { failValidation, issueCodes } from "../diagnostics/index.js";
 import { domainId, idempotencyKey, type DomainId, type GeneratedOccurrenceKey, type IdempotencyKey } from "../identity/index.js";
 import { assertClaimInvariant, normalizeExecutionClaim, materializeClaimLifecycle, settlementIdentityAppendsSince, type SettlementHistoryMeter, type ObligationOrRight } from "../semantics/claim.js";
-import { prepareSsaMedicareDeductionProposals, type SsaPayableEvidence, type SsaDeductionRequest } from "../semantics/settlement.js";
+import { prepareSsaMedicareDeductionProposals, prepareSourcedSsaWithoutMedicare,
+  type SsaPayableEvidence, type SsaDeductionRequest } from "../semantics/settlement.js";
 import type { ClaimId, RecognitionId, SettlementId } from "../semantics/identity.js";
 import type { CalculationTraceId } from "../lineage/index.js";
 import { createRecognitionFact as createRecognitionFactWithHistory, type RecognitionFactDraft, type RecognitionFact } from "../semantics/recognition.js";
@@ -490,13 +491,22 @@ const validatePaymentSources = (input: SsaMedicarePaymentInput): void => {
     ...(v.nativeHousehold === undefined ? {} : { nativeHousehold: v.nativeHousehold }) });
   if (paymentValue(values(input)) !== paymentValue(values(qualified))) paymentInvalid("Payment differs from requalified A1/C2 source authority");
 };
-const paymentJournal = (input: SsaMedicarePaymentInput): AccountingTransaction => {
-  const batch = prepareSsaMedicareDeductionProposals(input.payable, input.right, input.requests);
+export const isNativeSsaMedicareOriginalInput = (input: unknown): boolean =>
+  (input as { readonly mode?: unknown } | null)?.mode === "ssa-medicare-originals/v2";
+const paymentBatch = (input: SsaMedicarePaymentInput) =>
+  input.requests.length === 0 && input.nativeHousehold !== undefined && isNativeSsaMedicareOriginalInput(input.sourceInputs)
+    ? prepareSourcedSsaWithoutMedicare(input.payable, input.right)
+    : prepareSsaMedicareDeductionProposals(input.payable, input.right, input.requests);
+
+/** State's canonical journal, shared with independently requalifying sources.
+ * The atomic transition authenticates the inputs before using this journal. */
+export const ssaMedicarePaymentJournal = (input: SsaMedicarePaymentInput): AccountingTransaction => {
+  const batch = paymentBatch(input);
   return createAccountingTransaction({ id: accountingTransactionId(`ssa-medicare:${input.payable.paymentId}`),
     date: input.payable.paymentAt, type: "ssa_medicare_same_event", legs: [
       ...(batch.conditionalNetPayable.isZero() ? [] : [createAccountingLeg({ type: "cash", posting: "debit",
         accountId: input.bankAccountId, amount: batch.conditionalNetPayable, cashFlowClass: "operating" })]),
-      createAccountingLeg({ type: "expense", posting: "debit", amount: batch.deductionAmount }),
+      ...(batch.deductionAmount.isZero() ? [] : [createAccountingLeg({ type: "expense", posting: "debit", amount: batch.deductionAmount })]),
       createAccountingLeg({ type: "income", posting: "credit", amount: input.payable.grossPayable }),
     ] });
 };
@@ -2620,7 +2630,9 @@ export const requalifyD2SettlementReceiptHistory = (state: AuthoritativeState, c
       };
       requalifyNativeRecord();
       const a = proof.registration.nativeHousehold;
-      qualifyNativeRegistration(proof.transaction, { ...proof.registration,
+      const sourceQualifiedSsa = proof.registration.kind === "ssa_medicare_payment" &&
+        isNativeSsaMedicareOriginalInput(state.ssaMedicarePayments?.[proof.registration.paymentKey]?.sourceInputs);
+      qualifyNativeRegistration(proof.transaction, sourceQualifiedSsa ? proof.registration : { ...proof.registration,
         nativeHousehold: { ...a, context: { ...a.context, asOf: context.asOf, dataCutoff: context.dataCutoff } } });
       requalifyNativeRecord();
     }
@@ -2782,9 +2794,9 @@ const validateSsaMedicarePayments = (state: AuthoritativeState): ExecutionStateI
       || record.bankCashBefore.currency.code !== "USD" || !record.bankCashBefore.amount.fitsScale(2) || record.bankCashBefore.isNegative())
       paymentInvalid("Malformed versioned payment receipt");
     validatePaymentSources(record);
-    const batch = prepareSsaMedicareDeductionProposals(record.payable, record.right, record.requests);
+    const batch = paymentBatch(record);
     const bank = state.accounts[record.bankAccountId];
-    const expected = paymentJournal(record);
+    const expected = ssaMedicarePaymentJournal(record);
     if (!bank || !["checking", "savings"].includes(bank.kind) || bank.ownerId !== (record.nativeHousehold ? record.payable.householdId : record.payable.recipientId)
       || bank.cash.currency.code !== "USD" || !record.netBank.equals(batch.conditionalNetPayable)
       || paymentValue(record.transaction) !== paymentValue(expected)
@@ -2796,10 +2808,12 @@ const validateSsaMedicarePayments = (state: AuthoritativeState): ExecutionStateI
       if (!proof || proof.registration.kind !== "ssa_medicare_payment" || proof.registration.paymentKey !== key ||
           paymentValue(proof.transaction) !== paymentValue(expected) || paymentValue(proof.registration.nativeHousehold) !== paymentValue(record.nativeHousehold) ||
           bank!.id !== record.bankAccountId || bank!.kind !== record.nativeHousehold.route?.accountKind ||
-          (record.sourceInputs as { readonly originalSources?: unknown } | null)?.originalSources === undefined)
+          (!isNativeSsaMedicareOriginalInput(record.sourceInputs) &&
+            (record.sourceInputs as { readonly originalSources?: unknown } | null)?.originalSources === undefined))
         paymentInvalid("Native SSA requires its one canonical proof and original-source v2 semantics");
       qualifyNativePosting(expected, record.nativeHousehold, "ssa", record.payable.householdId, record.payable.recipientId, record.bankAccountId, "credit");
-      if (record.requests.length > 0 && !record.nativeHousehold.originals.some(w => w.original.family === "medicare"))
+      if ((record.requests.length > 0 || isNativeSsaMedicareOriginalInput(record.sourceInputs)) &&
+          !record.nativeHousehold.originals.some(w => w.original.family === "medicare"))
         paymentInvalid("Native SSA deductions require an independent Medicare original");
     }
     transactions.set(expected.id, key);
@@ -2835,15 +2849,21 @@ const validateSsaMedicarePayments = (state: AuthoritativeState): ExecutionStateI
  * purported committed receipt or generic non-bank settlement authority. Every
  * receipt here is generated only after actual canonical journal application.
  */
-export const applySsaMedicarePaymentAtomically = (state: AuthoritativeState, input: SsaMedicarePaymentInput): SsaMedicarePaymentRecord => {
+export const applySsaMedicarePaymentAtomically = (state: AuthoritativeState, input: SsaMedicarePaymentInput,
+  run?: Pick<HouseholdBankEventContext, "runId" | "asOf" | "dataCutoff">): SsaMedicarePaymentRecord => {
   input = freezePayment(input);
+  if (isNativeSsaMedicareOriginalInput(input.sourceInputs)) {
+    const context = input.nativeHousehold?.context;
+    if (!context || !run || context.runId !== run.runId || context.asOf !== run.asOf || context.dataCutoff !== run.dataCutoff)
+      paymentInvalid("Native SSA must be committed within its actual run and observation boundary");
+  }
   validatePaymentSources(input);
-  if (input.nativeHousehold) qualifyNativePosting(paymentJournal(input), input.nativeHousehold, "ssa", input.payable.householdId,
+  const transaction = ssaMedicarePaymentJournal(input);
+  if (input.nativeHousehold) qualifyNativePosting(transaction, input.nativeHousehold, "ssa", input.payable.householdId,
     input.payable.recipientId, input.bankAccountId, "credit");
   const candidate = cloneAuthoritativeState(state);
   const key = paymentKey(input.payable);
   if (candidate.ssaMedicarePayments?.[key]) paymentInvalid("Payment already committed; duplicate execution rejected");
-  const transaction = paymentJournal(input);
   const claims = paymentClaims(input), ids = [input.rightSettlementId, ...input.requests.map(r => r.draft.id)];
   const bank = candidate.accounts[input.bankAccountId];
   if (!bank || !bank.cash.equals(input.bankCashBefore)) paymentInvalid("BANK balance does not match source-bound event opening");
