@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "as_of": "2026-11-14",
+  "as_of": "2026-11-15",
   "authority": "Roadmap issue allocation only. Financial meaning remains in controlled specifications; GitHub is authoritative for current issue state.",
   "lifecycle": "Every new non-learning product, bug, milestone or framework issue must be registered at creation and linked to an owner stage and first mandatory closeout gate. Deferred means explicitly gated, not forgotten. Closing or moving an issue requires reconciliation here and in roadmap. U1 handoff completed: #94 is superseded by #120 after PR #98 merged; only #120 holds final U1/D1 owner acceptance. #94 technical closeout is not U1 UAT approval; all historical #94 dependency edges now point to #120. D2 parallel reallocation 2026-10-17: #103's unimplemented retirement distribution/RMD scope is consolidated into #146; backend #146/#147/#148 may overlap U1 #120 after approved financial contracts and #149 shared interface freeze. #149 alone owns deferred cross-domain/UI seams and final D2-D acceptance. #114 is merged preparation, not D2 functionality. U1B-C #142 closed after PR #157 merged; U1B-D #161 newly allocated to its own stage, implementation sequential after merged registration PR, not blocked by final #120 UAT. U1B-E requires separate later authorization.",
   "stage_gates": {
@@ -13,7 +13,7 @@
     },
     "D2": {
       "stage": "D2-A/B/C parallel backend; D2-D shared integration and final acceptance",
-      "blocking_transition": "D2-D #149 retains source, posting, tax, replay and combined household verification; integrated UI/forecast coverage and uncoached D1+D2 PM UAT also required in #120 before final D2 acceptance or stochastic R5. Domain backend tasks may continue independently.",
+      "blocking_transition": "D2-D #149 retains final cross-domain source/posting/tax/replay and S8-5 verification; new #331 is an S8-5A test-only two-person S1–S5 integration witness, not final D2-DET-023 breadth. #332 merged-main D2-A/B source-to-funded-forecast capability audit and #148 C3 health domain original admission may proceed on nonoverlapping paths. Full A/B/C integrated acceptance, #120 uncoached D1+D2 PM UAT and #149 final original/tax/forecast closeout remain mandatory before R5.",
       "required_issue_numbers": [
         114,
         146,
@@ -29,7 +29,9 @@
         279,
         280,
         285,
-        286
+        286,
+        331,
+        332
       ]
     },
     "R11": {
@@ -369,7 +371,7 @@
         "PFA-TAX-015",
         "PFA-INS-013"
       ],
-      "scope": "Consolidated health coverage/premiums, Medicare/IRMAA and health FSA entitlement/reimbursement mechanics; independent backend work alongside U1 after contract approval, with SSA/payroll/tax/UI seams routed to #149."
+      "scope": "Open mandatory D2-C consolidated owner, currently authorizing bounded new FSA C3 plan-year original binding under src/simulation/d2/health/fsa/yearChain/originalBinding/** and its isolated tests after S4 merged. Domain original admission is conditional/uncommitted; actual year-end carryover/grace/forfeiture posting, FSA payroll/tax, C1/C2 effective coverage/Medicare and U1 authoring still require #149/#101/#120 shared integration and independent final closeout. Do not mark #148 complete on source-only PR."
     },
     {
       "issue_number": 149,
@@ -400,7 +402,7 @@
         "PFA-DET-021",
         "PFA-DET-022"
       ],
-      "scope": "D2-D coordination and final closeout owner, NOT an active Codex V3: S1 #276 independent BANK/member source authority, state posting/archive/cold replay (merged PR #284); S1b #285 native state receipts/proofs and S1c #286 source-qualified VS2 expense settlement run in parallel after registration; S2 #277 (after #285/#286) both VS2 wage branches and SSA exclusivity; S3 #278 retirement/standalone Medicare; S4 #279 payroll health/FSA; S5 #280 card/aftertax premiums. After audited/merged children and domain owners #146/#147/#148, integrate S8-5 combined household truth table, #101/tax/UI #120 source and authoring handshakes, and PM UAT. No R5 unlock from a child PR. Final integrated end-user D2 authoring/forecast read-model handshakes and UAT coordinate with U1B #120, without shared JSX/CSS writers before approved U1B source-meaning interface; D2 engine closeout remains independent and is not replaced by UI UAT."
+      "scope": "Open mandatory D2-D coordinator and FINAL DET-023 owner, NOT a monolithic Codex V3. S1–S5 (#276/#285/#286/#277/#278/#279/#280) merged; reference-only #326 and complete original-source qualified five-horizon #306 accepted/merged. #331 runs bounded test-only S8-5A combined two-person S1–S5 economic and replay witness; #332 audits current A/B to locate missing funded/tax/replay/product-authoring ports; #148 C3 runs disjointly. Final S8-5B all A/B/C breadth, authentic tax/Medicare/529/IRA basis, normal-user authoring and #120 PM UAT remain obligatory."
     },
     {
       "issue_number": 161,
@@ -869,7 +871,7 @@
         "PFA-DET-023",
         "PFA-PERF-019"
       ],
-      "scope": "Protected #306 manual source-qualified application-repeat plus optimized/frozen-reference parity is green in ordinary CI but heavy #16 timed out during independent frozen reference at 120 months; 360/649 unmeasured. PM approved distinct #326 reference-only performance prerequisite. Original three-path #306 framework harness is unchanged; #306 resumes validation only after independent #326 PR merges. No relaxation of economic/financial equivalence or 120s/2048MiB budget."
+      "scope": "MERGED/CLOSED: reference-qualified full 8/20/120/360/649 month repeat full application read-model SHA-256 and source-qualified optimized/independent frozen SHARED financial equality PASSED with original 120-second/2048MiB per-probe manual caps (Engineering Validation #21 / run 43784327774 at head 1d0de6b, PR #320 merged as 35b0e490). Optimized tax PFA-TAX-009 remains incomplete; neither full tax nor worker nor parent #149 D2 combined UAT is certified. Issue closure is a framework gate only."
     },
     {
       "issue_number": 308,
@@ -945,7 +947,50 @@
         "PFA-PERF-021",
         "PFA-DET-023"
       ],
-      "scope": "PM-approved 2026-11-14 separate reference-only performance optimization to unblock #306 five-horizon forecast-scaling (heavy #16 120-month SIGKILL inside frozen reference). Keep independently pinned pre-R3 economic oracle, authentic wage/BANK source admission, posting, rollback, archived proof requalification, primitive/funding state, financial parity and negative replay. No production/shared state, tax rules, or manual harness changes; no increased runtime ceiling. New isolated 7-path Codex repair; independent ordinary CI/oracle audit and PM merge precede #306 branch synchronization and reviewer-owned 8/20/120/360/649 validation."
+      "scope": "MERGED/CLOSED independent frozen-reference performance prerequisite: original oracle financial semantics, authentic wage/BANK original source and replay preserved (PR #328). Its completion enabled #306 full five-horizon parity; both gates are now independently accepted and closed. Parent #149 PFA-DET-023 and #120 UAT remain open."
+    },
+    {
+      "issue_number": 331,
+      "owner_stage": "D2-D-S8-5A-two-person-source-qualified-joint-household",
+      "blocking_gate": "D2",
+      "depends_on": [
+        276,
+        277,
+        278,
+        279,
+        280,
+        285,
+        286,
+        306,
+        326
+      ],
+      "spec_requirement_ids": [
+        "PFA-DET-015",
+        "PFA-DET-016",
+        "PFA-DET-020",
+        "PFA-DET-023",
+        "PFA-TAX-015"
+      ],
+      "scope": "PM-approved 2026-11-15 test-only S8-5A two-person single household combined S1–S5 source-qualified payroll+health/SSA, funded retirement/RMD, independent Medicare, FSA, issuer/debt actual BANK settlement, exact-cents financial/no-double-count truth table, archive/rollback/fresh process replay; only test/d2/integrated/jointHousehold/s8Five/**. This bounded witness may expose required producer gaps; no production edits or claim of full A/B/C, tax/worker/UI or final S8-5B closeout. Parent #149 remains open."
+    },
+    {
+      "issue_number": 332,
+      "owner_stage": "D2-A-B-merged-baseline-capability-closure-audit",
+      "blocking_gate": "D2",
+      "depends_on": [],
+      "spec_requirement_ids": [
+        "PFA-DET-016",
+        "PFA-DET-017",
+        "PFA-DET-018",
+        "PFA-DET-019",
+        "PFA-DET-021",
+        "PFA-DET-022",
+        "PFA-DET-023",
+        "PFA-TAX-015",
+        "PFA-INV-025",
+        "PFA-INV-028"
+      ],
+      "scope": "PM-approved 2026-11-15 read-only merged-main A/B full source→issuer→evaluator→funding/accounting→tax/basis→archive/replay→user authoring capability matrix, covering five plan families, backdoor/mega Roth, RMD, retirement/benefits, debt/HELOC/card, TIPS/EE and 529 including qualified/nonqualified and 529→Roth. One report-only path docs/development/d2-prep/d2-ab-capability-gap-review.md, no production or tests. Recommend bounded gap repairs to owner #149 and distinct domain scopes, don't equate closed #146/#147 pure phases with final D2 acceptance."
     }
   ],
   "legacy_open_task_reconciliation": {
