@@ -1,92 +1,508 @@
 // Synthetic scaling diagnosis, never a speed SLA or financial-completeness claim.
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync, openSync, closeSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync, openSync, closeSync, existsSync } from 'node:fs';
+import { basename, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { types } from 'node:util';
 
 const args = process.argv.slice(2);
 const directory = resolve('engineering-validation-artifacts/forecast-feasibility');
-mkdirSync(directory, { recursive: true });
-if (Number(process.versions.node.split('.')[0]) !== 22) throw new Error('Node 22 required');
+const entry = process.argv[1];
+const invoked = entry !== undefined && (resolve(entry) === fileURLToPath(import.meta.url) ||
+  (basename(entry) === 'vite-node.mjs' && args[0] === '--probe'));
+if (invoked) {
+  mkdirSync(directory, { recursive: true });
+  if (Number(process.versions.node.split('.')[0]) !== 22) throw new Error('Node 22 required');
+}
 
-if (args[0] === '--probe' && args.length === 3) {
+const diagnosticCounts = diagnostics => {
+  const counts = new Map();
+  for (const { code } of diagnostics) counts.set(code, (counts.get(code) ?? 0) + 1);
+  return Object.fromEntries([...counts].sort(([a], [b]) => a.localeCompare(b)));
+};
+
+const bounded = value => value.length <= 160 ? value : `${value.slice(0, 157)}...`;
+
+// Only fixed runtime messages can leave this probe. Compiler and replay errors
+// can include model content, even when the input fixture is synthetic.
+const safeMessages = new Set([
+  'Invalid string length', 'Maximum call stack size exceeded',
+  'Do not know how to serialize a BigInt', 'Cyclic forecast read model',
+  'Missing forecast read model', 'Unsupported raw JSON in forecast read model',
+]);
+const safeErrorMessage = message => safeMessages.has(message) ? bounded(message) : 'Message withheld';
+const safeErrorNames = new Set(['RangeError', 'ReferenceError', 'SyntaxError', 'TypeError', 'ValidationError']);
+
+// Each container commits to its ordered JSON-visible children. A cached token
+// and a freshly evaluated copy contribute exactly the same bytes to the parent.
+export function digestForecastReadModel(root, observe) {
+  const longStrings = new Map();
+  const stableContainers = new WeakMap();
+  const active = new Set();
+  const seen = observe ? new WeakSet() : undefined;
+  const work = observe ? {
+    containerVisits: 0, repeatedContainerVisits: 0, longStringVisits: 0, longStringCodeUnits: 0,
+    longStringContentLookups: 0, longStringLookupMs: 0, hashedLongStringCodeUnits: 0, longStringHashMs: 0,
+    stableContainerHits: 0,
+  } : undefined;
+  const chunkSize = 8_192;
+  const stringToken = value => {
+    if (value.length < chunkSize) return JSON.stringify(value);
+    if (work) {
+      work.longStringVisits++;
+      work.longStringCodeUnits += value.length;
+    }
+    const lookupStarted = work ? performance.now() : 0;
+    let digest = longStrings.get(value);
+    if (work) {
+      work.longStringContentLookups++;
+      work.longStringLookupMs += performance.now() - lookupStarted;
+    }
+    if (digest === undefined) {
+      const hashStarted = work ? performance.now() : 0;
+      const content = createHash('sha256');
+      for (let offset = 0; offset < value.length; offset += chunkSize) {
+        content.update(value.slice(offset, offset + chunkSize), 'utf16le');
+      }
+      digest = content.digest('hex');
+      if (work) {
+        work.hashedLongStringCodeUnits += value.length;
+        work.longStringHashMs += performance.now() - hashStarted;
+      }
+      const insertStarted = work ? performance.now() : 0;
+      longStrings.set(value, digest);
+      if (work) work.longStringLookupMs += performance.now() - insertStarted;
+    }
+    return `~${value.length}:${digest}`;
+  };
+  const jsonValue = (value, key) => {
+    if ((value !== null && (typeof value === 'object' || typeof value === 'function')) ||
+        typeof value === 'bigint') {
+      const toJSON = value.toJSON;
+      if (typeof toJSON === 'function') value = Reflect.apply(toJSON, value, [key]);
+    }
+    if (types.isNumberObject(value)) return +value;
+    if (types.isStringObject(value)) return String(value);
+    if (types.isBooleanObject(value)) return Boolean.prototype.valueOf.call(value);
+    if (types.isBigIntObject(value)) return BigInt.prototype.valueOf.call(value);
+    return value;
+  };
+  // Ordinary prototypes can acquire a toJSON hook between two visits via a
+  // sibling getter. Recheck these dependencies even on a subtree cache hit.
+  const plainPrototypes = () => Object.getPrototypeOf(Array.prototype) === Object.prototype &&
+    !Object.hasOwn(Object.prototype, 'toJSON') && !Object.hasOwn(Array.prototype, 'toJSON');
+  const stableShape = value => {
+    if (types.isProxy(value) || !Object.isFrozen(value) || Object.hasOwn(value, 'toJSON')) return false;
+    const prototype = Object.getPrototypeOf(value);
+    return (prototype === null || prototype === (Array.isArray(value) ? Array.prototype : Object.prototype)) && plainPrototypes();
+  };
+  const ownData = (value, key) => {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor !== undefined && Object.hasOwn(descriptor, 'value');
+  };
+  const encode = (raw, key) => {
+    const cached = stableContainers.get(raw);
+    if (cached !== undefined && plainPrototypes()) {
+      if (work) work.stableContainerHits++;
+      return cached;
+    }
+    const candidate = raw !== null && typeof raw === 'object' && stableShape(raw);
+    const value = jsonValue(raw, key);
+    const scalarStable = raw === null || (typeof raw !== 'object' && typeof raw !== 'function' && typeof raw !== 'bigint');
+    if (typeof value === 'bigint') throw new TypeError('Do not know how to serialize a BigInt');
+    if (value === null || typeof value !== 'object') {
+      // toJSON can return a function. Omit it without invoking its hook.
+      const omitted = value === undefined || typeof value === 'function' || typeof value === 'symbol';
+      return { token: omitted ? undefined : typeof value === 'string' ? stringToken(value) : JSON.stringify(value), stable: scalarStable };
+    }
+    if (JSON.isRawJSON?.(value)) throw new TypeError('Unsupported raw JSON in forecast read model');
+    if (active.has(value)) throw new TypeError('Cyclic forecast read model');
+    if (work) {
+      work.containerVisits++;
+      if (seen.has(value)) work.repeatedContainerVisits++;
+      else seen.add(value);
+    }
+    active.add(value);
+    const array = Array.isArray(value);
+    let stable = raw === value && candidate;
+    const hash = createHash('sha256');
+    let buffer = '';
+    const write = token => {
+      buffer += token;
+      if (buffer.length >= chunkSize) {
+        hash.update(buffer);
+        buffer = '';
+      }
+    };
+    if (array) {
+      const length = value.length;
+      write(`[${length}:`);
+      for (let index = 0; index < length; index++) {
+        const key = String(index);
+        stable = stable && ownData(value, key);
+        const item = encode(value[index], key);
+        stable = stable && item.stable;
+        if (index > 0) write(',');
+        write(item.token ?? 'null');
+      }
+      write(']');
+    } else {
+      write('{');
+      for (const key of Object.keys(value)) {
+        stable = stable && ownData(value, key);
+        const item = encode(value[key], key);
+        stable = stable && item.stable;
+        if (item.token === undefined) continue;
+        write(stringToken(key));
+        write(':');
+        write(item.token);
+        write(',');
+      }
+      write('}');
+    }
+    active.delete(value);
+    // Container preimages start with '[' or '{'. Their tokens start with '#',
+    // distinct from JSON scalars and the '~' long-string representation.
+    const result = { token: `#${hash.update(buffer).digest('hex')}`, stable };
+    if (stable) stableContainers.set(value, result);
+    return result;
+  };
+  const { token } = encode(root, '');
+  if (token === undefined) throw new TypeError('Missing forecast read model');
+  const digest = createHash('sha256').update('forecast-read-model/v2:').update(token).digest('hex');
+  observe?.(work);
+  return digest;
+}
+
+const record = value => {
+  if (value === null || typeof value !== 'object') return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+};
+
+// Walk containers incrementally so a mismatch never requires serializing the
+// entire terminal state or retaining a second array of summarized periods.
+function firstDifference(optimized, reference, path, serialize) {
+  if (optimized === reference && (typeof optimized !== 'number' || Number.isFinite(optimized))) return null;
+  const difference = (left, right, field = path) => ({
+    path: bounded(field), optimized: left, reference: right,
+  });
+  if (Array.isArray(optimized) && Array.isArray(reference)) {
+    if (optimized.length !== reference.length) return difference(
+      optimized.length, reference.length, `${path}.length`);
+    for (let index = 0; index < optimized.length; index++) {
+      const mismatch = firstDifference(optimized[index], reference[index], `${path}[${index}]`, serialize);
+      if (mismatch) return mismatch;
+    }
+    return null;
+  }
+  if (record(optimized) && record(reference)) {
+    const keys = [...new Set([...Object.keys(optimized), ...Object.keys(reference)])].sort();
+    for (const key of keys) {
+      const mismatch = firstDifference(
+        Object.hasOwn(optimized, key) ? optimized[key] : undefined,
+        Object.hasOwn(reference, key) ? reference[key] : undefined,
+        `${path}[${JSON.stringify(key)}]`, serialize);
+      if (mismatch) return mismatch;
+    }
+    return null;
+  }
+  const describe = value => {
+    if (value === undefined) return { kind: 'missing' };
+    if (Array.isArray(value)) return { kind: 'array', length: value.length };
+    if (record(value)) return { kind: 'record' };
+    const kind = value === null ? 'null' : typeof value === 'object' ? value.constructor.name : typeof value;
+    return { kind, value: bounded(serialize(value)) };
+  };
+  if (optimized !== undefined && reference !== undefined &&
+      !Array.isArray(optimized) && !Array.isArray(reference) &&
+      !record(optimized) && !record(reference) &&
+      serialize(optimized) === serialize(reference)) return null;
+  return difference(describe(optimized), describe(reference));
+}
+
+function coverage(run, periods, expected, boundaries) {
+  const firstPeriodMismatch = periods.slice(0, expected.length).findIndex((period, index) => {
+    const actual = boundaries(period);
+    return actual.start !== expected[index].start || actual.end !== expected[index].end;
+  });
+  const start = expected[0].start;
+  const end = expected.at(-1).end;
+  return {
+    status: run.status,
+    requestedHorizon: run.requestedHorizon ?? null,
+    reachedThrough: run.reachedThrough ?? null,
+    stoppedAt: run.stoppedAt ?? null,
+    periodCount: periods.length,
+    firstPeriodMismatch: firstPeriodMismatch === -1 ? null : {
+      index: firstPeriodMismatch, expected: expected[firstPeriodMismatch],
+      actual: boundaries(periods[firstPeriodMismatch]),
+    },
+    complete: run.stoppedAt === undefined && run.reachedThrough === end &&
+      run.requestedHorizon?.start === start && run.requestedHorizon?.end === end &&
+      periods.length === expected.length && firstPeriodMismatch === -1,
+  };
+}
+
+const progressName = months => `${months}.progress.jsonl`;
+const finalStage = 'write_final_artifact';
+
+function createProbeStages(months, manual) {
+  const file = resolve(directory, progressName(months));
+  const probeStarted = performance.now();
+  let stage;
+  let started;
+  const append = (event, periodCount, digestWork) => {
+    if (!manual) return;
+    const now = performance.now();
+    const { heapUsed, rss } = process.memoryUsage();
+    // A synchronous append survives a subprocess kill between stages. Rows
+    // contain only fixed labels, timings, resource samples and array lengths.
+    appendFileSync(file, JSON.stringify({ event, stage, probeElapsedMs: now - probeStarted,
+      stageElapsedMs: now - started, heapUsedBytesSample: heapUsed, rssBytesSample: rss,
+      ...(periodCount === undefined ? {} : { periodCount }),
+      ...(digestWork === undefined ? {} : { digestWork }) }) + '\n');
+  };
+  return {
+    get current() { return stage; },
+    begin(name) {
+      stage = name;
+      started = performance.now();
+      append('BEGIN');
+    },
+    end(periodCount, digestWork) { append('END', periodCount, digestWork); },
+  };
+}
+
+function compareKernelRuns(summary, reference, expected, executable, summarize, serialize, taxDiagnosticKey) {
+  const optimizedCoverage = coverage(summary, summary.periods, expected, value => value.period);
+  const referenceCoverage = coverage(reference, reference.periods, expected, value => value.period);
+  const capabilities = Object.entries(summary.outputCapabilities ?? {});
+  const optimizedCapabilities = Object.fromEntries(capabilities.map(([field, value]) => [field, value.status]));
+  const capabilityDiagnostics = [...new Set(capabilities.map(([, value]) => value))]
+    .flatMap(value => value.diagnostics);
+  const tax = executable.participants?.find(participant => participant.id === 'tax');
+  const taxInput = tax?.economicInputs;
+  // Without funding or settlement instructions, the tax participant returns
+  // coverage evidence before its posting branch. The reference also lacks the
+  // tax credit exclusion from the portfolio metric, so require no such positions.
+  const participants = executable.participants ?? [];
+  const supportedPlan = (participants.length === 0 ||
+    (participants.length === 1 && tax && ['household-tax/v1', 'household-tax/v2'].includes(tax.portableCodec))) &&
+    (!tax || (!taxInput.fundingPolicy && !taxInput.refundAccountId &&
+      taxInput.payments.length === 0 && taxInput.settlements.length === 0)) &&
+    (executable.nonInvestmentPositionIds ?? []).every(id =>
+      !Object.hasOwn(summary.state.positions, id) && !Object.hasOwn(reference.state.positions, id));
+  const evidence = {
+    optimized: { ...optimizedCoverage, capabilities: optimizedCapabilities,
+      diagnosticCounts: diagnosticCounts(summary.diagnostics),
+      capabilityDiagnosticCodes: [...new Set(capabilityDiagnostics.map(value => value.code))].sort() },
+    reference: { ...referenceCoverage, capabilities: 'not measured',
+      diagnosticCounts: diagnosticCounts(reference.diagnostics) },
+    firstEnvelopeDifference: null,
+    firstFinancialDifference: null,
+  };
+  const compare = (left, right, path) => firstDifference(left, right, path, serialize);
+  const { inputFingerprint: optimizedFingerprint, ...optimizedMetadata } = summary.runMetadata;
+  const { inputFingerprint: referenceFingerprint, ...referenceMetadata } = reference.runMetadata;
+  const differentFingerprintBasis = Boolean(tax || executable.nonInvestmentPositionIds !== undefined);
+  evidence.inputFingerprints = { optimized: optimizedFingerprint, reference: referenceFingerprint,
+    equality: differentFingerprintBasis ? 'not measured' :
+      optimizedFingerprint === referenceFingerprint ? 'equal' : 'different',
+    ...(differentFingerprintBasis ? { reason: 'frozen reference fingerprint excludes participants and tax credit position IDs' } : {}) };
+  evidence.firstEnvelopeDifference = compare(summary.status, reference.status, '$.status') ??
+    (differentFingerprintBasis ? compare(optimizedFingerprint, referenceFingerprint, '$.runMetadata.inputFingerprint') : null) ??
+    (capabilities.length > 0 ? { path: '$.outputCapabilities', optimized: 'record', reference: 'missing' } : null);
+  if (!optimizedCoverage.complete || !referenceCoverage.complete || reference.status !== 'completed') {
+    evidence.failure = 'execution did not commit the requested horizon';
+    return evidence;
+  }
+  const expectedStatus = capabilities.some(([, value]) => value.status === 'incomplete') ? 'incomplete' : 'completed';
+  if (!supportedPlan || summary.status !== expectedStatus ||
+      (!tax && (capabilities.length > 0 || summary.periods.some(period => period.outputCapabilities !== undefined))) ||
+      reference.outputCapabilities !== undefined || reference.periods.some(period => period.outputCapabilities !== undefined) ||
+      summary.diagnostics.some(issue => issue.severity === 'error') ||
+      reference.diagnostics.some(issue => issue.severity === 'error')) {
+    evidence.failure = 'unsupported participant, capability envelope, or execution error';
+    return evidence;
+  }
+  if (summary.status !== reference.status) {
+    evidence.statusExplanation = 'both committed the horizon; optimized tax coverage is incomplete and frozen reference tax coverage is not measured';
+  }
+  // Exclude only tax-participant warnings that exactly match a published
+  // capability diagnostic. Compare every remaining occurrence in engine order.
+  const capabilityKeys = new Set(capabilityDiagnostics.map(taxDiagnosticKey));
+  const taxWarning = issue => issue.entityType === 'tax_capability' && issue.severity === 'warning' &&
+    ['PFA-TAX-008', 'PFA-TAX-009'].includes(issue.code);
+  const referenceTaxKeys = new Set(reference.diagnostics.filter(taxWarning).map(taxDiagnosticKey));
+  const sharedDiagnostics = summary.diagnostics.filter(issue => {
+    if (!tax || !taxWarning(issue)) return true;
+    const key = taxDiagnosticKey(issue);
+    return !capabilityKeys.has(key) || referenceTaxKeys.has(key);
+  });
+  evidence.optimized.capabilityOnlyDiagnosticCount = summary.diagnostics.length - sharedDiagnostics.length;
+  evidence.firstFinancialDifference =
+    compare(optimizedMetadata, referenceMetadata, '$.runMetadata') ??
+    (differentFingerprintBasis ? null : compare(optimizedFingerprint, referenceFingerprint, '$.runMetadata.inputFingerprint')) ??
+    compare(summary.state, reference.state, '$.state') ??
+    compare(summary.primitiveState, reference.primitiveState, '$.primitiveState') ??
+    compare(sharedDiagnostics, reference.diagnostics, '$.diagnostics');
+  for (let index = 0; evidence.firstFinancialDifference === null && index < expected.length; index++) {
+    const { outputCapabilities: _optimizedCapabilities, ...optimized } = summary.periods[index];
+    const { outputCapabilities: _referenceCapabilities, ...frozen } = summarize(reference.periods[index]);
+    evidence.firstFinancialDifference = compare(optimized, frozen, `$.periods[${index}]`);
+  }
+  return evidence;
+}
+
+if (invoked && args[0] === '--probe' && args.length === 3) {
   const months = Number(args[1]);
   if (![8, 20, 120, 360, 649].includes(months) || !['ordinary', 'manual'].includes(args[2])) throw new Error('Invalid probe');
   if (args[2] === 'ordinary' && months > 20) throw new Error('Heavy probe excluded from ordinary CI');
+  const manual = args[2] === 'manual';
+  const stages = createProbeStages(months, manual);
+  stages.begin('setup_application');
   const { createRealisticPerformanceFixture } = await import('../../test/fixtures/performanceHouseholds.ts');
+  const { instant, utcMonthlyPeriods } = await import('../../src/time/index.ts');
   const { runPersonalHouseholdForecast } = await import('../../src/application/index.ts');
   const { createApplicationPerformanceObserver } = await import('../../src/application/performance.ts');
   const { PerformanceRegistry, PERFORMANCE_PHASES } = await import('../../src/diagnostics/performance.ts');
-  const fixture = createRealisticPerformanceFixture();
-  const start = fixture.request.compiler.cashFlow.simulationStart;
-  const date = new Date(`${start}T00:00:00.000Z`);
-  date.setUTCMonth(date.getUTCMonth() + months);
-  const end = date.toISOString().slice(0, 10);
-  const endInstant = `${end}T00:00:00.000Z`;
-  const model = { ...fixture.model, objects: { ...fixture.model.objects,
-    Scenario: fixture.model.objects.Scenario.map(scenario => ({ ...scenario, end_date: end })) } };
-  const compiler = { ...fixture.request.compiler };
-  for (const key of ['cashFlow', 'investments', 'liabilities']) {
-    compiler[key] = { ...compiler[key], simulationEnd: end, months };
+  const fixture = createRealisticPerformanceFixture(Math.max(24, months));
+  let { model, request } = fixture;
+  const start = request.compiler.cashFlow.simulationStart;
+  const startInstant = instant(`${start}T00:00:00.000Z`);
+  const expected = utcMonthlyPeriods(startInstant, months);
+  // Short probes retain the 24-month fixture's original income lifecycle.
+  if (months < fixture.dimensions.horizonMonths) {
+    const end = expected.at(-1).end.slice(0, 10);
+    model = { ...model, objects: { ...model.objects,
+      Scenario: model.objects.Scenario.map(scenario => ({ ...scenario, end_date: end })) } };
+    const compiler = { ...request.compiler };
+    for (const key of ['cashFlow', 'investments', 'liabilities']) {
+      compiler[key] = { ...compiler[key], simulationEnd: end, months };
+    }
+    request = { ...request, compiler };
   }
-  const request = { ...fixture.request, compiler };
+  const { compiler } = request;
+  const end = compiler.cashFlow.simulationEnd;
+  const endInstant = `${end}T00:00:00.000Z`;
   const registry = new PerformanceRegistry();
+  stages.end(expected.length);
+  stages.begin('first_application_run');
   const started = performance.now();
-  const result = runPersonalHouseholdForecast(model, request, createApplicationPerformanceObserver(
+  let result = runPersonalHouseholdForecast(model, request, createApplicationPerformanceObserver(
     { now: () => performance.now() }, { runId: `feasibility:${months}`, fixtureId: fixture.id,
       dataClassification: 'synthetic', modelCounts: fixture.coverage.canonicalObjectCounts,
       executionLocation: 'local_node', runtime: process.version, cacheState: 'not_applicable' }, registry));
   const wallMs = performance.now() - started;
   const heapUsedBytes = process.memoryUsage().heapUsed;
-  const executed = ['completed', 'incomplete'].includes(result.status) && !result.executionError &&
-    result.requestedHorizon?.end === endInstant && result.reachedThrough === endInstant && result.points?.length === months;
+  stages.end(result.points?.length);
+  stages.begin('inspect_application_coverage');
+  const applicationCoverage = coverage(result, result.points ?? [], expected,
+    point => ({ start: point.periodStart, end: point.periodEnd }));
+  const applicationCapabilities = result.points?.at(-1)?.outputCapabilities ?? {};
+  const applicationCapabilityStatuses = Object.fromEntries(Object.entries(applicationCapabilities)
+    .map(([field, capability]) => [field, capability.status]));
+  const expectedApplicationStatus = Object.values(applicationCapabilityStatuses).includes('incomplete')
+    ? 'incomplete' : 'completed';
+  const executed = result.status === expectedApplicationStatus && !result.executionError &&
+    applicationCoverage.complete && result.reachedThrough === endInstant &&
+    !result.diagnostics.some(issue => issue.severity === 'error');
+  const { status, executionError, reachedThrough } = result;
+  const applicationDiagnosticCounts = diagnosticCounts(result.diagnostics);
+  stages.end(applicationCoverage.periodCount);
   let equality = 'not measured';
   let referenceEquality = 'not measured';
-  if (executed && args[2] === 'manual') {
-    const repeated = runPersonalHouseholdForecast(model, request);
-    const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-    equality = digest(result) === digest(repeated) ? 'equal' : 'different';
-    // Existing R3 reference contract, scoped to compiled deterministic kernel.
-    // Application tax participants and worker transport remain separate evidence.
-    const { compileHouseholdProjection } = await import('../../src/application/compiler/householdProjection.ts');
-    const { runHouseholdKernel } = await import('../../src/simulation/householdExecution.ts');
-    const { runCompiledHouseholdProjection: referenceRun } = await import('../../src/simulation/r3/referenceHouseholdExecution.ts');
-    const { summarizeHouseholdPeriod } = await import('../../src/simulation/r3/forecastSummary.ts');
-    const { createRunContext, runId, scenarioId, canonicalSerialize } = await import('../../src/simulation/run.ts');
-    const { instant } = await import('../../src/time/index.ts');
-    const { Currency } = await import('../../src/values/index.ts');
-    const compiled = compileHouseholdProjection(model, compiler);
-    if (compiled.status !== 'compiled' || !compiled.value.executionKernel) throw new Error('Reference fixture did not compile');
-    const kernel = compiled.value.executionKernel;
-    const runContext = createRunContext({ runId: runId(request.runIdentity), scenarioId: scenarioId(kernel.executable.scenarioIdentity),
-      asOf: instant(`${request.asOf}T00:00:00.000Z`), dataCutoff: instant(`${request.dataCutoff}T00:00:00.000Z`),
-      simulationStart: instant(`${start}T00:00:00.000Z`), simulationEnd: instant(`${end}T00:00:00.000Z`),
-      baseCurrency: Currency.of(compiler.cashFlow.baseCurrency) });
-    const summary = runHouseholdKernel({ kernel, runContext });
-    const reference = referenceRun({ compiled: kernel.executable, runContext });
-    const select = run => ({ status: run.status, requestedHorizon: run.requestedHorizon,
-      reachedThrough: run.reachedThrough, state: run.state, primitiveState: run.primitiveState,
-      runMetadata: run.runMetadata, diagnostics: run.diagnostics, periods: run.periods });
-    referenceEquality = summary.status === 'completed' && reference.status === 'completed' &&
-      summary.reachedThrough === runContext.simulationEnd && reference.reachedThrough === runContext.simulationEnd &&
-      summary.periods.length === months && reference.periods.length === months &&
-      canonicalSerialize(select(summary)) === canonicalSerialize(select({ ...reference,
-        periods: reference.periods.map(summarizeHouseholdPeriod) })) ? 'equal' : 'different';
+  let referenceEvidence = 'not measured';
+  let parityFailure;
+  if (executed && manual) {
+    try {
+      {
+        stages.begin('repeat_application_run');
+        const repeated = runPersonalHouseholdForecast(model, request);
+        stages.end(repeated.points?.length);
+        if (repeated.executionError) {
+          throw new Error(repeated.message);
+        }
+        stages.begin('digest_first_full_read_model');
+        const firstDigest = digestForecastReadModel(result, work => stages.end(result.points?.length, work));
+        result = undefined;
+        stages.begin('digest_repeat_full_read_model');
+        const repeatedDigest = digestForecastReadModel(repeated, work => stages.end(repeated.points?.length, work));
+        equality = firstDigest === repeatedDigest ? 'equal' : 'different';
+      }
+      stages.begin('import_parity_modules');
+      // Existing R3 reference contract, scoped to compiled deterministic kernel.
+      // Application tax participants and worker transport remain separate evidence.
+      const { compileHouseholdKernelForRun } = await import('../../src/application/householdProjection.ts');
+      const { selectScenario } = await import('../../src/application/compiler/scenarioSelection.ts');
+      const { runHouseholdKernel } = await import('../../src/simulation/householdExecution.ts');
+      const { runCompiledHouseholdProjection: referenceRun } = await import('../../src/simulation/r3/referenceHouseholdExecution.ts');
+      const { summarizeHouseholdPeriod } = await import('../../src/simulation/r3/forecastSummary.ts');
+      const { createRunContext, runId, scenarioId, canonicalSerialize } = await import('../../src/simulation/run.ts');
+      const { Currency } = await import('../../src/values/index.ts');
+      const { createTaxDiagnosticKey } = await import('../../src/simulation/tax/contracts.ts');
+      stages.end();
+      stages.begin('select_canonical_scenario');
+      const selected = selectScenario(model, {
+        capabilityName: 'household_projection', executionLabel: 'Forecast feasibility',
+        scenarioId: compiler.cashFlow.scenarioId ?? compiler.investments.scenarioId ?? compiler.liabilities.scenarioId,
+        simulationStart: start, simulationEnd: end,
+      });
+      stages.end();
+      if (selected.status !== 'compiled' || !selected.value.object) {
+        parityFailure = { stage: stages.current, status: selected.status, diagnosticCounts: diagnosticCounts(selected.diagnostics) };
+      } else {
+        stages.begin('compile_source_qualified_kernel');
+        const runContext = createRunContext({ runId: runId(request.runIdentity), scenarioId: scenarioId(selected.value.id),
+          asOf: instant(`${request.asOf}T00:00:00.000Z`), dataCutoff: instant(`${request.dataCutoff}T00:00:00.000Z`),
+          simulationStart: startInstant, simulationEnd: instant(endInstant),
+          baseCurrency: Currency.of(compiler.cashFlow.baseCurrency) });
+        const compiled = compileHouseholdKernelForRun(model, compiler, runContext);
+        stages.end();
+        if (compiled.status !== 'compiled') {
+          parityFailure = { stage: stages.current, status: compiled.status, diagnosticCounts: diagnosticCounts(compiled.diagnostics) };
+        } else {
+          const { executable, kernel } = compiled.value;
+          stages.begin('execute_optimized_summary');
+          const summary = runHouseholdKernel({ kernel, runContext });
+          stages.end(summary.periods.length);
+          stages.begin('execute_frozen_reference');
+          const reference = referenceRun({ compiled: executable, runContext });
+          stages.end(reference.periods.length);
+          stages.begin('compare_full_shared_kernel_runs');
+          referenceEvidence = compareKernelRuns(summary, reference, expected, executable,
+            summarizeHouseholdPeriod, canonicalSerialize, createTaxDiagnosticKey());
+          stages.end();
+          if (referenceEvidence.failure) parityFailure = { stage: stages.current, reason: referenceEvidence.failure };
+          if (!referenceEvidence.failure) {
+            referenceEquality = referenceEvidence.firstFinancialDifference ? 'different' : 'equal';
+          }
+        }
+      }
+    } catch (error) {
+      parityFailure = { stage: stages.current, error: safeErrorNames.has(error?.name) ? error.name : 'Error', message: safeErrorMessage(error?.message),
+        ...(Array.isArray(error?.issues) ? { diagnosticCounts: diagnosticCounts(error.issues) } : {}) };
+    }
   }
-  const evidence = { months, fixture: fixture.id, classification: 'synthetic', status: result.status,
-    executionError: result.executionError === true, reachedThrough: result.reachedThrough ?? null,
-    periodCount: result.points?.length ?? 0, executed, financialCompleteness: result.status === 'completed',
+  stages.begin(finalStage);
+  const evidence = { months, fixture: fixture.id, classification: 'synthetic', status,
+    executionError: executionError === true, reachedThrough: reachedThrough ?? null,
+    periodCount: applicationCoverage.periodCount, executed, financialCompleteness: status === 'completed',
+    applicationCoverage: { ...applicationCoverage, capabilities: applicationCapabilityStatuses },
     wallMs, heapUsedBytes, heapMeaning: 'sampled after forecast, not peak',
-    diagnosticCounts: Object.fromEntries([...new Set(result.diagnostics.map(d => d.code))]
-      .map(code => [code, result.diagnostics.filter(d => d.code === code).length])),
+    diagnosticCounts: applicationDiagnosticCounts,
     phases: Object.fromEntries(PERFORMANCE_PHASES.map(phase => [phase, registry.latest(phase) ?? 'not measured'])),
     worker: { status: 'not measured', reason: 'existing synthetic fixture executes local_node; worker evidence remains #181-owned' },
     financialEquality: { repeatExecution: equality, optimizedVsReference: referenceEquality,
-      scope: 'compiled deterministic kernel; application tax participants and worker transport not measured' } };
+      scope: 'shared compiled-kernel economics; frozen reference tax-participant coverage and worker transport not measured' },
+    referenceEvidence, ...(parityFailure === undefined ? {} : { parityFailure }) };
   writeFileSync(resolve(directory, `${months}.json`), JSON.stringify(evidence, null, 2) + '\n');
-  if (!executed || equality === 'different' || referenceEquality === 'different') process.exitCode = 1;
-} else {
+  stages.end(applicationCoverage.periodCount);
+  if (!executed || (manual && (parityFailure || equality !== 'equal' || referenceEquality !== 'equal'))) process.exitCode = 1;
+} else if (invoked) {
   if (args.length > 1 || (args[0] && args[0] !== '--manual')) throw new Error('Use no arguments or --manual');
   const mode = args[0] ? 'manual' : 'ordinary';
   const months = mode === 'manual' ? [8, 20, 120, 360, 649] : [8, 20];
@@ -100,16 +516,37 @@ if (args[0] === '--probe' && args.length === 3) {
     // Never read a prior run's artifact as evidence for a killed subprocess.
     const file = resolve(directory, `${horizon}.json`);
     writeFileSync(file, 'null\n');
+    const progress = resolve(directory, progressName(horizon));
+    if (mode === 'manual') writeFileSync(progress, '');
     const started = performance.now();
     const run = spawnSync(process.execPath, [`--max-old-space-size=${mode === 'manual' ? 2048 : 512}`,
       'node_modules/vite-node/vite-node.mjs', 'tools/ci/forecast-feasibility.mjs', '--probe', String(horizon), mode],
     { timeout: mode === 'manual' ? 120_000 : 30_000, killSignal: 'SIGKILL', stdio: ['ignore', fd, fd],
       env: { ...process.env, NODE_OPTIONS: '' } });
     closeSync(fd);
-    const measured = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null;
-    failed = run.status !== 0 || !measured?.executed;
+    const processWallMs = performance.now() - started;
+    let measured = null;
+    try {
+      if (existsSync(file)) measured = JSON.parse(readFileSync(file, 'utf8'));
+    } catch (error) {
+      // A killed writer can leave a partial JSON artifact. Preserve the raw
+      // file and still publish the process failure and progress in summary.
+      if (!run.signal || !(error instanceof SyntaxError)) throw error;
+    }
+    let lastProgress = null;
+    if (mode === 'manual') {
+      // The subprocess may have been killed during the final append. Read
+      // only complete records, retaining the preceding BEGIN in that case.
+      const lines = readFileSync(progress, 'utf8').split('\n');
+      const lastComplete = lines.at(-2);
+      if (lastComplete) lastProgress = JSON.parse(lastComplete);
+    }
+    failed = run.status !== 0 || !measured?.executed || (mode === 'manual' &&
+      (lastProgress?.event !== 'END' || lastProgress.stage !== finalStage ||
+        measured.financialEquality?.repeatExecution !== 'equal' || measured.financialEquality?.optimizedVsReference !== 'equal'));
     probes.push({ months: horizon, processExit: run.status, signal: run.signal,
-      error: run.error?.code ?? null, processWallMs: performance.now() - started,
+      error: run.error?.code ?? null, processWallMs,
+      ...(mode === 'manual' ? { progressFile: progressName(horizon), lastProgress } : {}),
       status: failed ? 'FAIL' : 'PASS', evidence: measured ?? 'not measured' });
   }
   const artifact = { capturedHead: head.stdout.trim(), runtime: process.version, mode,

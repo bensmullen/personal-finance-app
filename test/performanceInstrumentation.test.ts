@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createApplicationPerformanceObserver, translateMeteredCost, requireCompletedPerformanceForecast, requireFullHorizonPerformanceForecast, createPerformanceComparisonValidation, createPerformanceEvidenceSample } from "../src/application/performance.js";
 import { PerformanceRegistry, createPerformanceSession, type PerformanceContext } from "../src/diagnostics/performance.js";
-import { runPersonalHouseholdForecast, comparePersonalHouseholdScenarioIntents } from "../src/application/householdProjection.js";
+import { compileHouseholdKernelForRun, runPersonalHouseholdForecast, comparePersonalHouseholdScenarioIntents, restoreHouseholdForecastEvidence } from "../src/application/householdProjection.js";
+import { householdEvidenceProof } from "../src/application/mortgageChartData.js";
 import { createRealisticPerformanceFixture, createStressPerformanceFixture, createPerformanceScalingFixtures } from "./fixtures/performanceHouseholds.js";
 import { compileHouseholdProjection } from "../src/application/compiler/householdProjection.js";
 import { runCompiledHouseholdProjection } from "../src/simulation/householdExecution.js";
@@ -16,7 +17,8 @@ import { ForecastController, type ForecastWorkerPort } from "../ui/forecast/cont
 import type { ForecastWorkerRequest, ForecastWorkerResponse } from "../ui/forecast/protocol.js";
 import { calculationFingerprint, toForecastWorkerResult } from "../src/application/interactiveForecast.js";
 import { createGoldenHouseholdDraft } from "../src/application/personalMvp.js";
-import { createGoldenHouseholdForecastRequest, createGoldenHouseholdScenarioIntents } from "../src/application/goldenHousehold.js";
+import { createGoldenHouseholdForecastRequest, createGoldenHouseholdScenarioIntents, GOLDEN_HOUSEHOLD_IDS } from "../src/application/goldenHousehold.js";
+import { qualifyModeledPayroll } from "../src/simulation/d2/integration/householdWages/modeledPayroll.js";
 import { createOutputCapabilityMerger, mergeOutputCapabilities } from "../src/simulation/r3/capabilities.js";
 import { createTaxDiagnosticKey, taxDiagnostic, taxOutputCapabilities, type TaxOutputCapabilities, type TaxCapabilityDiagnostic } from "../src/simulation/tax/contracts.js";
 
@@ -32,6 +34,238 @@ const oneMonth = <T extends ReturnType<typeof createRealisticPerformanceFixture>
 }) as T;
 
 describe("performance instrumentation", () => {
+  it("digests every JSON-visible field without expanding shared replay content into a single string", async () => {
+    const url = new URL("../tools/ci/forecast-feasibility.mjs", import.meta.url).href;
+    const { digestForecastReadModel: digest } = await import(url) as {
+      digestForecastReadModel: (value: unknown) => string;
+    };
+    const basis = { encoded: "a".repeat(8_191) + "\ud800\udc00", integrity: "replay-integrity" };
+    const point = (day: string) => ({
+      traceRefs: [{ replayArtifact: { basis, start: day } }],
+      outputCapabilities: { cash: { diagnostics: [{ code: "PFA-TAX-009", catalogRef: "catalog:0" }] } },
+      cash: { amount: "100.00", currency: "USD" },
+    });
+    const model = {
+      status: "incomplete",
+      runId: "forecast:0",
+      asOf: "2026-01-01",
+      dataCutoff: "2025-12-31",
+      source: { originalId: "original:0", originalDate: "2025-12-30", bankId: "bank:0",
+        ownerId: "person:0", originalFingerprint: "original:fingerprint", wageIssuer: "canonical-forecast/v1" },
+      retirementMilestones: [{ eventId: "retirement:0", incomeId: "income:0" }],
+      postedProof: { transactionId: "transaction:0", amount: "100.00" },
+      diagnosticCatalogs: { entries: [{ id: "catalog:0", content: "law" }] },
+      points: [point("2026-01-01"), point("2026-02-01"), point("2026-03-01")],
+    };
+    const independent = JSON.parse(JSON.stringify(model)) as typeof model;
+    expect(digest(independent)).toBe(digest(model));
+    for (const change of [
+      (copy: typeof model) => { copy.status = "completed"; },
+      (copy: typeof model) => { copy.runId = "forecast:1"; },
+      (copy: typeof model) => { copy.asOf = "2026-01-02"; },
+      (copy: typeof model) => { copy.dataCutoff = "2025-12-30"; },
+      (copy: typeof model) => { copy.source.originalId = "original:1"; },
+      (copy: typeof model) => { copy.source.originalDate = "2025-12-29"; },
+      (copy: typeof model) => { copy.source.bankId = "bank:1"; },
+      (copy: typeof model) => { copy.source.ownerId = "person:1"; },
+      (copy: typeof model) => { copy.source.originalFingerprint = "different:fingerprint"; },
+      (copy: typeof model) => { copy.source.wageIssuer = "canonical-household/v1"; },
+      (copy: typeof model) => { copy.retirementMilestones[0]!.eventId = "retirement:1"; },
+      (copy: typeof model) => { copy.retirementMilestones[0]!.incomeId = "income:1"; },
+      (copy: typeof model) => { copy.postedProof.transactionId = "transaction:1"; },
+      (copy: typeof model) => { copy.postedProof.amount = "100.01"; },
+      (copy: typeof model) => { copy.diagnosticCatalogs.entries[0]!.content = "new law"; },
+      (copy: typeof model) => { copy.points.reverse(); },
+      (copy: typeof model) => { copy.points[0]!.cash.amount = "100.01"; },
+      (copy: typeof model) => { copy.points[1]!.outputCapabilities.cash.diagnostics[0]!.catalogRef = "catalog:1"; },
+      (copy: typeof model) => { copy.points[2]!.outputCapabilities.cash.diagnostics[0]!.code = "PFA-TAX-008"; },
+      (copy: typeof model) => { copy.points[1]!.cash.amount = "100.01"; },
+      (copy: typeof model) => { copy.points[2]!.cash.amount = "100.01"; },
+      (copy: typeof model) => { copy.points[1]!.traceRefs[0]!.replayArtifact.basis.encoded = basis.encoded.slice(0, -1) + "\udc01"; },
+    ]) {
+      const changed = JSON.parse(JSON.stringify(model)) as typeof model;
+      change(changed);
+      expect(digest(changed)).not.toBe(digest(model));
+    }
+    const keyed = { toJSON: (key: string) => key };
+    const projected = { money: money("1.25", USD), keyed, slots: [undefined, , keyed, NaN, Infinity, null], omitted: undefined };
+    expect(digest(projected)).toBe(digest(JSON.parse(JSON.stringify(projected))));
+    expect(digest({ toJSON: () => ({ toJSON: () => "ignored", amount: "1" }) })).toBe(digest({ amount: "1" }));
+    const returnedFunction = Object.assign(() => {}, { toJSON: () => { throw new Error("Unexpected hook"); } });
+    expect(digest({ omitted: { toJSON: () => returnedFunction } })).toBe(digest({}));
+    expect(digest({ a: 1, b: 2 })).not.toBe(digest({ b: 2, a: 1 }));
+    expect(digest([null])).not.toBe(digest([null, null]));
+    expect(digest({ status: "unavailable", points: [] })).toBe(digest({ status: "unavailable", points: [] }));
+    const stopped = { ...model, stoppedAt: "2026-03-01", points: model.points.slice(0, 2) };
+    expect(digest(stopped)).toBe(digest(JSON.parse(JSON.stringify(stopped))));
+    expect(digest(stopped)).not.toBe(digest({ ...stopped, stoppedAt: "2026-03-02" }));
+    expect(() => digest(undefined)).toThrow("Missing forecast read model");
+    expect(() => digest({ amount: 1n })).toThrow("Do not know how to serialize a BigInt");
+    const { rawJSON } = JSON as typeof JSON & { rawJSON?: (text: string) => unknown };
+    if (rawJSON) {
+      expect(() => digest({ amount: rawJSON("1") })).toThrow("Unsupported raw JSON");
+      expect(() => rawJSON("{")).toThrow(SyntaxError);
+    }
+    const cycle: { self?: unknown } = {};
+    cycle.self = cycle;
+    expect(() => digest(cycle)).toThrow("Cyclic forecast read model");
+  });
+
+  it("accounts for repeated replay owners and unique encoded content independently", async () => {
+    const url = new URL("../tools/ci/forecast-feasibility.mjs", import.meta.url).href;
+    const { digestForecastReadModel: digest } = await import(url) as {
+      digestForecastReadModel: (value: unknown, observe?: (work: Record<string, number>) => void) => string;
+    };
+    const encoded = "a".repeat(8_191) + "\ud800\"\\\n";
+    const basis = { version: "household-replay/v3", encoded, integrity: "fixture-integrity" };
+    const model = (bases: readonly (typeof basis)[]) => ({
+      points: bases.map((basis, index) => ({ traceRefs: [{ replayArtifact: { basis, start: index } }] })),
+    });
+    const measure = (value: unknown) => {
+      let work!: Record<string, number>;
+      const fingerprint = digest(value, counts => { work = counts; });
+      return { fingerprint, work };
+    };
+    // Mutable aliases still require traversal. The production replay basis can
+    // reuse the result of its entire JSON-visible subtree instead.
+    const aliases = measure(model(Array.from({ length: 8 }, () => basis)));
+    expect(aliases.work).toMatchObject({
+      repeatedContainerVisits: 7, longStringVisits: 8, longStringCodeUnits: encoded.length * 8,
+      longStringContentLookups: 8, hashedLongStringCodeUnits: encoded.length,
+    });
+    const independent = measure(JSON.parse(JSON.stringify(model(Array.from({ length: 8 }, () => basis)))));
+    expect(independent.fingerprint).toBe(aliases.fingerprint);
+    expect(independent.work.repeatedContainerVisits).toBe(0);
+    const frozen = Object.freeze({ ...basis });
+    const shared = measure(model(Array.from({ length: 8 }, () => frozen)));
+    expect(shared.fingerprint).toBe(independent.fingerprint);
+    expect(shared.work).toMatchObject({
+      repeatedContainerVisits: 0, longStringVisits: 1, longStringCodeUnits: encoded.length,
+      stableContainerHits: 7, longStringContentLookups: 1, hashedLongStringCodeUnits: encoded.length,
+    });
+    expect(shared.work.containerVisits).toBe(aliases.work.containerVisits! - 7);
+    const unique = measure(model(Array.from({ length: 8 }, (_, index) => ({
+      ...basis, encoded: String(index) + encoded.slice(1),
+    }))));
+    expect(unique.work.hashedLongStringCodeUnits).toBe(encoded.length * 8);
+    expect(unique.fingerprint).not.toBe(aliases.fingerprint);
+    const otherRun = measure(model([Object.freeze({ ...basis, encoded: encoded.replace("\ud800", "\ud801") })]));
+    expect(otherRun.work).toMatchObject({ stableContainerHits: 0, hashedLongStringCodeUnits: encoded.length });
+    expect(otherRun.fingerprint).not.toBe(digest(model([frozen])));
+
+    let reads = 0;
+    const accessor = Object.freeze({
+      get encoded() { return reads++ === 0 ? encoded : "b" + encoded.slice(1); },
+    });
+    const readBoth = measure([accessor, accessor]);
+    expect(readBoth.work).toMatchObject({ stableContainerHits: 0, longStringContentLookups: 2 });
+    expect(readBoth.fingerprint).toBe(digest([{ encoded }, { encoded: "b" + encoded.slice(1) }]));
+    expect(reads).toBe(2);
+    const keyed = Object.freeze({ ...basis, toJSON(key: string) {
+      return key === "first" ? this : { ...basis, encoded: "b" + encoded.slice(1) };
+    } });
+    expect(digest({ first: keyed, second: keyed })).toBe(digest({
+      first: basis, second: { ...basis, encoded: "b" + encoded.slice(1) },
+    }));
+  });
+
+  it("reuses immutable diagnostic entries across distinct cumulative histories", async () => {
+    const url = new URL("../tools/ci/forecast-feasibility.mjs", import.meta.url).href;
+    const { digestForecastReadModel: digest } = await import(url) as {
+      digestForecastReadModel: (value: unknown, observe?: (work: Record<string, number>) => void) => string;
+    };
+    const history = Array.from({ length: 24 }, (_, index) => Object.freeze({
+      code: "PFA-TAX-009",
+      provenance: Object.freeze({ occurrence: index, law: Object.freeze({ catalogRef: "catalog:0" }) }),
+    }));
+    const periods = history.map((_, index) => Object.freeze({ diagnostics: Object.freeze(history.slice(0, index + 1)) }));
+    let shared!: Record<string, number>;
+    let independent!: Record<string, number>;
+    const copied: unknown = JSON.parse(JSON.stringify(periods));
+    expect(digest(periods, work => { shared = work; })).toBe(digest(copied, work => { independent = work; }));
+    const repeatedEntries = 24 * 23 / 2;
+    expect(shared.stableContainerHits).toBe(repeatedEntries);
+    expect(shared.containerVisits).toBe(independent.containerVisits! - 3 * repeatedEntries);
+  });
+
+  it("reads dynamic or mutable descendants on every occurrence", async () => {
+    const url = new URL("../tools/ci/forecast-feasibility.mjs", import.meta.url).href;
+    const { digestForecastReadModel: digest } = await import(url) as {
+      digestForecastReadModel: (value: unknown, observe?: (work: Record<string, number>) => void) => string;
+    };
+    let reads = 0;
+    const mutable = { amount: "1" };
+    const shallow = Object.freeze({ mutable });
+    const proxy = new Proxy(Object.freeze({ amount: "1" }), {
+      get(target, key, receiver) {
+        if (key === "amount") reads++;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const wrapped = Object.freeze({ proxy });
+    const keyed = Object.freeze(Object.create({ toJSON(key: string) { return key; } }) as object);
+    const inheritedSlot = Object.freeze(Object.setPrototypeOf(new Array(1), { get 0() { return ++reads; } }));
+    const input = {
+      first: shallow,
+      get second() { mutable.amount = "2"; return shallow; },
+      proxies: [wrapped, wrapped],
+      left: keyed,
+      right: keyed,
+      holes: [inheritedSlot, inheritedSlot],
+    };
+    const expected = {
+      first: { mutable: { amount: "1" } },
+      second: { mutable: { amount: "2" } },
+      proxies: [{ proxy: { amount: "1" } }, { proxy: { amount: "1" } }],
+      left: "left", right: "right", holes: [[3], [4]],
+    };
+    let work!: Record<string, number>;
+    expect(digest(input, counts => { work = counts; })).toBe(digest(expected));
+    expect(work.stableContainerHits).toBe(0);
+    expect(reads).toBe(4);
+
+    const alias = Object.freeze({ nested: Object.freeze(["before"]) });
+    let fingerprint: string;
+    // An ancestor may already be cached when a sibling installs an inherited
+    // hook affecting one of its descendants.
+    const prior = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON");
+    try {
+      fingerprint = digest({ first: alias, get second() {
+        Object.defineProperty(Array.prototype, "toJSON", {
+          configurable: true, value: (key: string) => `after:${key}`,
+        });
+        return alias;
+      } });
+    } finally {
+      if (prior) Object.defineProperty(Array.prototype, "toJSON", prior);
+      else Reflect.deleteProperty(Array.prototype, "toJSON");
+    }
+    expect(fingerprint).toBe(digest({ first: { nested: ["before"] }, second: { nested: "after:nested" } }));
+  });
+
+  it("detects a full-model replay change and preserves cold source admission", async () => {
+    const url = new URL("../tools/ci/forecast-feasibility.mjs", import.meta.url).href;
+    const { digestForecastReadModel: digest } = await import(url) as {
+      digestForecastReadModel: (value: unknown) => string;
+    };
+    const model = createGoldenHouseholdDraft();
+    const result = runPersonalHouseholdForecast(model, oneMonth(createGoldenHouseholdForecastRequest()));
+    if (result.status === "unavailable") throw new Error(JSON.stringify(result.diagnostics));
+    const copy = JSON.parse(JSON.stringify(result)) as typeof result;
+    const cold = householdEvidenceProof(copy.points);
+    if (!cold) throw new Error("Expected application replay evidence");
+    expect(digest(copy)).toBe(digest(result));
+    expect(restoreHouseholdForecastEvidence(cold, model).periods).toHaveLength(1);
+    const tampered = { ...cold, encoded: `${cold.encoded} ` };
+    const changed = { ...copy, points: copy.points.map(point => ({ ...point,
+      traceRefs: point.traceRefs.map(ref => !ref.replayArtifact ? ref : {
+        ...ref, replayArtifact: { basis: tampered, start: point.periodStart, end: point.periodEnd },
+      }),
+    })) };
+    expect(digest(changed)).not.toBe(digest(result));
+    expect(() => restoreHouseholdForecastEvidence(tampered, model)).toThrow(/BASIS_MISMATCH/);
+  });
+
   it.each([8, 20, 120])("publishes %i growing snapshots using prefix identity and only their new merge suffix", months => {
     const registry = new PerformanceRegistry();
     const session = createPerformanceSession({ context, clock: { now: () => 0 }, sink: registry });
@@ -474,6 +708,71 @@ describe("performance instrumentation", () => {
       { unit: "compute", ratePerUnit: "0.012", currency: "USD" }, { unit: "transfer", ratePerUnit: "0.003", currency: "USD" },
     ])).toEqual([{ currency: "USD", amount: "0.021", units: { compute: "1.25", transfer: "2" } }]);
     expect(translateMeteredCost({ metering: "not_metered" }, [])).toEqual([]);
+  });
+
+  it.each([
+    [24, "2028-01-01", "2027-07-01"],
+    [120, "2036-01-01", "2035-07-01"],
+    [360, "2056-01-01", "2055-07-01"],
+    [649, "2080-02-01", "2079-08-01"],
+  ] as const)("aligns the %i-month realistic fixture and admits its modeled salary sources", (months, end, retirement) => {
+    const baseline = createRealisticPerformanceFixture();
+    const fixture = months === 24 ? baseline : createRealisticPerformanceFixture(months);
+    const { model, request } = fixture;
+    const { compiler } = request;
+    const cashFlow = compiler.cashFlow!;
+    const bindings = cashFlow.retirementBindings!;
+    expect(fixture.id).toBe("realistic-household");
+    expect(fixture.dimensions.horizonMonths).toBe(months);
+    expect(request.runIdentity).toBe(baseline.request.runIdentity);
+    expect(model.objects.Income).toEqual(baseline.model.objects.Income);
+    expect(model.objects.Scenario).toEqual(baseline.model.objects.Scenario!.map(scenario => ({
+      ...(scenario as Record<string, unknown>), end_date: end,
+    })));
+    expect(bindings).toEqual(baseline.request.compiler.cashFlow!.retirementBindings!.map(binding => ({
+      ...binding, baselineDate: retirement,
+    })));
+    expect(bindings).toHaveLength(3);
+    for (const binding of bindings) {
+      expect(model.objects.Event).toContainEqual(expect.objectContaining({
+        event_id: binding.canonicalEventId, start_date: retirement,
+      }));
+    }
+    for (const settings of [cashFlow, compiler.investments, compiler.liabilities]) {
+      expect(settings).toMatchObject({
+        scenarioId: GOLDEN_HOUSEHOLD_IDS.rootScenario,
+        simulationStart: "2026-01-01", simulationEnd: end, months,
+      });
+    }
+
+    const atMidnight = (date: string) => instant(`${date}T00:00:00.000Z`);
+    const runContext = createRunContext({
+      runId: runId(request.runIdentity), scenarioId: scenarioId(GOLDEN_HOUSEHOLD_IDS.rootScenario),
+      asOf: atMidnight(request.asOf), dataCutoff: atMidnight(request.dataCutoff),
+      simulationStart: atMidnight(cashFlow.simulationStart), simulationEnd: atMidnight(end),
+      baseCurrency: Currency.of(cashFlow.baseCurrency),
+    });
+    const compiled = compileHouseholdKernelForRun(model, compiler, runContext);
+    if (compiled.status !== "compiled") throw new Error(JSON.stringify(compiled.diagnostics));
+    const { executable } = compiled.value;
+    const sources = executable.cashFlowInput!;
+    expect(executable.executionMonths).toBe(months);
+    expect(sources.incomes.map(stream => stream.id).sort()).toEqual(bindings.map(binding => binding.incomeId).sort());
+    for (const stream of sources.incomes) {
+      const retirementBinding = bindings.find(binding => binding.incomeId === stream.id)!;
+      const bank = executable.reconciledOpeningState.accounts[stream.depositAccountId];
+      const admitted = qualifyModeledPayroll(stream, sources.householdId, bank, runContext);
+      expect(stream.modeledPayroll?.issuer).toBe("canonical-forecast/v1");
+      expect(admitted.nonSalaryType).toBeUndefined();
+      expect(admitted).toMatchObject({ runId: runContext.runId, dataCutoff: runContext.dataCutoff });
+      expect(admitted.events).toContainEqual(expect.objectContaining({
+        id: retirementBinding.terminationEventId, targetId: stream.id,
+        kind: "termination", effectiveAt: atMidnight(retirement),
+      }));
+      expect(() => qualifyModeledPayroll(stream, sources.householdId, bank, {
+        ...runContext, runId: runId("91000000-0000-4000-8000-000000000901"),
+      })).toThrow("MODELED_PAYROLL_NOT_ADMITTED");
+    }
   });
 
   it("provides executable distinct synthetic fixtures with explicit gaps", () => {
