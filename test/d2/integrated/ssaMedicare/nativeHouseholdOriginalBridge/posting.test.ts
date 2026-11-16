@@ -12,10 +12,11 @@ import { applySsaMedicarePaymentAtomically, createAuthoritativeState } from "../
 import { instant } from "../../../../../src/time/index.js";
 import { money } from "../../../../../src/values/index.js";
 import { ValidationError } from "../../../../../src/diagnostics/index.js";
+import { domainId } from "../../../../../src/identity/index.js";
 import { expandedWire, replaceWireField, wireField, wireItems } from "../../sharedReceipts/wireFixture.js";
 import { fixture, ids, input, payment } from "../scenario.js";
 import { originalPayment, second } from "../originalScenario.js";
-import { amendMedicare, bankPermission, control, faults, nativeFixture, publish, registerTestOriginals, resetNativeSources } from "./sources.js";
+import { amendMedicare, bankPermission, control, faults, nativeFixture, originalReadCounts, publish, registerTestOriginals, resetNativeSources } from "./sources.js";
 
 registerTestOriginals();
 beforeEach(resetNativeSources);
@@ -109,7 +110,7 @@ describe("independent native SSA and Medicare originals", () => {
     state.accounts[other.bankAccountId] = { ...state.accounts[other.bankAccountId]!, kind: "checking" };
     const wrongOwner = fixture(1, state, "2026-01");
     expect(runHouseholdKernel({ kernel: attach(wrongOwner.kernel), runContext: wrongOwner.context }).periods).toHaveLength(0);
-    state.accounts[other.bankAccountId] = { ...state.accounts[other.bankAccountId]!, ownerId: second.person };
+    state.accounts[other.bankAccountId] = { ...state.accounts[other.bankAccountId]!, ownerId: domainId("person", second.person) };
     const { kernel, context } = fixture(1, state, "2026-01");
     bankPermission.allowSecondCredit = false;
     const refused = runHouseholdKernel({ kernel: attach(kernel), runContext: context });
@@ -190,14 +191,19 @@ describe("independent native SSA and Medicare originals", () => {
     const retained = createPortableHouseholdReplayArtifact(summary, true);
     const portable = JSON.parse(JSON.stringify(retained));
     const restored = restorePortableHouseholdReplayArtifact(portable);
+    const before = { ...originalReadCounts };
     expect(restorePortableHouseholdReplayArtifact(retained).periods).toEqual(summary.periods);
+    // Two reads each for the combined receipt/frontier check, the state
+    // receipt check, and the two independent economic original authorities.
+    expect(originalReadCounts.ssa - before.ssa).toBe(8 * events.length);
+    expect(originalReadCounts.medicare - before.medicare).toBe(8 * events.length);
     const selected = summary.periods[12]!.period;
     expect(replayHouseholdForecastWindow(restored, selected).state).toEqual(summary.state);
     faults.unavailable = events[12]!.eventId;
     expect(() => restorePortableHouseholdReplayArtifact(portable)).toThrow("HOUSEHOLD_REPLAY_BASIS_MISMATCH");
     expect(() => restorePortableHouseholdReplayArtifact(retained)).toThrow("HOUSEHOLD_REPLAY_BASIS_MISMATCH");
     expect(() => replayHouseholdForecastWindow(restored, selected)).toThrow();
-  });
+  }, 20_000); // Exact-head CI took 8.4 s across the full admission and rejection sequence.
 
   it("preserves an inherited installment and checks later-known source withdrawal", () => {
     const first = nativeFixture(1);

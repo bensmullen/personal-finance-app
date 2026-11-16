@@ -312,14 +312,24 @@ export function validateSsaMedicareSourceHistory(state: AuthoritativeState, cuto
       validateNativeSsaMedicareReceipt(receipt, observation);
       continue;
     }
-    const q = receipt.sourceInputs as ConfirmedSsaMedicarePayment;
-    if (cutoff !== undefined && !knownBy(q, cutoff)) fail("SSA_SOURCE_NOT_ADMITTED", "Committed payment contains facts after the run data cutoff");
-    const bound = qualifySsaMedicarePayment(q, receipt.payable.householdId, receipt.payable.recipientId, cutoff);
-    if (!same(bound.payable, receipt.payable) || !same(bound.requests, receipt.requests) || !same(bound.right, receipt.right)
-      || bound.bankAccountId !== receipt.bankAccountId || !bound.bankCashBefore.equals(receipt.bankCashBefore)
-      || bound.rightSettlementId !== receipt.rightSettlementId)
-      fail("SSA_CHANGED_PAYMENT", "Committed receipt differs from requalified portable economic inputs");
+    validateLegacySsaMedicareReceipt(receipt, cutoff);
   }
+}
+
+function validateLegacySsaMedicareReceipt(receipt: SsaMedicarePaymentRecord, cutoff?: string): void {
+  const q = receipt.sourceInputs as ConfirmedSsaMedicarePayment;
+  if (cutoff !== undefined && !knownBy(q, cutoff)) fail("SSA_SOURCE_NOT_ADMITTED", "Committed payment contains facts after the run data cutoff");
+  const bound = qualifySsaMedicarePayment(q, receipt.payable.householdId, receipt.payable.recipientId, cutoff);
+  if (!same(bound.payable, receipt.payable) || !same(bound.requests, receipt.requests) || !same(bound.right, receipt.right)
+    || bound.bankAccountId !== receipt.bankAccountId || !bound.bankCashBefore.equals(receipt.bankCashBefore)
+    || bound.rightSettlementId !== receipt.rightSettlementId)
+    fail("SSA_CHANGED_PAYMENT", "Committed receipt differs from requalified portable economic inputs");
+}
+
+function assertNativeSsaMedicareReceipt(receipt: SsaMedicarePaymentRecord, qualified: SsaMedicarePaymentInput): void {
+  const { version: _version, id: _id, netBank: _netBank, transaction, recognitions: _recognitions, ...input } = receipt;
+  if (!same(qualified, input) || !same(ssaMedicarePaymentJournal(qualified), transaction))
+    fail("SSA_CHANGED_PAYMENT", "Committed native SSA receipt no longer matches current originals");
 }
 
 function validateNativeSsaMedicareReceipt(receipt: SsaMedicarePaymentRecord, observation: Pick<RunContext, "asOf" | "dataCutoff">,
@@ -327,15 +337,13 @@ function validateNativeSsaMedicareReceipt(receipt: SsaMedicarePaymentRecord, obs
   let checkSources: (() => void) | undefined;
   const qualified = qualifyNativeSsaMedicareInput(receipt.sourceInputs as NativeSsaMedicareOriginalInput, observation,
     retainSourceCheck === undefined ? undefined : check => { checkSources = check; }).payment;
-  const { version: _version, id: _id, netBank: _netBank, transaction, recognitions: _recognitions, ...input } = receipt;
-  if (!same(qualified, input) || !same(ssaMedicarePaymentJournal(qualified), transaction))
-    fail("SSA_CHANGED_PAYMENT", "Committed native SSA receipt no longer matches current originals");
+  assertNativeSsaMedicareReceipt(receipt, qualified);
   if (checkSources !== undefined) retainSourceCheck?.(checkSources);
 }
 
-/** Reconcile independently qualified occurrences against each incremental
+/** Requalify receipt history and reconcile independent occurrences against each
  * committed frontier. State owns validation of claims, proof and identities. */
-export function validateNativeSsaMedicareFrontiers(
+export function validateSsaMedicareReplayHistory(
   participants: readonly HouseholdKernelParticipant[] | undefined, opening: AuthoritativeState,
   context: RunContext, checkpoints: readonly { readonly at: Instant; readonly state: AuthoritativeState }[],
   terminal: { readonly at: Instant; readonly state: AuthoritativeState }, cashFlow?: VerticalSlice2Input,
@@ -349,6 +357,9 @@ export function validateNativeSsaMedicareFrontiers(
     if (receipt.payable.paymentAt >= context.simulationStart)
       fail("SSA_CHANGED_PAYMENT", "Opening SSA history contains a current or future installment");
     validateNativeSsaMedicareReceipt(receipt, context);
+    const terminalReceipt = terminal.state.ssaMedicarePayments?.[receipt.id];
+    if (receipt !== terminalReceipt && !same(receipt, terminalReceipt))
+      fail("SSA_CHANGED_PAYMENT", "Committed native SSA opening history changed during replay");
     inherited.set(receipt.id, receipt);
   }
   let next = 0;
@@ -382,15 +393,19 @@ export function validateNativeSsaMedicareFrontiers(
       verifyDistinctWages(cashFlow?.incomes ?? [], raw, context);
       const proof = frontier.state.d2PostedTransactions?.[accountingTransactionId(event.eventId)];
       if (!receipt || receipt.version !== "ssa-medicare-payment/v3" || !same(receipt.sourceInputs, source) ||
-        !same(receipt.nativeHousehold, qualified.nativeHousehold) || !same(receipt.transaction, ssaMedicarePaymentJournal(qualified)) ||
         proof?.registration.kind !== "ssa_medicare_payment" || proof.registration.paymentKey !== key ||
         !same(proof.registration.nativeHousehold, qualified.nativeHousehold) || !same(proof.transaction, receipt.transaction))
         fail("SSA_CHANGED_PAYMENT", "Due native SSA installment is missing its exact receipt and dual-original proof");
+      assertNativeSsaMedicareReceipt(receipt, qualified);
+      const terminalReceipt = terminal.state.ssaMedicarePayments?.[key];
+      if (receipt !== terminalReceipt && !same(receipt, terminalReceipt))
+        fail("SSA_CHANGED_PAYMENT", "Committed native SSA installment changed after its first frontier");
       expected.add(key);
     }
   }
   for (const receipt of Object.values(terminal.state.ssaMedicarePayments ?? {})) {
-    if (isNativeSsaMedicareOriginalInput(receipt.sourceInputs) && !expected.has(receipt.id) && !inherited.has(receipt.id))
+    if (!isNativeSsaMedicareOriginalInput(receipt.sourceInputs)) validateLegacySsaMedicareReceipt(receipt, context.dataCutoff);
+    else if (!expected.has(receipt.id) && !inherited.has(receipt.id))
       fail("SSA_CHANGED_PAYMENT", "Committed native SSA payment falls outside the qualified frontier");
   }
 }

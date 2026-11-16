@@ -20,7 +20,7 @@ import "../tax/replayCodec.js";
 import "../workplaceEvents.js";
 import "../domainMechanics.js";
 import "../mortgageLifecycle.js";
-import { validateNativeSsaMedicareFrontiers, validateSsaMedicareSourceHistory } from "../d2/integration/ssaMedicare/index.js";
+import { validateSsaMedicareReplayHistory } from "../d2/integration/ssaMedicare/index.js";
 
 /** One bounded application proposal per run. Its encoded digest is not trust. */
 export interface ModeledPayrollReplayBasis {
@@ -289,17 +289,13 @@ export const createPortableHouseholdReplayArtifact = (forecast: HouseholdForecas
     materializedCheckpointStates: materialized }); } catch { /* Measurement only. */ }
   return artifact;
 };
-function requalifyReplaySources(state: AuthoritativeState, context: RunContext): void {
-  validateSsaMedicareSourceHistory(state, context.dataCutoff, context);
-  requalifyD2SettlementReceiptHistory(state, context);
-  requalifyRetirementDistributionHistory(state, context);
-}
-
-function qualifyNativeReplayFrontiers(forecast: Pick<HouseholdForecastSummaryResult, "replay" | "periods">,
+function requalifyReplaySources(forecast: Pick<HouseholdForecastSummaryResult, "replay" | "periods">,
   state: AuthoritativeState, checkpoints: readonly HouseholdReplayCheckpoint[]): void {
   const { kernel, runContext } = forecast.replay;
-  validateNativeSsaMedicareFrontiers(kernel.executable.participants, kernel.executable.reconciledOpeningState,
+  validateSsaMedicareReplayHistory(kernel.executable.participants, kernel.executable.reconciledOpeningState,
     runContext, checkpoints, { state, at: forecast.periods.at(-1)?.period.end ?? runContext.simulationStart }, kernel.executable.cashFlowInput);
+  requalifyD2SettlementReceiptHistory(state, runContext);
+  requalifyRetirementDistributionHistory(state, runContext);
 }
 
 const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObserver, timings: RestoreTimings = {}, sample: () => void = () => {}, independentSource?: unknown): {
@@ -343,13 +339,8 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
   // payroll references to a fresh executable before kernel/checkpoint admission.
   const admittedExecutable = qualifyModelBasis(restored.modeledPayroll, executable, restored.runContext, independentSource);
   try { observer?.phase?.("participants_restored"); } catch { /* Observation is optional. */ }
-  const qualify = (state: AuthoritativeState) => {
-    measure("sourceRequalificationMs", () => requalifyReplaySources(state, restored.runContext));
-    try { observer?.phase?.("source_requalified"); } catch { /* Observation is optional. */ }
-  };
   let sourceHistoryState = admittedExecutable.reconciledOpeningState;
   let checkpoints: readonly HouseholdReplayCheckpoint[] = [];
-  if (supplied.version !== "household-replay/v3") qualify(sourceHistoryState);
   const kernel = measure("kernelCompileMs", () => compileHouseholdKernel(admittedExecutable, restored.runContext.simulationStart));
   try { observer?.phase?.("kernel_compiled"); } catch { /* Observation is optional. */ }
   const forecast = Object.freeze({ runMetadata: restored.runMetadata, periods: restored.periods,
@@ -379,8 +370,10 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
       }
       return terminal;
     });
-    qualify(sourceHistoryState);
-    measure("sourceRequalificationMs", () => qualifyNativeReplayFrontiers(forecast, sourceHistoryState, checkpoints));
+  }
+  measure("sourceRequalificationMs", () => requalifyReplaySources(forecast, sourceHistoryState, checkpoints));
+  try { observer?.phase?.("source_requalified"); } catch { /* Observation is optional. */ }
+  if (supplied.version === "household-replay/v3") {
     measure("checkpointRestoreValidationMs", () => registerHouseholdReplayCheckpoints(forecast, checkpoints, counts => {
       timings.checkpointDiagnosticKeysComputed = counts.diagnosticKeysComputed;
       timings.checkpointDiagnosticOccurrencesCompared = counts.diagnosticOccurrencesCompared;
@@ -399,7 +392,6 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
       }
     } catch { /* Measurement is optional. */ } });
   }
-  if (supplied.version !== "household-replay/v3") qualifyNativeReplayFrontiers(forecast, sourceHistoryState, checkpoints);
   bindReplayAdmission(forecast, restored.modeledPayroll, sourceHistoryState, checkpoints, independentSource);
   return { forecast, sourceHistoryState, checkpoints, ...(restored.modeledPayroll === undefined ? {} : { modeledPayroll: restored.modeledPayroll }) };
 };
@@ -422,8 +414,7 @@ function bindReplayAdmission(forecast: Pick<HouseholdForecastSummaryResult, "rep
   const { replay } = forecast;
   registerRestoredReplayAdmission(replay, () => {
     qualifyModelBasis(basis, replay.kernel.executable, replay.runContext, independentSource);
-    requalifyReplaySources(sourceHistoryState, replay.runContext);
-    qualifyNativeReplayFrontiers(forecast, sourceHistoryState, checkpoints);
+    requalifyReplaySources(forecast, sourceHistoryState, checkpoints);
   });
 }
 export const restorePortableHouseholdReplayArtifact = (artifact: unknown, observer?: ReplayRestoreObserver, independentSource?: unknown): Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods"> => {
@@ -448,8 +439,7 @@ export const restorePortableHouseholdReplayArtifact = (artifact: unknown, observ
     if (cached && supplied?.version === cached.version && supplied.encoded === cached.encoded && supplied.integrity === cached.integrity) {
       qualifyModelBasis(cached.modeledPayroll, cached.forecast.replay.kernel.executable, cached.forecast.replay.runContext, independentSource);
       const sourceStarted = safeNow(observer);
-      requalifyReplaySources(cached.sourceHistoryState, cached.forecast.replay.runContext);
-      qualifyNativeReplayFrontiers(cached.forecast, cached.sourceHistoryState, cached.checkpoints);
+      requalifyReplaySources(cached.forecast, cached.sourceHistoryState, cached.checkpoints);
       bindReplayAdmission(cached.forecast, cached.modeledPayroll, cached.sourceHistoryState, cached.checkpoints, independentSource);
       const sourceRequalificationMs = elapsed(sourceStarted, safeNow(observer));
       try { observer?.phase?.("restore_warm"); } catch { /* Observation is optional. */ }

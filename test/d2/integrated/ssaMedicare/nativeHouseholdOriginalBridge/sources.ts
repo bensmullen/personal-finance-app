@@ -43,6 +43,7 @@ const irmaa: IrmaaOriginals = { ...providers.irmaa, enrollments(query) {
     value: { ...original.value, enrollment: { ...original.value.enrollment, elected } } })) } : inventory;
 } };
 export const faults = { unavailable: "", withdrawn: "", incomplete: "", race: "", reads: 0 };
+export const originalReadCounts = { ssa: 0, medicare: 0 };
 const publicationAt = instant("2025-12-01T00:00:00.000Z");
 const bankStart = instant("2026-01-01T00:00:00.000Z");
 const bankEnd = instant("2029-01-01T00:00:00.000Z");
@@ -64,6 +65,7 @@ const secondBank: readonly HouseholdBankOriginal[] = bank.map(original => {
 export const bankPermission = { allowSecondCredit: true };
 
 function inventory<K extends "ssa" | "medicare">(context: HouseholdBankEventContext, family: K) {
+  originalReadCounts[family]++;
   const { eventId, eventAt, personId, householdId, asOf, dataCutoff } = context;
   const document = documents.get(eventId)?.[family];
   if (!document || faults.unavailable === eventId) return undefined;
@@ -95,6 +97,7 @@ export function resetNativeSources(): void {
   extendAward.enabled = false;
   bankPermission.allowSecondCredit = true;
   faults.unavailable = ""; faults.withdrawn = ""; faults.incomplete = ""; faults.race = ""; faults.reads = 0;
+  originalReadCounts.ssa = 0; originalReadCounts.medicare = 0;
 }
 
 // Publish the individual synthetic documents. Production supplies the
