@@ -954,7 +954,6 @@
       "owner_stage": "D2-D-S8-5A-two-person-source-qualified-joint-household",
       "blocking_gate": "D2",
       "depends_on": [
-        149,
         276,
         277,
         278,
@@ -978,9 +977,7 @@
       "issue_number": 332,
       "owner_stage": "D2-A-B-merged-baseline-capability-closure-audit",
       "blocking_gate": "D2",
-      "depends_on": [
-        149
-      ],
+      "depends_on": [],
       "spec_requirement_ids": [
         "PFA-DET-016",
         "PFA-DET-017",
