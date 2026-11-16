@@ -1012,7 +1012,7 @@
         "PFA-INS-013",
         "PFA-TAX-015"
       ],
-      "scope": "PM-approved required shared source-qualified SSA + benefit-deducted Medicare native posting bridge from existing S1 BANK/A1 SSA/C1 base-premium/C2 IRMAA independent originals to exact canonical one-event journal and native v3 original proof/cold replay; new module src/simulation/d2/integration/ssaMedicare/nativeHouseholdOriginalBridge/** and disjoint tests test/d2/integrated/ssaMedicare/nativeHouseholdOriginalBridge/** only. Must never use test-authored combined journal, duplicate SSA net/cash tax, falsely award applied RMD, widen state trust, or silently skip amendment/withdrawal/cutoff; report BLOCKED on required changed protected/shared interface. Required to unblock #331, not full #149 A/B/C/Tax/UAT closure."
+      "scope": "PM-SCOPE-APPROVAL-PENDING proposed shared source-qualified SSA + benefit-deducted Medicare native posting bridge from existing S1 BANK/A1 SSA/C1 base-premium/C2 IRMAA independent originals to exact canonical one-event journal and native v3 original proof/cold replay; new module src/simulation/d2/integration/ssaMedicare/nativeHouseholdOriginalBridge/** and disjoint tests test/d2/integrated/ssaMedicare/nativeHouseholdOriginalBridge/** only. Must never use test-authored combined journal, duplicate SSA net/cash tax, falsely award applied RMD, widen state trust, or silently skip amendment/withdrawal/cutoff; report BLOCKED on required changed protected/shared interface. Required to unblock #331, not full #149 A/B/C/Tax/UAT closure."
     }
   ],
   "legacy_open_task_reconciliation": {
