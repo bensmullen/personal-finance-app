@@ -138,6 +138,6 @@ describe("U1 financial fact single-owner architecture", () => {
     }
     expect(ux).toContain("u1-fact-ownership.json");
     expect(roadmap).toContain("u1-fact-ownership.json");
-    expect(roadmap).toContain("Issue #94 / PR #98");
+    expect(roadmap).toMatch(/#94 U1 technical authoring work transferred[^\n]*to \[#120\]/);
   });
 });
