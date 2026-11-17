@@ -7,6 +7,8 @@ import { realizedMortgageLoans } from "./mortgageLifecycle.js";
 import { SummaryOperationSink, type SummaryAccountingEvidence } from "./r3/summarySink.js";
 import { firstDependencyOrder, indexReachability, indexSequencingInstants } from "./r3/ordering.js";
 import { compareReachableStates, createReachableStateCounters } from "./r3/reachableStates.js";
+import { fixedLoanDebitDenial } from "./d2/integration/fixedLoanOriginalBridge/bank.js";
+import { withFixedLoanOriginalObservations } from "./d2/integration/fixedLoanOriginalBridge/observation.js";
 import { createOutputCapabilityMerger } from "./r3/capabilities.js";
 import { createTaxDiagnosticKey, type TaxCapabilityDiagnostic, type TaxOutputCapabilities } from "./tax/contracts.js";
 import { fundingPoolConservationProof, guaranteedFundingIncomeProof } from "./r3/commutativity.js";
@@ -231,6 +233,7 @@ const mergeEventPreparationIdentities = (
 };
 
 type InstantExecution = {
+  readonly debitDenials: ReadonlyMap<string, string>;
   readonly requiredStatuses: ReadonlyMap<string, string>;
   readonly state: AuthoritativeState;
   readonly primitiveState: PrimitiveRuntimeStateStore;
@@ -603,12 +606,14 @@ const runCompiledHouseholdProjectionInternal = (
       ));
       if (scheduled.status === "invalid_model")
         throw new ValidationError(scheduled.diagnostics);
+      const originalObservations = new Map<string, string>();
       const executeAt = (
         at: Instant,
         order: readonly HouseholdWorkDescriptor[],
         opening: AuthoritativeState,
         openingPrimitiveState: PrimitiveRuntimeStateStore,
         prefix?: InstantExecution,
+        speculativeLoans?: ReadonlySet<string>,
       ): InstantExecution => {
         let nextState = opening;
         let nextPrimitiveState = openingPrimitiveState;
@@ -617,9 +622,21 @@ const runCompiledHouseholdProjectionInternal = (
         const liabilityResults: VerticalSlice4PeriodResult[] = [...(prefix?.liabilityPeriods ?? [])];
         const additionalFacts: HouseholdOperationFacts[] = [...(prefix?.additionalFacts ?? [])];
         const requiredStatuses = new Map<string, string>(prefix?.requiredStatuses);
+        const debitDenials = new Map(prefix?.debitDenials);
         for (const descriptor of order) {
-          const result = prepared.operations.execute(descriptor,
-            { state: participants.some(participant => participant.observe !== undefined) ? cloneAuthoritativeState(nextState) : nextState, primitiveState: nextPrimitiveState, runtime: operationRuntime(nextState) }, requiredStatuses);
+          if (debitDenials.size > 0 && [...debitDenials.keys()].some(id => explicitReaches(id, descriptor.id))) continue;
+          const opening = { state: participants.some(participant => participant.observe !== undefined) ? cloneAuthoritativeState(nextState) : nextState,
+            primitiveState: nextPrimitiveState, runtime: operationRuntime(nextState) };
+          let result;
+          try {
+            result = withFixedLoanOriginalObservations(originalObservations,
+              () => prepared.operations.execute(descriptor, opening, requiredStatuses));
+          } catch (error) {
+            const denial = speculativeLoans?.has(descriptor.id) ? fixedLoanDebitDenial(error) : undefined;
+            if (denial === undefined) throw error;
+            debitDenials.set(descriptor.id, denial);
+            continue;
+          }
           performance.counters({ [`participant.${descriptor.domain}.operations`]: 1 });
           nextState = result.state; nextPrimitiveState = result.primitiveState;
           if (result.facts.instrumentation !== undefined) performance.counters(result.facts.instrumentation);
@@ -638,7 +655,7 @@ const runCompiledHouseholdProjectionInternal = (
               result.facts.liquidityShortfalls !== undefined || result.facts.diagnostics !== undefined ||
               result.facts.traceRefs !== undefined || result.facts.summary !== undefined || result.facts.outputCapabilities !== undefined) additionalFacts.push(result.facts);
         }
-        return Object.freeze({ state: nextState, primitiveState: nextPrimitiveState, requiredStatuses,
+        return Object.freeze({ state: nextState, primitiveState: nextPrimitiveState, requiredStatuses, debitDenials,
           cashPeriods: Object.freeze(cashResults), investmentPeriods: Object.freeze(investmentResults),
           liabilityPeriods: Object.freeze(liabilityResults), additionalFacts: Object.freeze(additionalFacts) });
       };
@@ -715,13 +732,15 @@ const runCompiledHouseholdProjectionInternal = (
               group.some((item) => item.id === edge.after),
           );
           const groupIds = new Set(group.map(item => item.id));
+          const sourced = new Set(prepared.liabilities?.operations.filter(operation =>
+            operation.loan.originalSource !== undefined && groupIds.has(operation.descriptor.id)).map(operation => operation.descriptor.id));
           const contracts = group.map(item => prepared.operations.commutativity(item,
             { state: candidateState, primitiveState: candidatePrimitiveState }));
-          if (fundingPoolConservationProof(contracts)) {
+          if (sourced.size === 0 && fundingPoolConservationProof(contracts)) {
             performance.counters({ contentionAnalyticalFundingPoolConservation: 1 });
             continue;
           }
-          if (guaranteedFundingIncomeProof(contracts)) {
+          if (sourced.size === 0 && guaranteedFundingIncomeProof(contracts)) {
             performance.counters({ contentionAnalyticalGuaranteedFirstSource: 1 });
             continue;
           }
@@ -731,20 +750,23 @@ const runCompiledHouseholdProjectionInternal = (
             const counters = createReachableStateCounters();
             // Legacy extension callbacks can replace the indexed representation.
             // Keep one complete comparison encoding for all their branches.
-            const signature = (execution: InstantExecution) => outcomeSignature(execution, participants.length === 0 ? candidateState : undefined,
-              nodes => performance.counters({ contentionStateIndexNodesVisited: nodes }));
+            const signature = (execution: InstantExecution) => {
+              const outcome = outcomeSignature(execution, participants.length === 0 ? candidateState : undefined,
+                nodes => performance.counters({ contentionStateIndexNodesVisited: nodes }));
+              return execution.debitDenials.size === 0 ? outcome : canonicalSerialize({ denials: [...execution.debitDenials].sort(), outcome });
+            };
             try {
               return compareReachableStates({ items: group, edges,
                 opening: executeAt(at, [], candidateState, candidatePrimitiveState),
                 advance: (prefix, item) => {
                   const candidate = cloneAuthoritativeState(prefix.state);
                   restoreOperationRuntime(candidate, operationRuntime(prefix.state));
-                  return executeAt(at, [item], candidate, prefix.primitiveState, prefix);
+                  return executeAt(at, [item], candidate, prefix.primitiveState, prefix, sourced);
                 },
                 equivalenceKey: prefix => canonicalSerialize({
                   outcome: signature(prefix), statuses: [...prefix.requiredStatuses].sort(([a], [b]) => a.localeCompare(b)),
                 }),
-                terminalSignature: prefix => signature(executeAt(at, remainder, prefix.state, prefix.primitiveState, prefix)),
+                terminalSignature: prefix => signature(executeAt(at, remainder, prefix.state, prefix.primitiveState, prefix, sourced)),
                 counters,
               });
             } finally {
