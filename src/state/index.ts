@@ -1823,8 +1823,13 @@ export const applyRetirementDistributionAtomically = (state: AuthoritativeState,
 };
 // A separate commitment inventory binds posting identity to its original
 // operation/source registration. It is consistency evidence, not provider auth.
-const d2PostingKey = (proof: D2PostedTransactionProof): IdempotencyKey => idempotencyKey("d2-shared:posted-proof",
-  paymentValue({ transactionId: proof.transaction.id, writer: proof.writer, registration: proof.registration }));
+const d2PostingKey = (proof: D2PostedTransactionProof): IdempotencyKey => {
+  const binding = paymentValue({ transactionId: proof.transaction.id, writer: proof.writer, registration: proof.registration });
+  // The proof already holds the full registration. Keep each fixed-loan
+  // commitment distinct without storing a second copy in its identity.
+  return idempotencyKey("d2-shared:posted-proof", proof.registration.kind === "fixed_loan_original"
+    ? `sha256:${sha256(binding)}` : binding);
+};
 const generatedD2PostingProofs = new WeakSet<D2PostedTransactionProof>();
 const d2PostingWrite = (_key: string, previous: D2PostedTransactionProof | undefined, next: D2PostedTransactionProof | undefined): void => {
   if (previous !== undefined && (next === undefined || paymentValue(previous) !== paymentValue(next)))
@@ -2184,9 +2189,10 @@ function validateFixedLoanPosting(state: AuthoritativeState, tx: AccountingTrans
     suffix = "interest_recognition";
   } else {
     const bank = state.accounts[c.bankAccountId];
+    const settlementId = k.kind === "extra_principal" ? `settlement:${claim.id}` : `settlement:${claim.id}:${c.eventAt}`;
     if (r.role !== "settlement" || bank?.id !== c.bankAccountId || bank.ownerId !== c.householdId ||
         bank.kind !== k.route.accountKind || k.route.personOwnerId !== undefined || !bank.cash.currency.equals(USD) ||
-        k.settlementId !== `settlement:${claim.id}:${c.eventAt}` ||
+        k.settlementId !== settlementId ||
         !claim.settlementIds.includes(k.settlementId) || !state.identities.settlementIds.includes(k.settlementId) ||
         (k.kind !== "extra_principal" && tx.id !== `tx:settlement:${prefix}-${interest ? "interest" : "principal"}:${claim.id}:${c.eventAt}`) ||
         amount.compare(claim.originalAmount.minus(claim.outstandingAmount)) > 0)

@@ -146,7 +146,7 @@ function selectRevision<T>(history: readonly HistoryEntry<T>[], query: FixedLoan
 const postedUsd = (amount: Money): boolean => amount instanceof Money && amount.currency.equals(USD) &&
   !amount.isNegative() && amount.amount.fitsScale(USD.minorUnitScale);
 
-export function qualifyFixedLoanOriginal(query: FixedLoanOriginalQuery) {
+function readFixedLoanOriginal(query: FixedLoanOriginalQuery) {
   const { reference } = query;
   requireOriginal(reference.version === "fixed-loan-original-reference/v1" &&
     [reference.publisherId, reference.lenderId, reference.lenderAccountId, reference.contractSourceId, query.runId, query.scenarioId].every(named) &&
@@ -190,8 +190,14 @@ export function qualifyFixedLoanOriginal(query: FixedLoanOriginalQuery) {
   const digest = `sha256:${sha256(canonicalSerialize({
     contract: [...inventory.contractHistory].sort(byPublication), payment: [...inventory.paymentHistory].sort(byPublication),
   }))}`;
-  observeFixedLoanOriginal(`lender:${canonicalSerialize(query)}`, digest);
   return Object.freeze({ contract, payment, digest });
+}
+
+export function qualifyFixedLoanOriginal(query: FixedLoanOriginalQuery) {
+  const original = readFixedLoanOriginal(query);
+  observeFixedLoanOriginal("lender", canonicalSerialize(query), original.digest,
+    () => readFixedLoanOriginal(query).digest);
+  return original;
 }
 
 export interface FixedLoanCalculatedService {

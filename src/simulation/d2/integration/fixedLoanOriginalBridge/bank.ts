@@ -29,12 +29,15 @@ export function qualifyFixedLoanBankDebit(
   if (allocations.length !== 1 || allocation === undefined || allocation.accountId !== payment.bank.accountId ||
       !allocation.amount.equals(amount) || !amount.isPositive() || payment.eventAt !== context.eventAt)
     return rejectFixedLoanOriginal("Expected one actual BANK allocation matching the payment original");
-  const admission = checkHouseholdBankDebitAdmission(payment.bank.publisherId, payment.bank.sourceId,
-    { ...context, bankAccountId: allocation.accountId, direction: "debit" });
+  const { publisherId, sourceId } = payment.bank;
+  const query = { ...context, bankAccountId: allocation.accountId, direction: "debit" as const };
+  const read = () => checkHouseholdBankDebitAdmission(publisherId, sourceId, query);
+  const admission = read();
   if ((admission.kind === "qualified" ? admission.pin.accountKind : admission.accountKind) !== accountKind)
     return rejectFixedLoanOriginal("Actual BANK account kind differs from the original");
-  observeFixedLoanOriginal(`bank:${canonicalSerialize({ context, bank: payment.bank })}`,
-    `${admission.kind}:${admission.inventoryDigest}`);
+  const digest = ({ kind, inventoryDigest }: ReturnType<typeof read>) => `${kind}:${inventoryDigest}`;
+  observeFixedLoanOriginal("bank", canonicalSerialize({ publisherId, sourceId, query }),
+    digest(admission), () => digest(read()));
   if (admission.kind === "debit_permission_denied") throw new FixedLoanDebitPermissionDenied(admission.inventoryDigest);
   return admission;
 }

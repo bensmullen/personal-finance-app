@@ -10,7 +10,7 @@ import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayAr
 import { createAuthoritativeState } from "../../../../src/state/index.js";
 import { instant } from "../../../../src/time/index.js";
 import { money } from "../../../../src/values/index.js";
-import { expandedWire, replaceWireField, wireField } from "../sharedReceipts/wireFixture.js";
+import { expandedWire, replaceWireField, wireField, wireItems } from "../sharedReceipts/wireFixture.js";
 
 import { canonicalSerialize, createInputFingerprint } from "../../../../src/simulation/run.js";
 import { runVerticalSlice4 } from "../../../../src/simulation/verticalSlice4.js";
@@ -18,6 +18,14 @@ import { ids } from "../householdBankAuthority/scenario.js";
 import { control, fixture, interest, principal, reset, start } from "./scenario.js";
 
 afterEach(reset);
+
+const expandFixedLoanArtifact = (encoded: string) => expandedWire(JSON.stringify(JSON.parse(encoded, (_name, value: unknown) => {
+  if (value === null || typeof value !== "object" || Object.keys(value).length !== 1) return value;
+  if ("d" in value) return { kind: "definition", value: value.d };
+  if ("r" in value) return { kind: "reference", value: value.r };
+  if ("t" in value && Array.isArray(value.t)) return { kind: value.t[0], value: value.t[1] };
+  return value;
+})));
 
 describe("source-qualified fixed loan service", () => {
   it.each(["mortgage", "auto", "student"] as const)("posts %s interest, principal and one-cent extra as separate canonical journals", family => {
@@ -40,6 +48,9 @@ describe("source-qualified fixed loan service", () => {
       expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
       expect(canonicalSerialize(result.state)).toBe(canonicalSerialize(direct.state));
     }
+    const restored = restorePortableHouseholdReplayArtifact(createPortableHouseholdReplayArtifact(summary));
+    const replay = replayHouseholdForecastWindow(restored, restored.periods[0]!.period);
+    expect(canonicalSerialize(replay.state)).toBe(canonicalSerialize(direct.state));
   });
 
   it("retains interest for expense-first and rejects selected, unprioritized and revoked debit attempts atomically", () => {
@@ -65,6 +76,24 @@ describe("source-qualified fixed loan service", () => {
     const revoked = runCompiledHouseholdProjection(request);
     expect(revoked.diagnostics.map(d => d.code)).toContain("HOUSEHOLD_BANK_ORIGINAL_NOT_ADMITTED");
     expect(canonicalSerialize(revoked.state)).toBe(canonicalSerialize(request.openingState));
+  });
+
+  it("rechecks an unfunded lender occurrence that has no committed posting proof", () => {
+    const request = fixture("student", "growth", 1);
+    const compiled = { ...request.compiled, reconciledOpeningState: createAuthoritativeState({ ...request.openingState,
+      accounts: { [ids.bank]: { ...request.openingState.accounts[ids.bank]!, cash: money("0") } },
+    }) };
+    const summary = runHouseholdForecastSummary({ kernel: compileHouseholdKernel(compiled, start), runContext: request.runContext });
+    expect(summary.status, JSON.stringify(summary.diagnostics)).toBe("completed");
+    expect(Object.keys(summary.state.d2PostedTransactions ?? {})).toHaveLength(0);
+    expect(control.bankReads).toBe(0);
+    const artifact = createPortableHouseholdReplayArtifact(summary);
+    const restored = restorePortableHouseholdReplayArtifact(artifact);
+    const selected = restored.periods[0]!.period;
+    control.lenderAvailable = false;
+    expect(() => replayHouseholdForecastWindow(restored, selected)).toThrow("Lender originals unavailable");
+    expect(() => restorePortableHouseholdReplayArtifact(artifact)).toThrow("HOUSEHOLD_REPLAY_BASIS_MISMATCH");
+    expect(control.bankReads).toBe(0);
   });
 
   it("does not let an expense-first policy suppress a lender race or a cycle", () => {
@@ -127,16 +156,23 @@ describe("source-qualified fixed loan service", () => {
     expect(summary.status, JSON.stringify(summary.diagnostics)).toBe("completed");
     const artifact = createPortableHouseholdReplayArtifact(summary);
     expect(restorePortableHouseholdReplayArtifact(artifact).periods).toHaveLength(13);
-    const decoded = expandedWire(artifact.encoded);
-    const terminal = wireField(decoded, "terminalDelta");
-    const records = wireField(terminal, "records");
-    replaceWireField(records, "d2PostedTransactions", { kind: "record", value: [["present", true], ["set", { kind: "record", value: [] }]] });
-    const identities = wireField(terminal, "identities");
-    for (const name of ["postedTransactionIds", "externalIdempotencyKeys"])
-      replaceWireField(identities, name, { kind: "record", value: [["add", { kind: "array", value: [] }], ["remove", { kind: "array", value: [] }]] });
-    const encoded = JSON.stringify(decoded);
-    expect(() => restorePortableHouseholdReplayArtifact({ ...artifact, encoded,
-      integrity: createInputFingerprint({ runContext: request.runContext, openingState: encoded }) })).toThrow("HOUSEHOLD_REPLAY_BASIS_MISMATCH");
+    for (const boundary of ["terminal", "sparse"] as const) {
+      const decoded = expandFixedLoanArtifact(artifact.encoded);
+      const delta = boundary === "terminal" ? wireField(decoded, "terminalDelta") : wireItems(wireField(decoded, "checkpoints"))[0]!;
+      const records = wireField(delta, "records");
+      for (const name of ["d2PostedTransactions", "obligations"])
+        replaceWireField(wireField(records, name), "set", { kind: "record", value: [] });
+      const identities = wireField(delta, "identities");
+      for (const name of ["postedTransactionIds", "externalIdempotencyKeys", "generatedOccurrenceKeys", "recognitionIds", "settlementIds"])
+        replaceWireField(wireField(identities, name), "add", { kind: "array", value: [] });
+      const encoded = JSON.stringify(decoded);
+      expect(() => restorePortableHouseholdReplayArtifact({ ...artifact, encoded,
+        integrity: createInputFingerprint({ runContext: request.runContext, openingState: encoded }) })).toThrow(
+        expect.objectContaining({ cause: expect.objectContaining({ message: expect.stringContaining("fixed loan committed history differs") }) }));
+    }
+    control.permission = "revoked";
+    expect(() => restorePortableHouseholdReplayArtifact(artifact)).toThrow("HOUSEHOLD_REPLAY_BASIS_MISMATCH");
+    control.permission = "debit";
     control.lenderAvailable = false;
     expect(() => restorePortableHouseholdReplayArtifact(artifact)).toThrow("HOUSEHOLD_REPLAY_BASIS_MISMATCH");
   });
@@ -184,12 +220,19 @@ describe("source-qualified fixed loan service", () => {
       const summary = runHouseholdForecastSummary({ kernel: compileHouseholdKernel(request.compiled, start), runContext: request.runContext });
       expect(summary.status, JSON.stringify(summary.diagnostics)).toBe("completed");
       expect(Object.keys(summary.state.d2PostedTransactions ?? {})).toHaveLength(term);
+      const commitments = summary.state.identities.externalIdempotencyKeys.filter(key => /d2-shared:posted-proof:71:sha256:[0-9a-f]{64}$/.test(key));
+      expect(new Set(commitments).size).toBe(term);
+      expect(commitments.every(key => key.length <= 150)).toBe(true);
       expect(control.lenderReads).toBeLessThanOrEqual(8 * term);
       expect(control.bankReads).toBeLessThanOrEqual(8 * term);
       const artifact = createPortableHouseholdReplayArtifact(summary);
       expect(new TextEncoder().encode(artifact.encoded).byteLength).toBeLessThan(16_000 + 9_000 * term);
       const restored = restorePortableHouseholdReplayArtifact(artifact);
       expect(restored.periods).toHaveLength(months);
+      control.lenderReads = 0; control.bankReads = 0;
+      expect(restorePortableHouseholdReplayArtifact(artifact)).toBe(restored);
+      expect(control.lenderReads).toBeLessThanOrEqual(2 * term);
+      expect(control.bankReads).toBeLessThanOrEqual(2 * term);
       const end = request.runContext.simulationEnd;
       const replay = replayHouseholdForecastWindow(restored, { start: restored.periods.at(-1)!.period.start, end });
       expect(replay.periods).toHaveLength(1);
