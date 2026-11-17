@@ -81,7 +81,7 @@ Before emitting an implementation/repair handoff, ChatGPT SHALL:
    roadmap material needed for the task;
 2. consult `docs/development/agent-learning-policy.md` and the active lesson
    ledger before issuing implementation instructions;
-3. consult the live issue-to-milestone register at `docs/development/milestone-issue-register.json` and its policy, reconcile current GitHub issue statuses, and verify that the task's owner stage/dependencies/mandatory closeout gate are allocated; do not silently skip an unresolved required issue or treat a planning backlog entry as V3 task authorization;
+3. consult the live issue-to-milestone register at `docs/development/milestone-issue-register.json` and its policy, reconcile current GitHub issue statuses, and verify that the task's owner stage/dependencies/mandatory closeout gate are allocated; do not silently skip an unresolved required issue or treat a planning backlog entry as V3 task authorization; **do not mistake same-gate `ALLOWED_PATHS` repair for a new milestone commitment or wait for a register-only PR as a precondition to Codex start**;
 4. resolve material semantic/architectural decisions rather than delegating
    those decisions to Codex;
 5. identify the smallest defensible `ALLOWED_PATHS`;
@@ -145,6 +145,12 @@ inventing or running reset/clean/stash/force actions. Do not merely promise
 bootstrap commands, refer to a past response, or require the PM to infer them
 from framework documentation. If the path is not established, say so and
 give a safe repository/worktree discovery command before any mutation.
+
+### Same-gate issue scope expansions — immediate release, no governance-PR hold
+
+After a concrete Codex `BLOCKED`, run the whole-task reachable-contract/sibling-path audit below. When it establishes that additional production or reference files are mandatory to implement the **already PM-approved issue**, and the issue's first milestone owner/gate, dependencies, normative requirement IDs, user-visible financial semantics and release commitments **do not change**, expand `ALLOWED_PATHS` in the **original live V3 issue**. Save/re-fetch, validate the actual hook contract, resolve contradictions, preserve closed receipts, and release the task as soon as safety/preflight and live branch/issue readiness pass. **Do not create, await or mark Codex BLOCKED on a standalone milestone-register/roadmap/traceability PR merely to replicate those file paths**. The issue is the machine write scope; the register is an intentionally concise milestone ownership index, not a duplicate scope manifesto.
+
+If the scope expansion actually changes milestone ownership, required deliverable/dependency, approved financial semantics or external prerequisite, follow the controlled planning change and PM decision process. Where a necessary register update can safely proceed in parallel, track it as a **merge/closeout** dependency rather than a Codex *start* dependency. Do not send the PM back through repeated operator `PREFLIGHT_OK` transcription when branch and hash-bound receipts were already verified; use the real UserPromptSubmit/writer hook for continuing ownership. Never bypass a concrete hook rejection or invent lender/source permissions to avoid a blocker.
 
 ### First implementation blocker: reachable-contract closure audit (mandatory)
 
