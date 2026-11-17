@@ -25,7 +25,7 @@ describe("checked S1 debit admission", () => {
     const before = reads;
     const result = check();
     expect(reads - before).toBe(1);
-    expect(result).toEqual({ kind: "qualified", pin: qualifyHouseholdBankRoute(publisherId, "bank-member-route", debit) });
+    expect(result).toMatchObject({ kind: "qualified", pin: qualifyHouseholdBankRoute(publisherId, "bank-member-route", debit) });
   });
 
   it("recognizes a valid credit-only route while the strict API rejects it", () => {

@@ -7,6 +7,8 @@ import type {
   LiquidityShortfall,
 } from "../../funding/index.js";
 import { modeledIncomeFingerprintInput } from "../d2/integration/householdWages/modeledPayroll.js";
+import { fixedLoanDebitDenial } from "../d2/integration/fixedLoanOriginalBridge/bank.js";
+import { withFixedLoanOriginalObservations } from "../d2/integration/fixedLoanOriginalBridge/observation.js";
 import {
   calculationTraceId,
   calculationTraceRef,
@@ -182,6 +184,7 @@ const appendEventPreparationIdentities = (
 };
 
 type InstantExecution = {
+  readonly debitDenials: ReadonlyMap<string, string>;
   readonly state: AuthoritativeState;
   readonly primitiveState: PrimitiveRuntimeStateStore;
   readonly cashPeriods: readonly VerticalSlice2PeriodResult[];
@@ -605,11 +608,13 @@ const runCompiledHouseholdProjectionInternal = (
       ));
       if (scheduled.status === "invalid_model")
         throw new ValidationError(scheduled.diagnostics);
+      const originalObservations = new Map<string, string>();
       const executeAt = (
         at: Instant,
         order: readonly HouseholdWorkDescriptor[],
         opening: AuthoritativeState,
         openingPrimitiveState: PrimitiveRuntimeStateStore,
+        speculativeLoans?: ReadonlySet<string>,
       ): InstantExecution => {
         let nextState = performance.measure("engine.period_fork", () => {
           performance.counters({ referenceInstantForks: 1 });
@@ -629,7 +634,9 @@ const runCompiledHouseholdProjectionInternal = (
           simulationEnd: period.end,
         });
         const requiredStatuses = new Map<string, string>();
+        const debitDenials = new Map<string, string>();
         for (const descriptor of order) {
+          if (debitDenials.size > 0 && [...debitDenials.keys()].some(id => reaches(scheduled.value.dependencies, id, descriptor.id))) continue;
           const occurrence = prepared.cash?.occurrences.find(
             (item) => item.descriptor.id === descriptor.id,
           );
@@ -691,14 +698,17 @@ const runCompiledHouseholdProjectionInternal = (
                 continue;
             }
             performance.counters({ referenceLiabilityExecutions: 1 });
-            const result = executePreparedVerticalSlice4Operation(
-              prepared.liabilities!,
-              liability,
-              nextState,
-              nextPrimitiveState,
-              compiled.liabilityInput!,
-              periodContext,
-            );
+            let result;
+            try {
+              result = withFixedLoanOriginalObservations(originalObservations, () => executePreparedVerticalSlice4Operation(
+                prepared.liabilities!, liability, nextState, nextPrimitiveState, compiled.liabilityInput!, periodContext,
+              ));
+            } catch (error) {
+              const denial = speculativeLoans?.has(descriptor.id) ? fixedLoanDebitDenial(error) : undefined;
+              if (denial === undefined) throw error;
+              debitDenials.set(descriptor.id, denial);
+              continue;
+            }
             nextState = result.state;
             nextPrimitiveState = result.primitiveState;
             if (
@@ -727,7 +737,7 @@ const runCompiledHouseholdProjectionInternal = (
           primitiveState: nextPrimitiveState,
           cashPeriods: Object.freeze(cashResults),
           investmentPeriods: Object.freeze(investmentResults),
-          liabilityPeriods: Object.freeze(liabilityResults),
+          liabilityPeriods: Object.freeze(liabilityResults), debitDenials,
           extraPrincipalTransactions: Object.freeze(extraPrincipalTransactions),
           extraPrincipalTraceRefs: Object.freeze(extraPrincipalTraceRefs),
         });
@@ -822,6 +832,10 @@ const runCompiledHouseholdProjectionInternal = (
               group.some((item) => item.id === edge.after),
           );
           const candidates = performance.measure("engine.schedule_contention", () => linearizations(group, groupEdges));
+          const sourced = new Set(prepared.liabilities?.operations.filter(operation => operation.loan.originalSource !== undefined &&
+            group.some(item => item.id === operation.descriptor.id)).map(operation => operation.descriptor.id));
+          const previewSignature = (preview: InstantExecution) => preview.debitDenials.size === 0 ? outcomeSignature(preview) :
+            canonicalSerialize({ denials: [...preview.debitDenials].sort(), outcome: outcomeSignature(preview) });
           performance.counters({ referenceContentionPreviews: candidates.length });
           const previews = performance.measure("engine.schedule_contention", () => candidates.map((candidate) =>
             executeAt(
@@ -836,11 +850,12 @@ const runCompiledHouseholdProjectionInternal = (
               ],
               candidateState,
               candidatePrimitiveState,
+              sourced,
             ),
           ));
           const signatures = performance.measure("engine.schedule_contention", () => {
             performance.counters({ referenceOutcomeSignatures: previews.length });
-            return new Set(previews.map(outcomeSignature));
+            return new Set(previews.map(previewSignature));
           });
           if (signatures.size > 1) {
             const policy = scheduled.value.policy;
@@ -888,13 +903,14 @@ const runCompiledHouseholdProjectionInternal = (
                 ],
                 candidateState,
                 candidatePrimitiveState,
+                sourced,
               ),
             ));
             if (
               policy === undefined ||
               performance.measure("engine.schedule_contention", () => {
                 performance.counters({ referenceOutcomeSignatures: constrainedPreviews.length });
-                return new Set(constrainedPreviews.map(outcomeSignature)).size > 1;
+                return new Set(constrainedPreviews.map(previewSignature)).size > 1;
               })
             ) {
               const policyText =

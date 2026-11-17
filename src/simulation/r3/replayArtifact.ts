@@ -1,5 +1,5 @@
 import { Currency, DecimalAmount, Money, Percentage, Quantity, Rate, Ratio, RoundingPolicy, Unit, type RateConvention, type RoundingMode } from "../../values/index.js";
-import { exportHouseholdReplayCheckpointRoots, registerHouseholdReplayCheckpoints, registerRestoredReplayAdmission, householdReplayCheckpointSelection, householdReplayTerminalRoot, type HouseholdReplayCheckpoint, type HouseholdForecastSummaryResult, type ExecutableHouseholdProjection } from "../householdExecution.js";
+import { exportHouseholdReplayCheckpointRoots, registerHouseholdReplayCheckpoints, registerRestoredReplayAdmission, householdReplayCheckpointSelection, householdReplayTerminalRoot, runHouseholdForecastSummary, type HouseholdReplayCheckpoint, type HouseholdForecastSummaryResult, type ExecutableHouseholdProjection } from "../householdExecution.js";
 import { assertD2PostedTransactionHistoryPreserved, assertD2SettlementReceiptHistoryPreserved, createAuthoritativeState,
   authoritativeCheckpointDelta, restoreAuthoritativeCheckpointDelta, requalifyD2SettlementReceiptHistory,
   assertSsaMedicarePaymentHistoryPreserved,
@@ -156,6 +156,11 @@ const assertSourceFrontier = (records: AuthoritativeCheckpointDelta["records"], 
       .map(([, row]) => row) as NonNullable<AuthoritativeState[K]>[keyof NonNullable<AuthoritativeState[K]>][];
   for (const proof of rows("d2PostedTransactions")) {
     if (proof.transaction.date >= end) mismatch();
+    if (proof.registration.kind === "fixed_loan_original") {
+      const event = proof.registration.evidence.context;
+      if (event.runId !== context.runId || event.scenarioId !== context.scenarioId || event.asOf !== context.asOf ||
+          event.dataCutoff !== context.dataCutoff || event.eventAt < context.simulationStart) mismatch();
+    }
     if (proof.registration.kind === "household_domain") {
       const event = proof.registration.evidence.context;
       if (event.runId !== context.runId || event.asOf !== context.asOf || event.dataCutoff !== context.dataCutoff ||
@@ -296,6 +301,27 @@ function requalifyReplaySources(forecast: Pick<HouseholdForecastSummaryResult, "
     runContext, checkpoints, { state, at: forecast.periods.at(-1)?.period.end ?? runContext.simulationStart }, kernel.executable.cashFlowInput);
   requalifyD2SettlementReceiptHistory(state, runContext);
   requalifyRetirementDistributionHistory(state, runContext);
+  if (kernel.executable.liabilityInput?.loans.some(loan => loan.originalSource !== undefined)) {
+    // Reconstruct expected source-mode work from the configured loan schedules
+    // and the independent publishers. Archive rows do not enumerate that work.
+    const expected = runHouseholdForecastSummary({ kernel, runContext });
+    const mismatch = () => { throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: fixed loan committed history differs from independent execution"); };
+    if (expected.periods.length !== forecast.periods.length ||
+        expected.periods.at(-1)?.period.end !== forecast.periods.at(-1)?.period.end) mismatch();
+    const expectedAt = new Map(exportHouseholdReplayCheckpointRoots(expected).map(checkpoint => [checkpoint.at, checkpoint]));
+    let archivedBefore = kernel.executable.reconciledOpeningState, expectedBefore = archivedBefore;
+    const compare = (archived: AuthoritativeState, reconstructed: AuthoritativeState) => {
+      if (canonicalSerialize(encodeStateDelta(archived, archivedBefore)) !==
+          canonicalSerialize(encodeStateDelta(reconstructed, expectedBefore))) mismatch();
+      archivedBefore = archived;
+      expectedBefore = reconstructed;
+    };
+    for (const checkpoint of checkpoints) {
+      const reconstructed = expectedAt.get(checkpoint.at) ?? mismatch();
+      compare(checkpoint.state, reconstructed.state);
+    }
+    compare(state, householdReplayTerminalRoot(expected));
+  }
 }
 
 const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObserver, timings: RestoreTimings = {}, sample: () => void = () => {}, independentSource?: unknown): {
@@ -338,6 +364,8 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
   // Decoded objects are immutable; attach only independently recompiled model
   // payroll references to a fresh executable before kernel/checkpoint admission.
   const admittedExecutable = qualifyModelBasis(restored.modeledPayroll, executable, restored.runContext, independentSource);
+  if (supplied.version !== "household-replay/v3" && admittedExecutable.liabilityInput?.loans.some(loan => loan.originalSource !== undefined))
+    throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: fixed loan originals require committed checkpoint and terminal history");
   try { observer?.phase?.("participants_restored"); } catch { /* Observation is optional. */ }
   let sourceHistoryState = admittedExecutable.reconciledOpeningState;
   let checkpoints: readonly HouseholdReplayCheckpoint[] = [];

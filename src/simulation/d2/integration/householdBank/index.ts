@@ -64,8 +64,8 @@ function need(ok: boolean): asserts ok {
 const kinds = ["account", "household", "membership", "permission"] as const;
 
 export type HouseholdBankRouteAdmission =
-  | { readonly kind: "qualified"; readonly pin: HouseholdBankRoutePin }
-  | { readonly kind: "debit_permission_denied"; readonly inventoryDigest: string };
+  | { readonly kind: "qualified"; readonly pin: HouseholdBankRoutePin; readonly inventoryDigest: string }
+  | { readonly kind: "debit_permission_denied"; readonly inventoryDigest: string; readonly accountKind: "checking" | "savings" };
 
 function assertDebitHistoryIdentity(original: HouseholdBankOriginal, context: HouseholdBankEventContext): void {
   switch (original.kind) {
@@ -92,7 +92,14 @@ function readAdmission(publisherId: string, sourceId: string, context: Household
   need(token(publisherId) && token(sourceId) && context.dataCutoff <= context.asOf);
   const provider = providers.get(publisherId);
   need(provider !== undefined);
-  const query = snapshot({ sourceId, context }), fetched = provider.readOriginals(query);
+  const query = snapshot({ sourceId, context });
+  let fetched: HouseholdBankOriginalInventory | undefined;
+  try {
+    fetched = provider.readOriginals(query);
+  } catch (error) {
+    if (!checkedDebit) throw error;
+    need(false);
+  }
   need(fetched !== undefined);
   const h = snapshot(fetched);
   need(h.version === "household-bank-original-inventory/v1" && h.publisherId === publisherId &&
@@ -100,7 +107,8 @@ function readAdmission(publisherId: string, sourceId: string, context: Household
     canonical(h.query) === canonical(query) && Array.isArray(h.originals) && h.originals.length <= 1200);
   const admitsAbsence = checkedDebit && h.permissionInventory === "complete_for_exact_query";
   need(h.originals.length >= (admitsAbsence ? 3 : 4));
-  if (checkedDebit) need(h.originals.every(o => o.status === "active" || o.status === "revoked"));
+  if (checkedDebit) need(h.originals.every(o => (o.status === "active" || o.status === "revoked") &&
+    (o.effectiveFrom > context.eventAt || o.publishedAt <= context.asOf && o.knownAt <= context.dataCutoff)));
   const selected: HouseholdBankOriginal[] = [];
   for (const kind of kinds) {
     const revisions = h.originals.filter(o => o.kind === kind);
@@ -133,19 +141,14 @@ function readAdmission(publisherId: string, sourceId: string, context: Household
   need(member.kind === "membership" && member.householdId === context.householdId && member.personId === context.personId);
   if (permission !== undefined) need(permission.kind === "permission" && permission.householdId === context.householdId &&
     permission.personId === context.personId && permission.bankAccountId === context.bankAccountId);
-  if (checkedDebit && (permission === undefined || permission.kind === "permission" && permission.direction === "credit")) {
-    // A later revision applicable to this event but unavailable at the cutoff
-    // cannot establish the negative permission finding used by a preview.
-    need(h.originals.every(o => o.effectiveFrom > context.eventAt ||
-      (o.publishedAt <= context.asOf && o.knownAt <= context.dataCutoff)));
-    const originals = h.originals.map(canonical).sort();
-    return Object.freeze({ kind: "debit_permission_denied", inventoryDigest: `sha256:${sha256(canonical({ ...h, originals }))}` });
-  }
+  const inventoryDigest = checkedDebit ? `sha256:${sha256(canonical({ ...h, originals: h.originals.map(canonical).sort() }))}` : "";
+  if (checkedDebit && (permission === undefined || permission.kind === "permission" && permission.direction === "credit"))
+    return Object.freeze({ kind: "debit_permission_denied", inventoryDigest, accountKind: account.accountKind });
   need(permission?.kind === "permission" && permission.direction === context.direction);
   const pin: HouseholdBankRoutePin = Object.freeze({ version: "household-bank-route/v1", accountKind: account.accountKind, publisherId, sourceId, revisionId: permission.revisionId,
     digest: `sha256:${sha256(canonical(selected))}`,
     ...(account.owner.kind === "person" ? { personOwnerId: context.personId } : {}) });
-  return Object.freeze({ kind: "qualified", pin });
+  return Object.freeze({ kind: "qualified", pin, inventoryDigest });
 }
 
 function read(publisherId: string, sourceId: string, context: HouseholdBankEventContext): HouseholdBankRoutePin {

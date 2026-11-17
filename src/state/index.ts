@@ -15,7 +15,7 @@ import { prepareSsaMedicareDeductionProposals, prepareSourcedSsaWithoutMedicare,
 import type { ClaimId, RecognitionId, SettlementId } from "../semantics/identity.js";
 import type { CalculationTraceId } from "../lineage/index.js";
 import { createRecognitionFact as createRecognitionFactWithHistory, type RecognitionFactDraft, type RecognitionFact } from "../semantics/recognition.js";
-import { Money, Quantity, decimal, type Currency, type Rate } from "../values/index.js";
+import { Money, Quantity, USD, decimal, type Currency, type Rate } from "../values/index.js";
 import { instant, type Instant } from "../time/index.js";
 import { sha256 } from "../rules/tax/t1b/contentIdentity.js";
 
@@ -156,6 +156,7 @@ export type D2PostingRegistration = D2PostingRegistrationBase & (
   | { readonly kind: "heloc_phase_service"; readonly service: D2HelocSettlementReceipt }
   | { readonly kind: "household_domain"; readonly evidence: HouseholdDomainPostingEvidence }
   | { readonly kind: "ssa_medicare_payment"; readonly paymentKey: string }
+  | { readonly kind: "fixed_loan_original"; readonly evidence: FixedLoanPostingEvidence }
   | { readonly kind: "payroll_health_deduction"; readonly deduction: PayrollHealthDeductionEvidence });
 
 /** Opt-in source/state seam. Composition registers publishers; generic state
@@ -178,6 +179,43 @@ export interface HouseholdBankRoutePin {
   readonly digest: string;
   /** Present only on original-backed wage credits to the recipient's BANK. */
   readonly personOwnerId?: DomainId<"person">;
+}
+
+export interface FixedLoanPostingEvidence {
+  readonly version: "fixed-loan-posting/v1";
+  readonly context: HouseholdBankEventContext & { readonly scenarioId: string; readonly direction: "debit" };
+  readonly period: { readonly start: Instant; readonly end: Instant };
+  readonly loanId: string;
+  readonly occurrenceId: GeneratedOccurrenceKey;
+  readonly family: "mortgage" | "auto" | "student";
+  readonly legalOwnerId: DomainId<"household"> | DomainId<"person">;
+  readonly liabilityId: LiabilityId;
+  readonly claimId: ClaimId;
+  readonly recognitionId: RecognitionId;
+  readonly amount: Money;
+  readonly authorizedTotal: Money;
+  readonly original: {
+    readonly version: "fixed-loan-original-reference/v1";
+    readonly publisherId: string;
+    readonly lenderId: string;
+    readonly lenderAccountId: string;
+    readonly contractSourceId: string;
+  };
+  readonly contractRevisionId: string;
+  readonly paymentSourceId: string;
+  readonly paymentRevisionId: string;
+  readonly inventoryDigest: string;
+  readonly classification:
+    | { readonly kind: "interest_recognition" }
+    | { readonly kind: "interest_settlement" | "principal_settlement" | "extra_principal";
+        readonly settlementId: SettlementId; readonly route: HouseholdBankRoutePin; readonly bankInventoryDigest: string };
+}
+
+let fixedLoanPostingAuthority: ((evidence: FixedLoanPostingEvidence, transaction: AccountingTransaction) => boolean) | undefined;
+
+export function registerFixedLoanPostingAuthority(authority: NonNullable<typeof fixedLoanPostingAuthority>): void {
+  if (fixedLoanPostingAuthority !== undefined) throw new Error("FIXED_LOAN_POSTING_AUTHORITY_DUPLICATE");
+  fixedLoanPostingAuthority = authority;
 }
 export type HouseholdEconomicFamily = "wage" | "payroll_health" | "ssa" | "pension" | "retirement"
   | "fsa" | "card" | "heloc" | "medicare" | "health_premium" | "education" | "fixed_income";
@@ -1815,6 +1853,7 @@ interface D2PostingHistory {
   /** References into the same archive; legacy families need no additional scan. */
   readonly sourceProofs: PersistentStringIndex<D2PostedTransactionProof>;
   readonly s4Proofs: PersistentStringIndex<D2PostedTransactionProof>;
+  readonly fixedLoanTotals: PersistentStringIndex<{ readonly amount: Money; readonly inventoryDigest: string }>;
   readonly identities: AuthoritativeIdentityRegistry;
 }
 const d2PostingHistories = new WeakMap<AuthoritativeState, D2PostingHistory>();
@@ -2105,11 +2144,83 @@ export const d2PostedTransactionArchiveDelta = (state: AuthoritativeState, befor
     set: Object.fromEntries(changes.flatMap(c => c.after === undefined ? [] : [[c.key, c.after]])),
     remove: changes.flatMap(c => c.after === undefined ? [c.key] : []) };
 };
+const approvedFixedLoanRegistrations = new WeakSet<D2PostingRegistration>();
+
+function qualifyFixedLoanPosting(tx: AccountingTransaction, e: FixedLoanPostingEvidence): void {
+  if (!fixedLoanPostingAuthority?.(e, tx)) d2Invalid("Fixed loan lender or BANK original unavailable or changed");
+}
+
+function validateFixedLoanPosting(state: AuthoritativeState, tx: AccountingTransaction, r: Extract<D2PostingRegistration, { kind: "fixed_loan_original" }>): void {
+  const e = r.evidence, c = e.context, k = e.classification;
+  const prefix = e.family === "mortgage" ? "mortgage" : `${e.family}_loan`;
+  if (e.version !== "fixed-loan-posting/v1" || !["mortgage", "auto", "student"].includes(e.family) ||
+      r.nativeHousehold !== undefined || r.operationId !== c.eventId || r.householdId !== c.householdId ||
+      r.personId !== c.personId || r.bankAccountId !== c.bankAccountId || c.direction !== "debit" || tx.date !== c.eventAt ||
+      !state.identities.generatedOccurrenceKeys.includes(e.occurrenceId) ||
+      (k.kind !== "extra_principal" && c.eventId !== `liability-required:${e.loanId}:${e.occurrenceId}`) ||
+      c.eventAt < e.period.start || c.eventAt >= e.period.end || c.dataCutoff > c.asOf ||
+      !e.amount.currency.equals(USD) || !e.amount.amount.fitsScale(USD.minorUnitScale) || !e.amount.isPositive() ||
+      !e.authorizedTotal.currency.equals(USD) || e.amount.compare(e.authorizedTotal) > 0)
+    d2Invalid("Fixed loan posting does not match its run, owner or exact USD amount");
+  const claim = state.obligations[e.claimId];
+  const interest = k.kind === "interest_recognition" || k.kind === "interest_settlement";
+  const category = interest ? `${prefix}_interest_payable` : k.kind === "extra_principal" ? `${prefix}_extra_principal_option` : `${prefix}_principal_due`;
+  if (!claim || claim.balanceEntityId !== e.liabilityId || claim.economicOwnerId !== e.legalOwnerId ||
+      claim.originatingRecognitionId !== e.recognitionId || claim.category !== category ||
+      !state.identities.recognitionIds.includes(e.recognitionId) || !state.liabilities[e.liabilityId]?.balance.currency.equals(USD))
+    return d2Invalid("Fixed loan posting claim or recognition differs from canonical state");
+  const amount = e.amount;
+  const liability = createAccountingLeg({ type: "liability", entityId: e.liabilityId,
+    posting: k.kind === "interest_recognition" ? "credit" : "debit", amount });
+  let expected: AccountingTransaction["legs"];
+  let suffix: string;
+  if (k.kind === "interest_recognition") {
+    if (r.role !== "original" || claim.recognizedAt !== c.eventAt || !claim.originalAmount.equals(amount) ||
+        tx.id !== `tx:recognition:${prefix}-interest:${e.loanId}:${c.eventAt}` ||
+        claim.id !== `obligation:${prefix}-interest:${e.loanId}:${c.eventAt}` ||
+        e.recognitionId !== `recognition:${prefix}-interest:${e.loanId}:${c.eventAt}`)
+      return d2Invalid("Fixed loan interest recognition amount or date differs");
+    expected = [createAccountingLeg({ type: "expense", posting: "debit", amount }), liability];
+    suffix = "interest_recognition";
+  } else {
+    const bank = state.accounts[c.bankAccountId];
+    if (r.role !== "settlement" || bank?.id !== c.bankAccountId || bank.ownerId !== c.householdId ||
+        bank.kind !== k.route.accountKind || k.route.personOwnerId !== undefined || !bank.cash.currency.equals(USD) ||
+        k.settlementId !== `settlement:${claim.id}:${c.eventAt}` ||
+        !claim.settlementIds.includes(k.settlementId) || !state.identities.settlementIds.includes(k.settlementId) ||
+        (k.kind !== "extra_principal" && tx.id !== `tx:settlement:${prefix}-${interest ? "interest" : "principal"}:${claim.id}:${c.eventAt}`) ||
+        amount.compare(claim.originalAmount.minus(claim.outstandingAmount)) > 0)
+      return d2Invalid("Fixed loan settlement does not match the actual claim or household BANK");
+    expected = [liability, createAccountingLeg({ type: "cash", posting: "credit", accountId: c.bankAccountId,
+      cashFlowClass: interest ? "operating" : "financing", amount })];
+    suffix = k.kind === "principal_settlement" ? "principal_payment" : k.kind;
+  }
+  if (tx.type !== `${prefix}_${suffix}` || paymentValue(tx.legs.map(({ traceRefs: _trace, ...leg }) => leg)) !== paymentValue(expected))
+    d2Invalid("Fixed loan journal differs from the registered economic shape");
+  qualifyFixedLoanPosting(tx, e);
+}
+
+export function applyFixedLoanOriginalPosting(state: AuthoritativeState, tx: AccountingTransaction, evidence: FixedLoanPostingEvidence): void {
+  const c = evidence.context;
+  const r: D2PostingRegistration = { kind: "fixed_loan_original", evidence, operationId: c.eventId,
+    householdId: c.householdId, personId: c.personId, bankAccountId: c.bankAccountId,
+    role: evidence.classification.kind === "interest_recognition" ? "original" : "settlement" };
+  validateFixedLoanPosting(state, tx, r);
+  if (r.role === "settlement" && state.accounts[c.bankAccountId]!.cash.compare(evidence.amount) < 0)
+    d2Invalid("Fixed loan settlement BANK has insufficient funds");
+  approvedFixedLoanRegistrations.add(r);
+  applyAccountingTransactionAtomically(state, tx, r);
+}
+
 const validateD2Posting = (state: AuthoritativeState, key: string, proof: D2PostedTransactionProof): void => {
   const { registration: r, transaction: tx } = proof;
   if (proof.schemaVersion !== "d2-shared/posted-transaction/v1" || proof.writer !== "applyAccountingTransactionAtomically/v1" ||
       key !== tx.id || !["original", "settlement"].includes(r.role) ||
-      !["fsa_paid_reimbursement", "card_interest_payment", "retirement_cash_distribution", "heloc_phase_service", "payroll_health_deduction", "household_domain", "ssa_medicare_payment"].includes(r.kind)) d2Invalid("Invalid posting proof schema, writer or identity");
+      !["fsa_paid_reimbursement", "card_interest_payment", "retirement_cash_distribution", "heloc_phase_service", "payroll_health_deduction", "household_domain", "ssa_medicare_payment", "fixed_loan_original"].includes(r.kind)) d2Invalid("Invalid posting proof schema, writer or identity");
+  if (r.kind === "fixed_loan_original") {
+    assertBalanced(tx);
+    return validateFixedLoanPosting(state, tx, r);
+  }
   const strings = [r.operationId, r.householdId, r.personId, r.bankAccountId, tx.id, tx.type,
     ...(r.kind === "fsa_paid_reimbursement" ? [r.planId, r.planYearId, r.memberId, r.payeeId, r.medicalReceiptId, r.expensePaymentId]
       : r.kind === "card_interest_payment" ? [r.issuerId, r.statementId, r.chargeId, r.liabilityId]
@@ -2198,6 +2309,7 @@ export const validateD2PostedTransactions = (state: AuthoritativeState): void =>
   const sources = previous?.sources.fork() ?? new PersistentStringIndex<D2PostingRegistration>();
   const sourceProofs = previous?.sourceProofs.fork() ?? new PersistentStringIndex<D2PostedTransactionProof>();
   const s4Proofs = previous?.s4Proofs.fork() ?? new PersistentStringIndex<D2PostedTransactionProof>();
+  const fixedLoanTotals = previous?.fixedLoanTotals.fork() ?? new PersistentStringIndex<{ readonly amount: Money; readonly inventoryDigest: string }>();
   const priorIds = previous === undefined ? undefined : identityIndexes.get(previous.identities), nextIds = identityIndexes.get(state.identities);
   const checkIds = (proof: D2PostedTransactionProof): void => {
     if (!state.identities.postedTransactionIds.includes(proof.transaction.id) ||
@@ -2227,11 +2339,30 @@ export const validateD2PostedTransactions = (state: AuthoritativeState): void =>
           d2Invalid("Native retirement source unavailable on cold import");
       }
     }
-    if (proof.registration.nativeHousehold || proof.registration.kind === "heloc_phase_service" || proof.registration.kind === "payroll_health_deduction" || proof.registration.kind === "household_domain")
+    if (proof.registration.nativeHousehold || proof.registration.kind === "heloc_phase_service" || proof.registration.kind === "payroll_health_deduction" || proof.registration.kind === "household_domain" || proof.registration.kind === "fixed_loan_original")
       sourceProofs.set(proof.transaction.id, proof);
     if (isS4Posting(proof)) s4Proofs.set(proof.transaction.id, proof);
     inventory.set(d2PostingKey(proof), proof.transaction.id);
-    const r = proof.registration, bankKey = `bank:${r.bankAccountId}`, priorBank = bindings.get(bankKey);
+    const r = proof.registration;
+    if (r.kind === "fixed_loan_original") {
+      const e = r.evidence, k = e.classification;
+      const postingKey = JSON.stringify([r.kind, e.context.runId, e.context.scenarioId, e.loanId, e.context.eventAt,
+        k.kind === "interest_recognition" ? e.recognitionId : k.settlementId]);
+      if (sources.has(postingKey)) d2Invalid("Fixed loan recognition or settlement proof reused");
+      sources.set(postingKey, r);
+      const occurrence = JSON.stringify([e.original.publisherId, e.original.contractSourceId, e.context.eventAt]);
+      const earlier = fixedLoanTotals.get(occurrence);
+      if (earlier && earlier.inventoryDigest !== e.inventoryDigest) d2Invalid("Fixed loan original changed across postings in the same occurrence");
+      if (!earlier) fixedLoanTotals.set(occurrence, { amount: Money.zero(USD), inventoryDigest: e.inventoryDigest });
+      const amountKey = `${occurrence}:${k.kind}`;
+      const prior = fixedLoanTotals.get(amountKey);
+      const amount = prior ? prior.amount.plus(e.amount) : e.amount;
+      if (prior && prior.inventoryDigest !== e.inventoryDigest || amount.compare(e.authorizedTotal) > 0)
+        d2Invalid("Fixed loan occurrence reused or exceeds its authorized journal amount");
+      fixedLoanTotals.set(amountKey, { amount, inventoryDigest: e.inventoryDigest });
+      continue;
+    }
+    const bankKey = `bank:${r.bankAccountId}`, priorBank = bindings.get(bankKey);
     const sourceKeys = r.kind === "fsa_paid_reimbursement"
       ? [JSON.stringify([r.kind, "medical", r.medicalReceiptId]), JSON.stringify([r.kind, "expense", r.expensePaymentId])]
       : r.kind === "card_interest_payment" ? [JSON.stringify([r.kind, r.issuerId, r.chargeId])]
@@ -2313,7 +2444,7 @@ export const validateD2PostedTransactions = (state: AuthoritativeState): void =>
         (r.kind === "card_interest_payment" && !state.liabilities[r.liabilityId] || r.kind === "heloc_phase_service" && !state.liabilities[r.service.liabilityId]))
       d2Invalid("Archived resource removed");
   }
-  d2PostingHistories.set(state, { index, inventory, bindings, sources, sourceProofs, s4Proofs, identities: indexedIdentityRegistry(state.identities) });
+  d2PostingHistories.set(state, { index, inventory, bindings, sources, sourceProofs, s4Proofs, fixedLoanTotals, identities: indexedIdentityRegistry(state.identities) });
 };
 const d2ReceiptWrite = (_key: string, previous: D2SettlementReceipt | undefined, next: D2SettlementReceipt | undefined): void => {
   if (previous !== undefined && (next === undefined || paymentValue(previous) !== paymentValue(next)))
@@ -2634,6 +2765,13 @@ export const requalifyD2SettlementReceiptHistory = (state: AuthoritativeState, c
   validateD2PostedTransactions(state);
   validateD2SettlementReceipts(state);
   for (const [, proof] of d2PostingHistories.get(state)!.sourceProofs.entries()) {
+    if (proof.registration.kind === "fixed_loan_original") {
+      const e = proof.registration.evidence;
+      if (e.context.asOf !== context.asOf || e.context.dataCutoff !== context.dataCutoff)
+        d2Invalid("Fixed loan replay source observation differs from the committed run");
+      qualifyFixedLoanPosting(proof.transaction, e);
+      continue;
+    }
     if (isS4Posting(proof)) {
       requalifyS4Posting(proof, context);
       continue;
@@ -2993,6 +3131,8 @@ export const applyAccountingTransactionAtomically = (
     d2Invalid("Payroll health posting requires independently qualified original wage authority");
   if (proofRegistration?.kind === "heloc_phase_service" && !approvedHelocRegistrations.delete(proofRegistration))
     d2Invalid("HELOC posting requires independently qualified source and actual BANK evidence");
+  if (proofRegistration?.kind === "fixed_loan_original" && !approvedFixedLoanRegistrations.delete(proofRegistration))
+    d2Invalid("Fixed loan posting requires independently qualified original evidence");
   assertBalanced(transaction);
   const candidate = cloneAuthoritativeState(state);
   registerAuthoritativeIdentity(candidate.identities, "postedTransactionIds", transaction.id);
