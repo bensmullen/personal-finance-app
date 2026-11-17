@@ -72,6 +72,9 @@ describe("issue-backed roadmap traceability", () => {
     expect(fixedLoanPrerequisite.blocking_gate).toBe("D2");
     expect(fixedLoanPrerequisite.depends_on).toEqual([276, 285, 286]);
     expect(registry.issues.find(row => row.issue_number === 331)?.depends_on).toContain(340);
+    for (const schedulerPath of ["src/simulation/householdExecution.ts", "src/simulation/r3/referenceHouseholdExecution.ts"]) {
+      expect(fixedLoanPrerequisite.scope).toContain(schedulerPath);
+    }
     for (const id of [146, 147, 148]) expect(registry.issues.find(row => row.issue_number === id)?.depends_on).not.toContain(120);
     expect(registry.issues.find(row => row.issue_number === 149)?.depends_on).toContain(120);
     for (const row of registry.issues) {
