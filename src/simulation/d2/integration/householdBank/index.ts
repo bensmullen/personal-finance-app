@@ -34,9 +34,10 @@ export interface HouseholdBankOriginalInventory {
   readonly checkedAt: Instant;
   readonly completeThrough: Instant;
   readonly completeness: "complete";
-  /** Complete revision history for exactly the requested four facts, including
-   * revocations. Publisher retains the source documents and wider inventory. */
+  /** Complete revision history for the requested facts, including revocations.
+   * Complete permission absence requires the explicit scoped attestation below. */
   readonly originals: readonly HouseholdBankOriginal[];
+  readonly permissionInventory?: "complete_for_exact_query";
 }
 export interface HouseholdBankOriginalProvider {
   readonly publisherId: string;
@@ -62,7 +63,31 @@ function need(ok: boolean): asserts ok {
 }
 const kinds = ["account", "household", "membership", "permission"] as const;
 
-function read(publisherId: string, sourceId: string, context: HouseholdBankEventContext): HouseholdBankRoutePin {
+export type HouseholdBankRouteAdmission =
+  | { readonly kind: "qualified"; readonly pin: HouseholdBankRoutePin }
+  | { readonly kind: "debit_permission_denied"; readonly inventoryDigest: string };
+
+function assertDebitHistoryIdentity(original: HouseholdBankOriginal, context: HouseholdBankEventContext): void {
+  switch (original.kind) {
+    case "account":
+      need(original.bankAccountId === context.bankAccountId && original.owner.kind === "household" &&
+        original.owner.id === context.householdId && (original.accountKind === "checking" || original.accountKind === "savings"));
+      break;
+    case "household":
+      need(original.householdId === context.householdId);
+      break;
+    case "membership":
+      need(original.householdId === context.householdId && original.personId === context.personId);
+      break;
+    case "permission":
+      need(original.householdId === context.householdId && original.personId === context.personId &&
+        original.bankAccountId === context.bankAccountId && (original.direction === "credit" || original.direction === "debit"));
+      break;
+  }
+}
+
+function readAdmission(publisherId: string, sourceId: string, context: HouseholdBankEventContext,
+  checkedDebit: boolean): HouseholdBankRouteAdmission {
   instant(context.asOf); instant(context.dataCutoff); instant(context.eventAt);
   need(token(publisherId) && token(sourceId) && context.dataCutoff <= context.asOf);
   const provider = providers.get(publisherId);
@@ -72,16 +97,22 @@ function read(publisherId: string, sourceId: string, context: HouseholdBankEvent
   const h = snapshot(fetched);
   need(h.version === "household-bank-original-inventory/v1" && h.publisherId === publisherId &&
     h.completeness === "complete" && h.checkedAt === context.asOf && h.completeThrough === context.dataCutoff &&
-    canonical(h.query) === canonical(query) && h.originals.length >= 4 && h.originals.length <= 1200);
+    canonical(h.query) === canonical(query) && Array.isArray(h.originals) && h.originals.length <= 1200);
+  const admitsAbsence = checkedDebit && h.permissionInventory === "complete_for_exact_query";
+  need(h.originals.length >= (admitsAbsence ? 3 : 4));
+  if (checkedDebit) need(h.originals.every(o => o.status === "active" || o.status === "revoked"));
   const selected: HouseholdBankOriginal[] = [];
   for (const kind of kinds) {
     const revisions = h.originals.filter(o => o.kind === kind);
+    if (kind === "permission" && admitsAbsence && revisions.length === 0) continue;
     need(revisions.length > 0 && new Set(revisions.map(o => o.revisionId)).size === revisions.length &&
       new Set(revisions.map(o => o.sourceId)).size === 1);
     for (const o of revisions) {
       instant(o.publishedAt); instant(o.knownAt); instant(o.effectiveFrom); instant(o.effectiveUntil);
       need(token(o.sourceId) && token(o.revisionId) && o.publishedAt <= o.knownAt && o.effectiveFrom < o.effectiveUntil);
+      if (checkedDebit) assertDebitHistoryIdentity(o, context);
     }
+    if (checkedDebit) need(new Set(revisions.map(o => o.publishedAt)).size === revisions.length);
     // Publication order is source truth; ties are ambiguous, never resolved by
     // iteration, revision-name sort or caller pins. Revisions can revoke or
     // amend retroactively once known at the authentic observation boundary.
@@ -93,18 +124,34 @@ function read(publisherId: string, sourceId: string, context: HouseholdBankEvent
     selected.push(o);
   }
   need(h.originals.every(o => kinds.includes(o.kind)));
-  const account = selected[0]!, household = selected[1]!, member = selected[2]!, permission = selected[3]!;
+  const account = selected[0]!, household = selected[1]!, member = selected[2]!, permission = selected[3];
   need(account.kind === "account" && account.bankAccountId === context.bankAccountId &&
     (account.owner.kind === "household" && account.owner.id === context.householdId ||
       account.owner.kind === "person" && account.owner.id === context.personId && context.direction === "credit") &&
     (account.accountKind === "checking" || account.accountKind === "savings"));
   need(household.kind === "household" && household.householdId === context.householdId);
   need(member.kind === "membership" && member.householdId === context.householdId && member.personId === context.personId);
-  need(permission.kind === "permission" && permission.householdId === context.householdId && permission.personId === context.personId &&
-    permission.bankAccountId === context.bankAccountId && permission.direction === context.direction);
-  return Object.freeze({ version: "household-bank-route/v1", accountKind: account.accountKind, publisherId, sourceId, revisionId: permission.revisionId,
+  if (permission !== undefined) need(permission.kind === "permission" && permission.householdId === context.householdId &&
+    permission.personId === context.personId && permission.bankAccountId === context.bankAccountId);
+  if (checkedDebit && (permission === undefined || permission.kind === "permission" && permission.direction === "credit")) {
+    // A later revision applicable to this event but unavailable at the cutoff
+    // cannot establish the negative permission finding used by a preview.
+    need(h.originals.every(o => o.effectiveFrom > context.eventAt ||
+      (o.publishedAt <= context.asOf && o.knownAt <= context.dataCutoff)));
+    const originals = h.originals.map(canonical).sort();
+    return Object.freeze({ kind: "debit_permission_denied", inventoryDigest: `sha256:${sha256(canonical({ ...h, originals }))}` });
+  }
+  need(permission?.kind === "permission" && permission.direction === context.direction);
+  const pin: HouseholdBankRoutePin = Object.freeze({ version: "household-bank-route/v1", accountKind: account.accountKind, publisherId, sourceId, revisionId: permission.revisionId,
     digest: `sha256:${sha256(canonical(selected))}`,
     ...(account.owner.kind === "person" ? { personOwnerId: context.personId } : {}) });
+  return Object.freeze({ kind: "qualified", pin });
+}
+
+function read(publisherId: string, sourceId: string, context: HouseholdBankEventContext): HouseholdBankRoutePin {
+  const admission = readAdmission(publisherId, sourceId, context, false);
+  need(admission.kind === "qualified");
+  return admission.pin;
 }
 
 /** Composition root registers independently controlled original publishers.
@@ -121,3 +168,10 @@ export function registerHouseholdBankOriginalProvider(provider: HouseholdBankOri
  * State re-reads this independently around the actual canonical commit. */
 export const qualifyHouseholdBankRoute = (publisherId: string, sourceId: string,
   context: HouseholdBankEventContext): HouseholdBankRoutePin => read(publisherId, sourceId, context);
+
+/** Invalid or indeterminate originals throw. A denial carries no posting pin. */
+export function checkHouseholdBankDebitAdmission(publisherId: string, sourceId: string,
+  context: HouseholdBankEventContext & { readonly direction: "debit" }): HouseholdBankRouteAdmission {
+  need(context.direction === "debit");
+  return readAdmission(publisherId, sourceId, context, true);
+}
