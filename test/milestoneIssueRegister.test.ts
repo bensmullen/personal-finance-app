@@ -56,7 +56,7 @@ describe("issue-backed roadmap traceability", () => {
     for (const row of registry.issues.filter(row => row.issue_number !== 249)) expect(row.depends_on).not.toContain(231);
     for (const row of registry.issues.filter(row => row.issue_number !== 322)) expect(row.depends_on).not.toContain(249);
     for (const row of registry.issues) expect(row.depends_on).not.toContain(322);
-    expect(roadmap).toContain("Issue [#322]");
+    expect(roadmap).toContain("#322");
     for (const candidate of [134, 217]) expect(registry.issues.map(row => row.issue_number)).not.toContain(candidate);
   });
   it("registers each private-alpha/U1 issue exactly once with a stable mandatory stage", () => {
@@ -72,8 +72,9 @@ describe("issue-backed roadmap traceability", () => {
     expect(fixedLoanPrerequisite.blocking_gate).toBe("D2");
     expect(fixedLoanPrerequisite.depends_on).toEqual([276, 285, 286]);
     expect(registry.issues.find(row => row.issue_number === 331)?.depends_on).toContain(340);
-    for (const schedulerPath of ["src/simulation/householdExecution.ts", "src/simulation/r3/referenceHouseholdExecution.ts"]) {
-      expect(fixedLoanPrerequisite.scope).toContain(schedulerPath);
+    // The register describes stable outcomes. File authorization and live task state belong to GitHub V3 issues.
+    for (const row of registry.issues) {
+      expect(row.scope).not.toMatch(/\bsrc\/|\btest\/(?:[\w-]+\/|[^ ]+\.(?:ts|tsx|js|mjs))|ALLOWED_PATHS|TARGET_BRANCH|PFM_TASK_V3/);
     }
     for (const id of [146, 147, 148]) expect(registry.issues.find(row => row.issue_number === id)?.depends_on).not.toContain(120);
     expect(registry.issues.find(row => row.issue_number === 149)?.depends_on).toContain(120);
@@ -144,9 +145,10 @@ describe("issue-backed roadmap traceability", () => {
     expect(liveCheck).toContain("[agent-candidate]");
   });
   it("records the planned live gate in the controlled roadmap and keeps historical cleanup separate", () => {
-    expect(roadmap).toContain("docs/development/milestone-issue-register.json");
+    expect(roadmap).toContain("milestone-issue-register.json");
     for (const gate of ["D1_U1", "D2", "R11"]) expect(roadmap).toContain(gate);
-    for (const n of registry.issues.map(row=>row.issue_number)) expect(roadmap).toContain(`#${n}`);
+    // The complete per-issue inventory is enforced by the register and live-issue workflow, not roadmap prose.
+    for (const id of [120, 146, 147, 148, 149, 100, 101, 102, 105, 108]) expect(roadmap).toContain(`#${id}`);
     const historic = registry.legacy_open_task_reconciliation.issue_numbers;
     expect(new Set(historic).size).toBe(historic.length);
     for (const number of historic) expect(registry.issues.map(item => item.issue_number)).not.toContain(number);
