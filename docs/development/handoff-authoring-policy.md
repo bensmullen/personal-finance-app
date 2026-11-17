@@ -18,6 +18,43 @@ particular heading, marker, evidence phrase, or profile field is missing.
 This is deliberate. Hooks protect unsafe actions and edit scope; ChatGPT
 planning plus CI/audit protect semantic completeness.
 
+### Change-control boundary: task, delivery graph, product authority
+
+Before updating multiple artifacts, classify the **actual change**, not the
+number of files needed to implement it. Consult
+`docs/development/milestone-issue-policy.md`.
+
+1. **Level 1 — original issue only:** Additional implementation/test write
+   paths, a correction of reachable callers, and sharper negative acceptance
+   tests for an **already approved** objective, without changing financial
+   semantics, original-source authority, shared interfaces, stage/owner/gate,
+   dependencies or controlled requirement allocation. Update the SAME live V3
+   issue between turns, preserve scope provenance, re-fetch and parser-check its
+   exact `ALLOWED_PATHS`, and verify real branch/receipt readiness. Do **not**
+   require a scope-only register, roadmap or milestone-test PR, create a new
+   implementation issue, or add a second PM decision gate.
+2. **Level 2 — milestone register:** A new non-learning issue, mandatory
+   dependency/owner/gate change, consolidation or controlled requirement
+   allocation must be reconciled in the register. Update the roadmap too **if
+   and only if** delivery sequencing, stage commitments or release gates change.
+   Review registration/CI and merge any required planning PR before dispatch.
+3. **Level 3 — controlled product/architecture:** New or changed economic
+   meaning, source/provenance/permission authority, tax/legal behavior,
+   cross-domain interface commitments, supported behavior or release/UAT
+   acceptance requires a PM-owned decision and appropriate canonical specs,
+   ADR or roadmap update. Update the register only for a changed delivery
+   graph. Do not silently widen the product through a purported file repair.
+
+The register's `scope` is a **concise stable outcome**, not the V3 path
+inventory, detailed failure ledger or current branch/CI status. Keep historical
+blocker/caller evidence in the original task issue and PR comments; keep the
+roadmap focused on milestones, capability/dependency decisions and final
+acceptance. Static register tests should check issue identity, dependencies,
+gates and requirement linkage, **not** individual TypeScript filenames.
+This reduces serial governance loops for later goal-oriented coordination
+without weakening exact-head CI, source-to-posting/replay review, the native
+`ALLOWED_PATHS` hook, one-writer receipts or PM merge authority.
+
 ## 2. Required V3 authorization
 
 Every mutation-capable handoff starts with:
@@ -822,6 +859,10 @@ The current checkpoint SHALL distinguish:
 When the audit identifies changes within the original coherent task, amend the
 **same open issue** to make the next Codex implementation contract self-contained,
 including any approved V3 authorization updates and actionable repair criteria.
+For a justified task-local addition that leaves the Level 2/3 authorities
+unchanged, **do not open a scope-only governance PR or edit the milestone
+register/roadmap/test**. If delivery dependencies, gate/owner or controlled
+product requirements actually change, follow the Level 2/3 rule above.
 Do not create a duplicate patch issue. Open a separate issue only for genuinely
 independent work with distinct ownership or timing, and maintain roadmap and
 issue-register traceability. Product/repair tasks must still not authorize
