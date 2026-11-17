@@ -278,11 +278,11 @@ export const createZeroMedicareCoverageEvidence = (premium: MedicarePremiumEvide
  * separately approved clearing contract and are unsupported here. Recognition
  * identities below are evidence references, never instructions to post again.
  */
-export const prepareSsaMedicareDeductionProposals = (
+const prepareSsaMedicareBatch = (
   payable: SsaPayableEvidence,
   right: ObligationOrRight,
   requests: readonly SsaDeductionRequest[],
-  existingSettlementIds: Iterable<string> = [],
+  existingSettlementIds: Iterable<string>,
 ): SsaMedicareDeductionProposals => {
   assertClaimInvariant(right);
   const paymentDate = civilDate(payable.paymentAt.slice(0, 10));
@@ -328,7 +328,6 @@ export const prepareSsaMedicareDeductionProposals = (
   };
   const key = (r: SsaDeductionRequest): string => JSON.stringify([r.terms.premium.part, r.terms.obligationId]);
   const ordered = [...requests].sort((a, b) => key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0);
-  requireDeduction(ordered.length > 0, "Positive Medicare deduction requests required");
   const prepared = ordered.map(({ draft, claim, terms: t }) => {
     assertClaimInvariant(claim);
     validatePremium(t.premium, payable.paymentAt);
@@ -364,4 +363,21 @@ export const prepareSsaMedicareDeductionProposals = (
   return Object.freeze({ kind: "conditional_ssa_medicare_deduction" as const, committed: false as const,
     payable: immutableDeduction(payable), proposals: Object.freeze(prepared), deductionAmount: deductionTotal,
     conditionalNetPayable: payable.grossPayable.minus(deductionTotal) });
+};
+
+/** Arithmetic for source owners that have independently established the
+ * absence of Medicare deductions. This does not authorize state mutation. */
+export const prepareSourcedSsaWithoutMedicare = (
+  payable: SsaPayableEvidence, right: ObligationOrRight,
+): SsaMedicareDeductionProposals => prepareSsaMedicareBatch(payable, right, [], []);
+
+export const prepareSsaMedicareDeductionProposals = (
+  payable: SsaPayableEvidence,
+  right: ObligationOrRight,
+  requests: readonly SsaDeductionRequest[],
+  existingSettlementIds: Iterable<string> = [],
+): SsaMedicareDeductionProposals => {
+  const result = prepareSsaMedicareBatch(payable, right, requests, existingSettlementIds);
+  requireDeduction(result.proposals.length > 0, "Positive Medicare deduction requests required");
+  return result;
 };

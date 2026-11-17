@@ -1,16 +1,16 @@
 import { ValidationError } from "../../../../diagnostics/index.js";
 import { civilDate, instant, type Instant } from "../../../../time/index.js";
 import { immutableConfiguration } from "../../../r3/compiledHousehold.js";
-import { canonicalSerialize } from "../../../run.js";
+import { canonicalSerialize, type RunContext } from "../../../run.js";
 import { bindSsaOriginals, type SsaOriginalPin, type SsaOriginalProvider } from "../../retirement/benefits/ssaOriginalBinding/index.js";
 import { irmaaOriginalDigest, proposeOriginalIrmaa, type IrmaaOriginals, type Original,
   type OriginalQuery, type SourcedIrmaaCandidate } from "../../health/medicare/originalBinding/index.js";
-import type { ConfirmedSsaMedicarePayment } from "./index.js";
+import type { SsaMedicarePaymentFacts } from "./index.js";
 import type { composeMedicareObligations } from "../../health/medicare/coordination/index.js";
 
 /** Change commitments only. Authentication belongs to registered source owners. */
 export interface SsaMedicareOriginalSources {
-  readonly mode: "ssa-medicare-originals/v1";
+  readonly mode: "ssa-medicare-originals/v1" | "ssa-medicare-originals/v2";
   readonly dataCutoff: Instant;
   readonly ssa: SsaOriginalPin;
   readonly irmaa: readonly { readonly query: OriginalQuery; readonly candidateDigest: string }[];
@@ -36,17 +36,19 @@ function need(ok: boolean): asserts ok {
 }
 /** Freeze every independent read, then re-read after BOTH source and financial
  * computations. Never cache source admission across events or replay imports. */
-export function reviewSsaMedicareOriginals(q: ConfirmedSsaMedicarePayment, cutoff?: string): {
+export function reviewSsaMedicareOriginals(q: SsaMedicarePaymentFacts, cutoff?: string,
+  observation?: Pick<RunContext, "asOf" | "dataCutoff">): {
   readonly composition: (value: ReturnType<typeof composeMedicareObligations>) => void;
   readonly finish: () => void;
 } {
   const pins = q.originalSources;
   if (pins === undefined) return { composition: () => {}, finish: () => {} };
-  need(pins.mode === "ssa-medicare-originals/v1" && adapter !== undefined);
+  const native = pins.mode === "ssa-medicare-originals/v2";
+  need((native || pins.mode === "ssa-medicare-originals/v1") && adapter !== undefined);
   instant(pins.dataCutoff);
   const sources = adapter!;
   need(cutoff === undefined || pins.dataCutoff === cutoff);
-  need(pins.dataCutoff <= q.payable.paymentAt && pins.ssa.dataCutoff === pins.dataCutoff.slice(0, 10));
+  need((native || pins.dataCutoff <= q.payable.paymentAt) && pins.ssa.dataCutoff === pins.dataCutoff.slice(0, 10));
   const reads = new Map<string, { read: () => unknown; digest: string }>();
   const capture = <T>(key: string, read: () => T): T => {
     const value = immutableConfiguration(read()), digest = irmaaOriginalDigest(value);
@@ -57,13 +59,13 @@ export function reviewSsaMedicareOriginals(q: ConfirmedSsaMedicarePayment, cutof
   };
   let recipient: unknown;
   const providers = sources.ssa.map(p => ({ publisherId: p.publisherId, readOriginals: (query: Parameters<SsaOriginalProvider["readOriginals"]>[0]) => {
-    const h = capture(`ssa:${canonicalSerialize(query)}`, () => p.readOriginals(query));
+    const h = capture(`ssa:${native ? p.publisherId : ""}:${canonicalSerialize(query)}`, () => p.readOriginals(query));
     const original = h?.originals.find(o => o.originalId === pins.ssa.originalId);
     if (original) recipient = original.recipient;
     return h;
   } }));
   const month = q.c2.premiums.period;
-  const knownAt = civilDate(q.payable.paymentAt.slice(0, 10));
+  const knownAt = civilDate((native && pins.dataCutoff > q.payable.paymentAt ? pins.dataCutoff : q.payable.paymentAt).slice(0, 10));
   const bound = bindSsaOriginals({ householdId: q.payable.householdId, knownAt,
     dataCutoff: civilDate(pins.dataCutoff.slice(0, 10)), horizon: month, pins: [pins.ssa] }, providers);
   need(q.a1.recipients.length === 1 && same(q.a1.recipients[0], recipient)
@@ -73,25 +75,73 @@ export function reviewSsaMedicareOriginals(q: ConfirmedSsaMedicarePayment, cutof
   const installment = bound.installments[0]!;
   need(installment.claimId === q.award.claimId && installment.recipientPersonId === q.payable.recipientId
     && installment.effectiveAt === q.award.effectiveAt && installment.grossAmount.equals(q.payable.grossPayable));
+  const currentCutoff = native ? observation?.dataCutoff ?? pins.dataCutoff : pins.dataCutoff;
+  if (currentCutoff !== pins.dataCutoff) {
+    const date = civilDate(currentCutoff.slice(0, 10));
+    const checkedAt = civilDate((observation!.asOf > q.payable.paymentAt ? observation!.asOf : q.payable.paymentAt).slice(0, 10));
+    need(currentCutoff >= pins.dataCutoff);
+    const current = bindSsaOriginals({ householdId: q.payable.householdId, knownAt: checkedAt, dataCutoff: date,
+      horizon: month, pins: [{ ...pins.ssa, dataCutoff: date }] }, providers);
+    need(current.coverage.length === 1 && current.coverage[0]!.coverage === "conditional" &&
+      current.installments.length === 1 && same(current.installments[0], installment));
+  }
   // Only independently used originals may supply the evaluator's raw inputs.
   // Reject same-dollar substitutions of filing status, MAGI or tier.
   const docs = new Map<string, Original<unknown>>();
-  const read = <T>(kind: string, query: OriginalQuery, fetch: () => T): T => {
-    const value = capture(`${kind}:${canonicalSerialize(query)}`, fetch);
+  const read = <T>(kind: string, query: OriginalQuery, readInventory: () => T): T => {
+    const value = capture(`${kind}:${canonicalSerialize(query)}`, readInventory);
     const inv = value as { originals?: readonly Original<unknown>[] } | undefined;
     for (const doc of inv?.originals ?? []) docs.set(irmaaOriginalDigest(doc), doc);
     return value;
   };
-  const originals: IrmaaOriginals = {
-    rules: query => read("rules", query, () => sources.irmaa.rules(query)),
-    enrollments: query => read("enrollments", query, () => sources.irmaa.enrollments(query)),
-    returns: (query, year) => read(`returns:${year}`, query, () => sources.irmaa.returns(query, year)),
-    determinations: query => read("determinations", query, () => sources.irmaa.determinations(query)),
-    lifeEvents: (query, claim) => read(`life:${claim}`, query, () => sources.irmaa.lifeEvents(query, claim)),
+  const observe = <T extends { readonly query: OriginalQuery; readonly complete: boolean; readonly originals: readonly Original<unknown>[] }>(
+    kind: string, query: OriginalQuery, readInventory: (current: OriginalQuery) => T | undefined,
+  ): T | undefined => {
+    const historical = read(kind, query, () => readInventory(query));
+    if (!native) return historical;
+    const observed = { ...query, knownAt: currentCutoff };
+    const current = currentCutoff === query.knownAt ? historical : read(kind, observed, () => readInventory(observed));
+    need(current !== undefined && historical !== undefined && current.complete === true && same(current.query, observed));
+    const known = current.originals.filter(doc => {
+      instant(doc.publishedAt); instant(doc.knownAt);
+      need(doc.publishedAt <= doc.knownAt);
+      return doc.knownAt <= currentCutoff;
+    });
+    // A later-known revision can invalidate historical replay even though
+    // the event-date evaluator correctly excludes it from the original bill.
+    need(known.every(doc => doc.knownAt <= query.knownAt && doc.knownAt <= query.eventAt) &&
+      irmaaOriginalDigest(known) === irmaaOriginalDigest(historical.originals.filter(doc => doc.knownAt <= query.knownAt)));
+    return historical;
   };
-  need(pins.irmaa.length === 2 && new Set(pins.irmaa.map(p => p.query.part)).size === 2);
+  const originals: IrmaaOriginals = {
+    rules: query => observe("rules", query, sources.irmaa.rules),
+    enrollments: query => observe("enrollments", query, sources.irmaa.enrollments),
+    returns: (query, year) => observe(`returns:${year}`, query, current => sources.irmaa.returns(current, year)),
+    determinations: query => observe("determinations", query, sources.irmaa.determinations),
+    lifeEvents: (query, claim) => observe(`life:${claim}`, query, current => sources.irmaa.lifeEvents(current, claim)),
+  };
+  if (native) {
+    const [inventory] = q.c2.inventories;
+    need(q.c2.inventories.length === 1 && inventory !== undefined);
+    const elected = inventory.parts.filter(entry => entry.status === "elected");
+    need(elected.every(entry => entry.part === "part_b" || entry.part === "part_d") &&
+      inventory.parts.every(entry => entry.status === "elected" || entry.status === "excluded") &&
+      elected.length === pins.irmaa.length && q.c2.premiums.coverages.length === elected.length &&
+      q.c2.irmaa.enrollments.length === elected.length &&
+      (elected.length > 0 || q.c2.irmaa.rules.length === 0 && q.c2.irmaa.histories.length === 0 && q.c2.irmaa.overrides.length === 0) &&
+      (["part_b", "part_d"] as const).every(part => {
+        const entries = inventory.parts.filter(entry => entry.part === part);
+        const statuses = inventory.surcharges.filter(entry => entry.part === part);
+        const queries = pins.irmaa.filter(pin => pin.query.part === part);
+        if (entries.length !== 1 || statuses.length !== 1) return false;
+        const entry = entries[0]!;
+        return entry.status === "elected"
+          ? statuses[0]!.status === "applicable" && queries.length === 1 && queries[0]!.query.coverageId === entry.coverageId
+          : entry.status === "excluded" && statuses[0]!.status === "not_applicable" && queries.length === 0;
+      }));
+  } else need(pins.irmaa.length === 2 && new Set(pins.irmaa.map(p => p.query.part)).size === 2);
   const result = proposeOriginalIrmaa({ events: pins.irmaa.map(p => p.query), originals, deaths: q.c2.irmaa.deaths ?? [] });
-  need(result.diagnostics.length === 0 && result.candidates.length === 2);
+  need(result.diagnostics.length === 0 && result.candidates.length === pins.irmaa.length);
   const consumed = <T>(candidate: SourcedIrmaaCandidate, field: string): T[] => candidate.sources.flatMap(p => {
     const value = docs.get(p.digest)?.value as Record<string, T> | undefined;
     return value && field in value ? [value[field]!] : [];
@@ -110,6 +160,8 @@ export function reviewSsaMedicareOriginals(q: ConfirmedSsaMedicarePayment, cutof
   }
   return {
     composition: value => {
+      if (native) need(value.memberMonths.length === 1 && value.diagnostics.length === 0 &&
+        value.obligations.length === pins.irmaa.length && value.obligations.every(row => row.memberObligation.isPositive()));
       // Match the original producer result to each actual composed obligation,
       // including explicit zero surcharges, before any physical posting.
       for (const c of result.candidates) {
