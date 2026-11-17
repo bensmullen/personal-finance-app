@@ -373,7 +373,7 @@
         "PFA-TAX-015",
         "PFA-INS-013"
       ],
-      "scope": "Open mandatory D2-C consolidated owner, currently authorizing bounded new FSA C3 plan-year original binding under src/simulation/d2/health/fsa/yearChain/originalBinding/** and its isolated tests after S4 merged. Domain original admission is conditional/uncommitted; actual year-end carryover/grace/forfeiture posting, FSA payroll/tax, C1/C2 effective coverage/Medicare and U1 authoring still require #149/#101/#120 shared integration and independent final closeout. Do not mark #148 complete on source-only PR."
+      "scope": "Mandatory D2-C health, Medicare and FSA closeout owner. A bounded conditional FSA original-admission phase has merged, but physical year-end carryover/grace/forfeiture, paid employer coverage and premiums, Medicare, payroll/tax integration, replay and normal-user authoring remain separate required financial evidence. Source-only completion does not satisfy #149 or #120 UAT."
     },
     {
       "issue_number": 149,
@@ -975,7 +975,7 @@
         "PFA-DET-023",
         "PFA-TAX-015"
       ],
-      "scope": "2026-11-16 current: #331 test-only two-person S8-5A combined authenticated S1–S5 witness remains BLOCKED with zero changes/PR because fixed-rate mortgage/auto/student VS4 required interest/principal and optional extra BANK debits lack native original-qualified source plus immutable posted proof in production/reference/replay. #336 SSA/Medicare bridge PR #339 merged and earlier blocker resolved. PM-approved new #340 must merge after independent original and receipt/negative/portable replay review before #331 resumes. Preserve only new test/d2/integrated/jointHousehold/s8Five/** writes, exact independent cents/rollback/cold replay, actual S1 BANK member debit and source scope; do not substitute modeled cash, test-issued authority or assume group RMD applied without J1 annual proof. Full A/B/C, tax/worker and #120 UI UAT remain #149 owner."
+      "scope": "Test-only S8-5A combined two-person S1–S5 authentic-source household economic/journal/rollback/cold-replay witness using independent exact-cent evidence. Requires merged #336 SSA/Medicare and #340 authenticated fixed-loan debits; remains blocked until #340 is accepted and merged. Do not substitute modeled cash or claim group RMD applied without J1. Full A/B/C, tax, authoring and UAT stay with #149/#120."
     },
     {
       "issue_number": 332,
@@ -1014,7 +1014,7 @@
         "PFA-INS-013",
         "PFA-TAX-015"
       ],
-      "scope": "PM-APPROVED 2026-11-16, expanded 2026-11-16 after first BLOCKED: bounded production SSA + benefit-deducted Medicare source-owned native v3 bridge, exact canonical BANK journal/posted proof and cold replay using independent S1 BANK/A1 SSA/C1 premium + exhaustive elections/C2 IRMAA and sourced exclusions. Includes zero deducted premiums (gross SSA cash+income, no Medicare expense/claim), B-only, D-only, both parts and zero net; additive version-gated admission preserving old v1/v2 receipts and existing v3 dual-Part semantics. New bridge src/simulation/d2/integration/ssaMedicare/nativeHouseholdOriginalBridge/**, dedicated tests test/d2/integrated/ssaMedicare/nativeHouseholdOriginalBridge/**, and EXACT four required shared existing files src/simulation/d2/integration/ssaMedicare/index.ts, src/simulation/d2/integration/ssaMedicare/originalSources.ts, src/semantics/settlement.ts, src/state/index.ts. No edit of standalone C2 coordinator, replay artifact, accounting or other D2 routes; no test-authored journal, fabricated negative candidate or applied RMD. Must independently pass semantic/CI review and merge before #331 resumes; not full #149/Tax/UAT. Governance scope PR must merge before Codex resumes."
+      "scope": "Accepted and merged SSA plus benefit-deducted Medicare independently sourced native household original/journal bridge (#339). Covers no premium, B-only, D-only, both and zero-net payments with authentic S1 BANK posting, versioned source proof and portable replay. This prerequisite alone does not complete D2-D tax, broader A/B/C or user acceptance."
     },
     {
       "issue_number": 340,
@@ -1031,7 +1031,7 @@
         "PFA-DET-023",
         "PFA-TAX-015"
       ],
-      "scope": "PM-approved 2026-11-16 bounded production original-to-BANK fixed-loan servicing bridge required by blocked #331. Exact independently current loan/servicer original and S1 household-owned checking/savings member debit authority bind opt-in mortgage/auto/standard student interest/scheduled principal/extra payment to canonical existing VS4 financial claims, distinct postings, immutable v3 original receipt and cold/warm/sparse/terminal requalification. Production/reference/direct/prepared/summary equivalence and independent literal negative tests; current person-owned BANK debit and multi-bank split sourced payment remain unsupported and fail closed, modeled-only historical VS4 unaffected. For required/extra original-backed loan debit source mode, also authorize src/simulation/householdExecution.ts and src/simulation/r3/referenceHouseholdExecution.ts to prevent discarded *speculative* missing-debit failures from escaping before expense-first contention policy. Retain existing hard-failure behavior for legacy work and selected source-backed posting; fail closed for no/incomplete/cyclic policy. The optimized reachableStates.ts comparator stays read-only; scheduler must not use analytical commutativity shortcuts to bypass source-mode qualification. V3 #340 write paths: src/simulation/d2/integration/fixedLoanOriginalBridge/**, src/simulation/verticalSlice4.ts, src/simulation/r3/referenceVerticalSlice4.ts, src/simulation/householdExecution.ts, src/simulation/r3/referenceHouseholdExecution.ts, src/state/index.ts, src/simulation/r3/replayArtifact.ts, test/d2/integrated/fixedLoanOriginalBridge/**. Separate scope-governance merge/CI and operator worktree receipt safety are required before new Codex authorization. Not full #331/#149/DET-023/TAX/UAT."
+      "scope": "Mandatory S8-5A production prerequisite: opt-in source-qualified fixed-loan BANK servicing for mortgage, auto and standard student debt. Authenticate independent servicer and household-owned member debit originals against actual interest, scheduled/extra principal, settlement/posting proof and replay in production and independent reference execution. Source-backed policy-selected contention must preserve accrued-but-unfunded interest and reject unauthorized selected debits; legacy modeled-only behavior remains distinct. Person-owned source debits and unsupported split funding remain excluded. #331 stays blocked until independently reviewed and merged #340 implementation; no full #149/UAT completion."
     }
   ],
   "legacy_open_task_reconciliation": {

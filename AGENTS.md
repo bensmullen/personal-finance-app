@@ -49,6 +49,19 @@ authority, relevant traceability, selected CI checks, and product-manager merge
 approval. This path does not relax Codex task hooks or authorize unscoped code
 implementation; substantial feature/engine work should use a Codex V3 issue.
 
+Governance authorities are distinct: the live `PFM_TASK_V3` issue alone grants
+`ALLOWED_PATHS` and task acceptance; the milestone issue register tracks stage
+ownership, first mandatory gate, dependencies and controlled requirement IDs;
+the roadmap/canonical specs own delivery sequencing and product/financial
+decisions. A reviewer-approved task-local path or test expansion that changes
+none of those higher-level commitments requires **only an update to the
+original issue** and fresh V3/branch/receipt validation, not a scope-only
+register/roadmap PR. New required issues or changed milestone/dependency
+relationships require register reconciliation; changed supported financial
+semantics, source authority or milestones require the applicable PM-approved
+specification/roadmap decision. Never confuse a green traceability check with
+permission to edit code or proof of financial/UAT completion.
+
 The machine-enforced V3 contract is intentionally small:
 
 ```
