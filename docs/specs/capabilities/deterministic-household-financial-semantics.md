@@ -325,7 +325,7 @@ The D2 breadth capabilities in PFA-DET-016 through PFA-DET-022 SHALL have indepe
 
 Verification SHALL reconcile cash flow, assets, liabilities, basis/tax character, statutory-limit usage, benefit/premium schedules, rollovers/conversions, and ending net worth without double counting. Normal-user authoring and capability diagnostics SHALL be exercised for each admitted family before D2 closes.
 
-### PFA-DET-023 — Deterministic forecast original-source observation boundary (2026-11-18 approved interpretation)
+#### Original-source observation boundary — approved PFA-DET-023 interpretation (2026-11-18)
 
 For **deterministic forecast, simulation, standalone/reference evaluation, user-facing forecast read-model, portable replay and export**, legacy independently revocable issuer, lender and BANK publisher ports that only support separate point reads SHALL be described as **independently source-observed**, not a jointly atomic live snapshot or a guarantee of validity at the physical instant the result is delivered. The product manager approved this *bounded observation* interpretation on 2026-11-18. It does **not** authorize actual bank transfers, live trading, side-effecting settlement, or a representation that independently revoked sources remain simultaneously valid.
 
