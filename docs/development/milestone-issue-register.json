@@ -13,7 +13,7 @@
     },
     "D2": {
       "stage": "D2-A/B/C parallel backend; D2-D shared integration and final acceptance",
-      "blocking_transition": "D2 #149 remains final S8-5B source/posting/tax/replay and U1 #120 handoff owner. Accepted #336 native SSA/Medicare and #340 fixed-loan BANK originals enable source-qualified composition, but #348 proportional independent-source history admission is a mandatory production/performance prerequisite before #331 test-only S8-5A can meet its combined-household read/byte/replay contract. #331 and #348 independently require exact-head CI and semantic/source/replay audit; then #149's A/B/C, tax, authoring, UAT and PFA-DET-023 complete gates still apply before R5.",
+      "blocking_transition": "D2 #149 remains final S8-5B source/posting/tax/replay and U1 #120 handoff owner. Accepted #336 native SSA/Medicare and #340 fixed-loan BANK originals enable source-qualified composition, but #348 proportional independent-source history admission is a mandatory production/performance prerequisite before #331 test-only S8-5A can meet its combined-household read/byte/replay contract. #331 and #348 independently require exact-head CI and semantic/source/replay audit. Separately, #350 must establish publisher-authenticated live retirement/RMD history and proportional recurring distribution cost before final #149 D2 closeout; its design may overlap #348 but its shared production integration waits for #348's audited merge. #350 does not block #331. Then #149's A/B/C, tax, authoring, UAT and PFA-DET-023 complete gates still apply before R5.",
       "required_issue_numbers": [
         114,
         146,
@@ -34,7 +34,8 @@
         332,
         336,
         340,
-        348
+        348,
+        350
       ]
     },
     "R11": {
@@ -1056,7 +1057,24 @@
         "PFA-DET-023",
         "PFA-PERF-019"
       ],
-      "scope": "Mandatory source-history admission efficiency for combined native S1–S5: proportional lender/BANK/SSA/health/card original publisher work and bytes under authentic history, without weakening original revisions/withdrawal, canonical posting, contention rollback, cold/warm/sparse replay or bounded payload evidence. Must independently merge before test-only #331 resumes."
+      "scope": "Mandatory source-history admission efficiency for combined native S1–S5 FSA/card/SSA/HELOC/fixed-loan issuer and BANK posting: proportional original publisher reads, historical validation and bytes under authentic history, while retaining immediate selected-source checks, publication-boundary withdrawal rejection, canonical journal, contention rollback, replay and one supported sourced retirement correctness witness. Repeated independently revocable retirement/RMD original scaling belongs to #350. Must merge before test-only #331 resumes."
+    },
+    {
+      "issue_number": 350,
+      "owner_stage": "D2-D-retirement-live-original-frontier-and-repeated-funded-RMD-scalability",
+      "blocking_gate": "D2",
+      "depends_on": [
+        278,
+        348
+      ],
+      "spec_requirement_ids": [
+        "PFA-DET-017",
+        "PFA-DET-023",
+        "PFA-TAX-015",
+        "PFA-PERF-018",
+        "PFA-PERF-021"
+      ],
+      "scope": "Mandatory publisher-authenticated live retirement original history with bounded event, revision, withdrawal and RMD usage deltas; retain exact funding, atomic posting, account/year capacity, replay and proportional reads/validated bytes for repeated funded distributions. Design may proceed alongside #348, but overlapping production work follows its merge. Not a prerequisite to #331; final D2 #149 remains gated."
     }
   ],
   "legacy_open_task_reconciliation": {
