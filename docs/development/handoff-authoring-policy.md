@@ -159,6 +159,40 @@ Before emitting an implementation/repair handoff, ChatGPT SHALL:
     warranted. Avoid global dedup machinery and heavyweight CI jobs without
     evidence of need.
 
+### One-pass read-only scope discovery for cross-layer tasks
+
+Before granting write authorization to a task that crosses multiple independent
+publisher/financial source, state, replay, application, or UI/worker release
+boundaries, the reviewer SHALL complete **one bounded, read-only file-scope
+discovery pass**. A lightweight Codex read-only inspection is appropriate
+when there are several independently observable entry/exit paths, multiple
+original publishers, or prior no-edit `BLOCKED` turns; the reviewer may do the
+same review directly against the live repository when it is cheaper and
+complete. **Do not require this extra phase for small self-contained tasks.**
+
+The discovery output SHALL include the entry → source/cutoff → selected writer →
+canonical journal/receipt → replay/archival consumer → **last observable
+callback/result/worker release** matrix, with proposed exact write files,
+relevant test fixture paths, and **negative-space** (plausible siblings
+intentionally read-only, with reasons). Check cached/warm hits, completed and
+incomplete returns, supported variants, caller-owned `now`/telemetry/progress
+callbacks, mutable source providers, and application/worker transport. A source
+check inside simulation is not necessarily the last source-observation point
+before a later outward callback. Identify information-theoretic source-port
+limits and unavoidable producer payload growth **before** committing to a
+performance or live-currentness claim.
+
+Codex's discovery is **read-only advice, never a write grant**: no editing,
+tests/builds/installs, implementation or patch PR in that phase; it does not
+select financial semantics, expand `ALLOWED_PATHS`, bypass an existing closed
+receipt, or certify a local worktree. ChatGPT independently checks the complete
+reachability matrix, resolves PM-owned decisions and exclusions, and publishes
+one coherent V3 authorization under the original issue. For later unexpected
+`BLOCKED`/scope gaps, inspect all sibling failures in one delta audit before
+making **one** Level-1 issue correction; avoid repeatedly restarting Codex
+against individually discovered files. Preserve one writer and receipts; an
+approved Level-1 path-only expansion does not require a register/roadmap PR.
+
 For a repair caused by CI, include the classified root cause and any
 sibling or downstream tests vulnerable to the same issue, so that a patch
 addresses the complete failure class rather than only the first failing
