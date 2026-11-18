@@ -671,7 +671,7 @@
     {
       "id": "deterministic-household-financial-semantics",
       "path": "docs/specs/capabilities/deterministic-household-financial-semantics.md",
-      "version": "0.3.2-draft",
+      "version": "0.3.3-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "pre-stochastic-gate",

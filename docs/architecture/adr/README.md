@@ -15,6 +15,7 @@ Accepted foundation decisions:
 - [ADR-017: Personal persistence mode](ADR-017-personal-persistence-mode.md)
 - [ADR-020: Explicit financial value conventions](ADR-020-explicit-financial-value-conventions.md)
 - [ADR-021: Semantic settlement, funding, and accounting authority boundary](ADR-021-semantic-settlement-funding-and-accounting-authority-boundary.md)
+- [ADR-023: Observed original-source validity for deterministic forecasts](ADR-023-deterministic-forecast-observed-original-source-boundary.md)
 
 Additional ADRs will be introduced incrementally when implementation requires
 a durable decision.

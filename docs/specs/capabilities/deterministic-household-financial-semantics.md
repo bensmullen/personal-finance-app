@@ -1,6 +1,6 @@
 # Deterministic Household Financial Semantics Readiness
 
-**Version:** 0.3.2-draft  
+**Version:** 0.3.3-draft  
 **Status:** Pre-stochastic/private-alpha gate  
 **Requirement prefix:** PFA-DET
 
@@ -324,6 +324,18 @@ The supported rollover floor SHALL include ordinary plan-to-plan 529 rollovers a
 The D2 breadth capabilities in PFA-DET-016 through PFA-DET-022 SHALL have independent deterministic expected-effect tests plus at least one combined household fixture spanning retirement income, expanded retirement plans, ordinary debt, healthcare costs, special fixed income, and education savings.
 
 Verification SHALL reconcile cash flow, assets, liabilities, basis/tax character, statutory-limit usage, benefit/premium schedules, rollovers/conversions, and ending net worth without double counting. Normal-user authoring and capability diagnostics SHALL be exercised for each admitted family before D2 closes.
+
+#### Original-source observation boundary — approved PFA-DET-023 interpretation (2026-11-18)
+
+For **deterministic forecast, simulation, standalone/reference evaluation, user-facing forecast read-model, portable replay and export**, legacy independently revocable issuer, lender and BANK publisher ports that only support separate point reads SHALL be described as **independently source-observed**, not a jointly atomic live snapshot or a guarantee of validity at the physical instant the result is delivered. The product manager approved this *bounded observation* interpretation on 2026-11-18. It does **not** authorize actual bank transfers, live trading, side-effecting settlement, or a representation that independently revoked sources remain simultaneously valid.
+
+Authoritative financial admission remains mandatory: each selected current event must reconstruct issuer/lender/plan authority and actual BANK debit/credit permission from the independent publisher(s), before and after the canonical **local simulated** state writer where required; reject original changes, omissions, invalid funding, misbound identities, or journal/receipt mismatches that are observable during those reads. An attempt-scoped cached qualification or archived digest is not independent publisher authentication.
+
+At **each actually exposed result boundary**, including full or incomplete forecast exits, replay windows, independently exported checkpoints, portable archive generation, application/worker result preparation and externally observable participant callbacks, the applicable committed historical originals, BANK evidence and full posted/claim/identity/terminal history SHALL undergo a bounded final **independent source-observation pass**. Placement follows actual callback/materialization reachability: admit before handing source-qualified evidence to a caller; recheck at the final boundary after callbacks that may mutate publishers, and after archive/read-model materialization as applicable. Internal collectors and roots that are not themselves externally accessible are not independent public deliveries. For externally exposed per-period/participant observations, perform independent observation there even when more expensive; exclude those explicitly streaming/custom-observer variants from the ordinary single-final-result proportional benchmark, and do not mislabel their cost. Fail closed on an original withdrawn, changed or missing **by the time its own publisher is read**, including an invalid opening source at an otherwise legitimate incomplete result or warm/cold replay. Do not return a previously committed economic prefix as currently *source-observed* after the validation pass detects its revocation.
+
+**Consistency limitation (explicit):** Point reads across independently mutable publishers have no common linearization point. If issuer is read first, its original is revoked while BANK is subsequently read, and both returned objects still match the journal, no finite sequence of such reads can distinguish the interleaving from a fully unchanged world. A final pass can certify only the sources actually observed at their respective read instants. It **SHALL NOT** claim that such intervening or post-last-read revocation was detected, that all originals were jointly valid at one common instant, or that they remain live at network/client delivery. This limitation must be preserved in user-facing capability/evidence claims; source evidence and historical economic truth remain distinct from currently valid live authorization.
+
+An external action or specialized capability that **does require** joint publisher currentness at commit/delivery SHALL use a genuinely coordinated publisher revision fence/atomic snapshot, approved conditional commit, or separately PM-approved revocation semantics; existing independent point reads, two-read retries, a consumer receipt, frozen hash, `verified_complete` flag or arbitrary lease cannot establish it. This interpretation neither removes source authority for simulated postings nor changes tax, accounting, exact-cent funding, ownership, permissions or replay completeness. It does not waive the separate publisher-authenticated recurring-retirement protocol in #350. See [ADR-023](../../architecture/adr/ADR-023-deterministic-forecast-observed-original-source-boundary.md) and [#348](https://github.com/bensmullen/personal-finance-app/issues/348).
 
 ## 3. Scope boundary
 
