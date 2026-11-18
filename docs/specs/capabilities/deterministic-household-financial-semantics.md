@@ -1,6 +1,6 @@
 # Deterministic Household Financial Semantics Readiness
 
-**Version:** 0.3.2-draft  
+**Version:** 0.3.3-draft  
 **Status:** Pre-stochastic/private-alpha gate  
 **Requirement prefix:** PFA-DET
 
@@ -336,7 +336,6 @@ At **each actually exposed result boundary**, including full or incomplete forec
 **Consistency limitation (explicit):** Point reads across independently mutable publishers have no common linearization point. If issuer is read first, its original is revoked while BANK is subsequently read, and both returned objects still match the journal, no finite sequence of such reads can distinguish the interleaving from a fully unchanged world. A final pass can certify only the sources actually observed at their respective read instants. It **SHALL NOT** claim that such intervening or post-last-read revocation was detected, that all originals were jointly valid at one common instant, or that they remain live at network/client delivery. This limitation must be preserved in user-facing capability/evidence claims; source evidence and historical economic truth remain distinct from currently valid live authorization.
 
 An external action or specialized capability that **does require** joint publisher currentness at commit/delivery SHALL use a genuinely coordinated publisher revision fence/atomic snapshot, approved conditional commit, or separately PM-approved revocation semantics; existing independent point reads, two-read retries, a consumer receipt, frozen hash, `verified_complete` flag or arbitrary lease cannot establish it. This interpretation neither removes source authority for simulated postings nor changes tax, accounting, exact-cent funding, ownership, permissions or replay completeness. It does not waive the separate publisher-authenticated recurring-retirement protocol in #350. See [ADR-023](../../architecture/adr/ADR-023-deterministic-forecast-observed-original-source-boundary.md) and [#348](https://github.com/bensmullen/personal-finance-app/issues/348).
-
 
 ## 3. Scope boundary
 
