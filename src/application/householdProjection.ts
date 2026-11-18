@@ -1085,7 +1085,12 @@ const execute = (
     }
   }
   try {
-    if (execution.result !== undefined) observeHouseholdForecastSources(execution.result);
+    const forecast = execution.result;
+    if (forecast !== undefined) {
+      const admit = () => observeHouseholdForecastSources(forecast);
+      admit();
+      outwardSourceAdmissions.set(execution.read, admit);
+    }
     return execution;
   } catch {
     return { read: Object.freeze({ scope: "household", status: "unavailable", executionError: true,
@@ -1095,10 +1100,13 @@ const execute = (
 
 /** Reobserve the original artifacts after application/worker packaging. One
  * artifact covers the full committed history, including terminal-only deltas. */
+const outwardSourceAdmissions = new WeakMap<object, () => void>();
 export const observeHouseholdReadModelSources = (
   result: PersonalHouseholdForecastReadModel | PersonalHouseholdScenarioComparisonReadModel,
   model: PortableModelEnvelope,
 ): void => {
+  const admitResult = outwardSourceAdmissions.get(result);
+  if (admitResult !== undefined) { admitResult(); return; }
   const points = "scope" in result ? result.status === "unavailable" ? [] : result.points
     : result.alternatives.flatMap(alternative => alternative.points.flatMap(point => [point.baseline, point.alternative]));
   const seen = new Set<unknown>();
@@ -1331,6 +1339,13 @@ const compareHouseholds = (
       });
     const alternatives: PersonalHouseholdScenarioComparisonReadModel["alternatives"][number][] =
       [];
+    const committed = [baseline.result];
+    const release = (result: PersonalHouseholdScenarioComparisonReadModel): PersonalHouseholdScenarioComparisonReadModel => {
+      const admit = () => { for (const forecast of committed) observeHouseholdForecastSources(forecast); };
+      admit();
+      outwardSourceAdmissions.set(result, admit);
+      return result;
+    };
     const diagnosticCatalogs: ForecastCatalogTable[] = baseline.read.diagnosticCatalogs ? [baseline.read.diagnosticCatalogs] : [];
     const diagnostics: HouseholdDiagnostic[] = [
       ...baseline.read.diagnostics,
@@ -1345,7 +1360,7 @@ const compareHouseholds = (
         alternative.context === undefined ||
         alternative.read.status === "unavailable"
       )
-        return Object.freeze({
+        return release(Object.freeze({
           status: "unavailable",
           baselineName: request.baseline.name,
           alternatives: Object.freeze(alternatives),
@@ -1359,7 +1374,8 @@ const compareHouseholds = (
             alternative.read.status === "unavailable"
               ? alternative.read.message
               : `Alternative ${item.name} is unavailable.`,
-        });
+        }));
+      committed.push(alternative.result);
       commonBoundary(
         baseline as ExecutedHousehold,
         alternative as ExecutedHousehold,
@@ -1475,13 +1491,13 @@ const compareHouseholds = (
         }),
       );
     }
-    return Object.freeze({
+    return release(Object.freeze({
       status: overall,
       baselineName: request.baseline.name,
       alternatives: Object.freeze(alternatives),
       diagnosticCatalogs: Object.freeze(diagnosticCatalogs),
       diagnostics: Object.freeze(diagnostics),
-    });
+    }));
   } catch (error) {
     const diagnostics =
       error instanceof ValidationError ? error.issues : Object.freeze([]);

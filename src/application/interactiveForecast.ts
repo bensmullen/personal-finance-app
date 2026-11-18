@@ -59,7 +59,7 @@ export const executeForecastWorkerRequest = (message: ForecastWorkerRequest, clo
     }
     // Comparison APIs have no observer seam. Do not invent their timing.
     const packaged = toForecastWorkerResult(result);
-    observeHouseholdReadModelSources(packaged, message.model);
+    observeHouseholdReadModelSources(result, message.model);
     return { ...boundary, outcome: "result", result: packaged, records };
   } catch {
     // Runtime error text is deliberately portable and contains no personal data.

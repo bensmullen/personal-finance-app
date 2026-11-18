@@ -219,16 +219,14 @@ describe("#149 S8-2 canonical cross-domain truth table", () => {
   it("refuses amended committed approval and preserves historical BANK on source loss", () => {
     const s = combinedScenario(), committed = s.run(), before = canonicalSerialize(committed.state);
     expect(committed.periods).toHaveLength(2);
+    const rerun = () => run(s, applyHouseholdExecutionOverlay(s.kernel, { reconciledOpeningState: committed.state }));
     publishers.card = () => undefined;
-    const out = run(s, applyHouseholdExecutionOverlay(s.kernel, { reconciledOpeningState: committed.state }));
-    expect(out.status).toBe("incomplete"); expect(out.periods).toEqual([]);
-    expect(amount(out.state.accounts[ids.bank]!.cash)).toBe("2700");
-    expect(out.state).toEqual(committed.state);
-    expect(out.outputCapabilities?.cardFutureCycles?.status).not.toBe("complete");
+    expect(rerun).toThrow();
+    expect(amount(committed.state.accounts[ids.bank]!.cash)).toBe("2700");
+    expect(canonicalSerialize(committed.state)).toBe(before);
     resetPublishers();
     const raw = medicalSource(); publishers.fsa = () => ({ ...raw, deposit: { ...raw.deposit, paymentApprovalId: "forged-approval" } });
-    const amended = run(s, applyHouseholdExecutionOverlay(s.kernel, { reconciledOpeningState: committed.state }));
-    expect(amended.status).toBe("incomplete"); expect(amended.state).toEqual(committed.state);
+    expect(rerun).toThrow();
     expect(canonicalSerialize(committed.state)).toBe(before);
   });
 

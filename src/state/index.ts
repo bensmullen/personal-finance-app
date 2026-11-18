@@ -493,11 +493,15 @@ export interface SsaMedicarePaymentRecord extends SsaMedicarePaymentInput {
 // opt-in adapter owns A1/C2 re-evaluation. Imported receipts fail closed until
 // the source owner is available. No caller-provided receipt or callback is
 // accepted by the transition itself, and registration cannot be replaced.
-let ssaMedicareSourceAuthority: ((inputs: unknown) => SsaMedicarePaymentInput) | undefined;
-export const registerSsaMedicareSourceAuthority = (qualify: (inputs: unknown) => SsaMedicarePaymentInput): void => {
+let ssaMedicareSourceAuthority: ((inputs: unknown, observation?: D2SettlementSourceContext) => SsaMedicarePaymentInput) | undefined;
+let ownsSsaMedicareParticipant: ((participant: object) => boolean) | undefined;
+export const registerSsaMedicareSourceAuthority = (qualify: NonNullable<typeof ssaMedicareSourceAuthority>,
+  ownsParticipant?: (participant: object) => boolean): void => {
   if (ssaMedicareSourceAuthority !== undefined) throw new Error("SSA_MEDICARE_SOURCE_AUTHORITY_DUPLICATE");
   ssaMedicareSourceAuthority = qualify;
+  ownsSsaMedicareParticipant = ownsParticipant;
 };
+export const isSsaMedicareAuthorityParticipant = (participant: object): boolean => ownsSsaMedicareParticipant?.(participant) === true;
 const paymentKey = (p: SsaPayableEvidence): string => JSON.stringify([p.householdId, p.recipientId, p.paymentId]);
 // Exact structural equality also survives independent portable restoration.
 const paymentValue = (value: unknown): string => {
@@ -521,9 +525,9 @@ const freezePayment = <T>(v: T): T => {
 };
 const paymentInvalid = (message: string): never => failValidation({ severity: "error", code: "SSA_MEDICARE_PAYMENT_INVALID",
   entityType: "ssa_medicare_payment", message });
-const validatePaymentSources = (input: SsaMedicarePaymentInput): void => {
+const validatePaymentSources = (input: SsaMedicarePaymentInput, observation?: D2SettlementSourceContext): void => {
   if (ssaMedicareSourceAuthority === undefined) paymentInvalid("A1/C2 source owner unavailable for this receipt");
-  const qualified = ssaMedicareSourceAuthority!(input.sourceInputs);
+  const qualified = ssaMedicareSourceAuthority!(input.sourceInputs, observation);
   const values = (v: SsaMedicarePaymentInput) => ({ payable: v.payable, right: v.right, requests: v.requests,
     bankAccountId: v.bankAccountId, bankCashBefore: v.bankCashBefore, rightSettlementId: v.rightSettlementId, sourceInputs: v.sourceInputs,
     ...(v.nativeHousehold === undefined ? {} : { nativeHousehold: v.nativeHousehold }) });
@@ -2465,9 +2469,31 @@ interface D2ReceiptHistory {
   readonly eventOrder: PersistentStringIndex<D2SettlementReceipt>;
   readonly banks: PersistentStringIndex<{ readonly personId: string; readonly ownerId: string; readonly household: boolean; readonly currency: Currency }>;
   readonly liabilities: PersistentStringIndex<{ readonly currency: Currency; readonly issuerId: string; readonly personId: string; readonly householdId: string }>;
+  readonly fsaPlans: PersistentStringIndex<PersistentStringIndex<D2FsaSettlementReceipt>>;
+  readonly cardEvidence: PersistentStringIndex<{ readonly first: string; readonly second?: string }>;
   readonly identities: AuthoritativeIdentityRegistry;
 }
 const d2ReceiptHistories = new WeakMap<AuthoritativeState, D2ReceiptHistory>();
+const fsaReceiptScope = (source: Pick<D2FsaSettlementReceipt["source"], "householdId" | "personId" | "planId" | "planYearId">): string =>
+  JSON.stringify([source.householdId, source.personId, source.planId, source.planYearId]);
+const cardEvidenceKeys = (source: D2CardSettlementReceipt["source"]): readonly string[] =>
+  [JSON.stringify([source.issuerId, "quote", source.quoteId]), JSON.stringify([source.issuerId, "charge", source.chargeId]),
+    JSON.stringify([source.issuerId, "statement", source.statementId])];
+
+/** Structurally validated journal lookups for one plan or one issuer event. */
+export const authoritativeFsaPlanReceipts = (state: AuthoritativeState, source: Parameters<typeof fsaReceiptScope>[0]): readonly D2FsaSettlementReceipt[] => {
+  validateD2SettlementReceipts(state);
+  const plan = d2ReceiptHistories.get(state)!.fsaPlans.get(fsaReceiptScope(source));
+  return plan === undefined ? [] : [...plan.entries()].map(([, row]) => row);
+};
+export const hasConflictingCardReceipt = (state: AuthoritativeState, receipt: D2CardSettlementReceipt): boolean => {
+  validateD2SettlementReceipts(state);
+  const { cardEvidence } = d2ReceiptHistories.get(state)!;
+  return cardEvidenceKeys(receipt.source).some(key => {
+    const match = cardEvidence.get(key);
+    return match !== undefined && (match.first !== receipt.id || match.second !== undefined);
+  });
+};
 const admitD2EventOrder = (events: PersistentStringIndex<D2SettlementReceipt>, r: D2SettlementReceipt): void => {
   const order = r.source.executionOrder;
   if (order !== undefined && (!order.sequenceId.trim() || !Number.isSafeInteger(order.position) || order.position < 0))
@@ -2615,6 +2641,8 @@ export const validateD2SettlementReceipts = (state: AuthoritativeState): void =>
   const banks = previous?.banks.fork() ?? new PersistentStringIndex<{ readonly personId: string; readonly ownerId: string; readonly household: boolean; readonly currency: Currency }>();
   const liabilities = previous?.liabilities.fork() ?? new PersistentStringIndex<{
     readonly currency: Currency; readonly issuerId: string; readonly personId: string; readonly householdId: string }>();
+  const fsaPlans = previous?.fsaPlans.fork() ?? new PersistentStringIndex<PersistentStringIndex<D2FsaSettlementReceipt>>();
+  const cardEvidence = previous?.cardEvidence.fork() ?? new PersistentStringIndex<{ readonly first: string; readonly second?: string }>();
   const priorIds = previous === undefined ? undefined : identityIndexes.get(previous.identities);
   const nextIds = identityIndexes.get(state.identities);
   const full = previous !== undefined && previous.identities !== state.identities && (priorIds === undefined || nextIds === undefined);
@@ -2642,6 +2670,18 @@ export const validateD2SettlementReceipts = (state: AuthoritativeState): void =>
     for (const id of d2ConsumptionKeys(r)) {
       if (consumed.has(id)) d2Invalid("Historical receipt/source/authorization/claim/transaction reused");
       consumed.set(id, r.id);
+    }
+    if (r.kind === "fsa_paid_reimbursement") {
+      const scope = fsaReceiptScope(r.source);
+      const plan = fsaPlans.get(scope)?.fork() ?? new PersistentStringIndex<D2FsaSettlementReceipt>();
+      plan.set(r.id, r);
+      fsaPlans.set(scope, plan);
+    } else if (r.kind === "card_interest_payment") {
+      for (const key of cardEvidenceKeys(r.source)) {
+        const prior = cardEvidence.get(key);
+        if (prior === undefined) cardEvidence.set(key, { first: r.id });
+        else if (prior.second === undefined) cardEvidence.set(key, { first: prior.first, second: r.id });
+      }
     }
     const boundBank = banks.get(r.bankAccountId);
     const ownerId = r.nativeHousehold ? r.source.householdId : r.source.personId;
@@ -2687,7 +2727,7 @@ export const validateD2SettlementReceipts = (state: AuthoritativeState): void =>
     : state.identities.externalIdempotencyKeys;
   for (const id of inventory) if (id.startsWith(receiptKeyPrefix) && !consumed.has(id))
     d2Invalid("Receipt inventory exists without its immutable receipt");
-  d2ReceiptHistories.set(state, { index, consumed, eventOrder, banks, liabilities, identities: indexedIdentityRegistry(state.identities) });
+  d2ReceiptHistories.set(state, { index, consumed, eventOrder, banks, liabilities, fsaPlans, cardEvidence, identities: indexedIdentityRegistry(state.identities) });
 };
 const qualifyD2Receipt = (receipt: D2SettlementReceipt, context: D2SettlementSourceContext): D2SourceQualification => {
   instant(context.asOf); instant(context.dataCutoff);
@@ -2786,7 +2826,7 @@ export const requalifyD2SettlementReceiptHistory = (state: AuthoritativeState, c
       const requalifyNativeRecord = (): void => {
         const r = proof.registration;
         if (r.kind === "ssa_medicare_payment") validatePaymentSources(state.ssaMedicarePayments?.[r.paymentKey]
-          ?? d2Invalid("Native SSA posting lost its payment record"));
+          ?? d2Invalid("Native SSA posting lost its payment record"), context);
         if (r.kind === "retirement_cash_distribution" && qualifyRetirement(r.distribution, context).status !== "qualified")
           d2Invalid("Native retirement original unavailable on replay");
       };

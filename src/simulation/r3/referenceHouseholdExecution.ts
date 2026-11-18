@@ -21,6 +21,7 @@ import {
   cloneAuthoritativeState,
   createAuthoritativeState,
   createIndexedExecutionState,
+  observeAuthoritativeSourceHistory,
   registerAuthoritativeIdentity,
   validateAuthoritativeState,
   type AuthoritativeState,
@@ -1263,9 +1264,12 @@ export const runCompiledHouseholdProjection = (
   observer?: PerformanceObserver,
 ): CompiledHouseholdProjectionRunResult => {
   const performance = createPerformanceSession(observer);
+  let result: CompiledHouseholdProjectionRunResult;
   try {
-    return runCompiledHouseholdProjectionInternal(request, performance);
+    result = runCompiledHouseholdProjectionInternal(request, performance);
   } finally {
     performance.finish();
   }
+  observeAuthoritativeSourceHistory(result.state, request.runContext);
+  return result;
 };

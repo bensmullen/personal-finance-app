@@ -22,6 +22,9 @@ import "../domainMechanics.js";
 import "../mortgageLifecycle.js";
 import { validateSsaMedicareReplayHistory } from "../d2/integration/ssaMedicare/index.js";
 import { captureFixedLoanReplayObservations } from "../d2/integration/fixedLoanOriginalBridge/observation.js";
+import { ownsFsaCashParticipant } from "../d2/integration/fsaCash/index.js";
+import { ownsCardBankParticipant } from "../d2/integration/cardBank/index.js";
+import { ownsHelocServicingParticipant } from "../d2/integration/helocServicing/index.js";
 
 /** One bounded application proposal per run. Its encoded digest is not trust. */
 export interface ModeledPayrollReplayBasis {
@@ -326,16 +329,19 @@ function requalifyReplaySources(forecast: Pick<HouseholdForecastSummaryResult, "
   requalifyRetirementDistributionHistory(state, runContext);
 }
 
-function admitFixedLoanReplayHistory(forecast: Pick<HouseholdForecastSummaryResult, "replay" | "periods" | "runMetadata">,
-  state: AuthoritativeState, checkpoints: readonly HouseholdReplayCheckpoint[]): (() => void) | undefined {
+function admitConfiguredReplayHistory(forecast: Pick<HouseholdForecastSummaryResult, "replay" | "periods" | "runMetadata">,
+  state: AuthoritativeState, checkpoints: readonly HouseholdReplayCheckpoint[], verifyFullInventory: boolean): (() => void) | undefined {
   const { kernel, runContext } = forecast.replay;
-  if (!usesFixedLoanOriginals(kernel.executable)) return undefined;
-  // Cold admission derives the complete occurrence history from the configured
-  // schedules and independent publishers. Only their query digests survive
-  // admission so warm restore never needs another full execution.
-  const { result: expected, recheck } = captureFixedLoanReplayObservations(() =>
-    runHouseholdForecastSummary({ kernel, runContext }));
-  const mismatch = (): never => { throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: fixed loan committed history differs from independent execution"); };
+  const fixedLoans = usesFixedLoanOriginals(kernel.executable);
+  if (!fixedLoans && !verifyFullInventory) return undefined;
+  // Independently regenerate the dated occurrence inventory on cold admission.
+  // Warm admissions keep the admitted journal and reobserve its actual sources.
+  const regenerate = () => runHouseholdForecastSummary({ kernel, runContext });
+  const fixedObservations = fixedLoans ? captureFixedLoanReplayObservations(regenerate) : undefined;
+  const expected = fixedObservations?.result ?? regenerate();
+  const mismatch = (): never => {
+    throw new Error(`HOUSEHOLD_REPLAY_BASIS_MISMATCH: ${fixedLoans ? "fixed loan " : ""}committed history differs from independent execution`);
+  };
   if (canonicalSerialize(expected.runMetadata) !== canonicalSerialize(forecast.runMetadata) ||
       !equalHouseholdReplaySummaries(expected.periods, forecast.periods)) mismatch();
   const expectedAt = new Map(exportHouseholdReplayCheckpointRoots(expected).map(checkpoint => [checkpoint.at, checkpoint]));
@@ -353,7 +359,7 @@ function admitFixedLoanReplayHistory(forecast: Pick<HouseholdForecastSummaryResu
     compare(checkpoint.state, reconstructed.state);
   }
   compare(state, householdReplayTerminalRoot(expected));
-  return recheck;
+  return fixedObservations?.recheck;
 }
 
 const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObserver, timings: RestoreTimings = {}, sample: () => void = () => {}, independentSource?: unknown): {
@@ -433,10 +439,14 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
       return terminal;
     });
   }
-  const recheckFixedLoans = measure("sourceRequalificationMs", () => {
-    requalifyReplaySources(forecast, sourceHistoryState, checkpoints);
-    return admitFixedLoanReplayHistory(forecast, sourceHistoryState, checkpoints);
-  });
+  const verifyFullInventory = supplied.version === "household-replay/v3" &&
+    (admittedExecutable.participants?.some(participant => ownsFsaCashParticipant(participant) || ownsCardBankParticipant(participant) ||
+      ownsHelocServicingParticipant(participant) || participant.portableCodec === "d2-retirement-cash/v3") ?? false);
+  const recheckFixedLoans = observer?.phase !== undefined || usesFixedLoanOriginals(admittedExecutable) || verifyFullInventory
+    ? measure("sourceRequalificationMs", () => {
+        if (observer?.phase !== undefined) requalifyReplaySources(forecast, sourceHistoryState, checkpoints);
+        return admitConfiguredReplayHistory(forecast, sourceHistoryState, checkpoints, verifyFullInventory);
+      }) : undefined;
   try { observer?.phase?.("source_requalified"); } catch { /* Observation is optional. */ }
   if (supplied.version === "household-replay/v3") {
     measure("checkpointRestoreValidationMs", () => registerHouseholdReplayCheckpoints(forecast, checkpoints, counts => {
@@ -506,24 +516,21 @@ export const restorePortableHouseholdReplayArtifact = (artifact: unknown, observ
     const supplied = artifact as PortableHouseholdReplayArtifact | undefined;
     const cached = typeof artifact === "object" && artifact !== null ? restoredArtifacts.get(artifact) : undefined;
     if (cached && supplied?.version === cached.version && supplied.encoded === cached.encoded && supplied.integrity === cached.integrity) {
+      try { observer?.phase?.("restore_warm"); } catch { /* Observation is optional. */ }
+      report("warm", cached.forecast);
       qualifyModelBasis(cached.modeledPayroll, cached.forecast.replay.kernel.executable, cached.forecast.replay.runContext, independentSource);
-      const sourceStarted = safeNow(observer);
       requalifyReplaySources(cached.forecast, cached.sourceHistoryState, cached.checkpoints);
       cached.recheckFixedLoans?.();
       bindReplayAdmission(cached.forecast, cached.modeledPayroll, cached.sourceHistoryState, cached.checkpoints, independentSource, cached.recheckFixedLoans);
-      const sourceRequalificationMs = elapsed(sourceStarted, safeNow(observer));
-      try { observer?.phase?.("restore_warm"); } catch { /* Observation is optional. */ }
-      report("warm", cached.forecast, sourceRequalificationMs === undefined ? {} : { sourceRequalificationMs });
-      observeHouseholdForecastSources(cached.forecast);
       return cached.forecast;
     }
     const timings: RestoreTimings = {};
     const { forecast, modeledPayroll, sourceHistoryState, checkpoints, recheckFixedLoans } = restorePortableArtifact(artifact, observer, timings, sample, independentSource);
+    report("cold", forecast, timings);
+    observeHouseholdForecastSources(forecast);
     if (typeof artifact === "object" && artifact !== null && supplied) restoredArtifacts.set(artifact, {
       version: supplied.version, encoded: supplied.encoded, integrity: supplied.integrity, forecast, modeledPayroll, sourceHistoryState, checkpoints, recheckFixedLoans,
     });
-    report("cold", forecast, timings);
-    observeHouseholdForecastSources(forecast);
     return forecast;
   }
   catch (error) {

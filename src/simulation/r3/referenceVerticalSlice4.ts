@@ -12,7 +12,7 @@ import { createFactProvenance, type FactProvenance, type ModelGeneratedFactProve
 import { fixedMortgagePayment } from "../../rules/index.js";
 import { createSemanticEffect, type SemanticEffect } from "../../semantics/effect.js";
 import { applySettlement, claimId, createObligation, createRecognitionFact, createRight, createSettlement, createSettlementProposal, recognitionId, semanticEffectId, settlementId, settlementProposalId, type Obligation, type RecognitionFact, type Right, type Settlement, type SettlementProposal } from "../../semantics/index.js";
-import { activeAuthoritativeClaims, assertAuthoritativeStateCurrency, cloneAuthoritativeState, registerAuthoritativeIdentity, type AuthoritativeState } from "../../state/index.js";
+import { activeAuthoritativeClaims, assertAuthoritativeStateCurrency, cloneAuthoritativeState, observeAuthoritativeSourceHistory, registerAuthoritativeIdentity, type AuthoritativeState } from "../../state/index.js";
 import { deriveStatements, type Statements } from "../../statements/index.js";
 import { utcMonthDifference, utcMonthlyOccurrences, utcMonthlyPeriods, type Instant, type Period } from "../../time/index.js";
 import { Money, RateBasis, RoundingPolicy, sumMoney, type Currency, type Rate } from "../../values/index.js";
@@ -369,6 +369,7 @@ export const executePreparedVerticalSlice4Period = (
   }
   const liabilities = [...requiredResults.values()].map((item) => Object.freeze({ ...item }));
   const period: VerticalSlice4PeriodResult = Object.freeze({ period: Object.freeze({ ...prepared.period }), liabilities: Object.freeze(liabilities), interestExpense, principalReduction, endingPrincipal: totalLiability(finalState, input.loans, "principal", input.baseCurrency), outstandingInterest: totalLiability(finalState, input.loans, "interest", input.baseCurrency), transactions: Object.freeze(transactions), recognitions: Object.freeze(recognitions), settlementProposals: Object.freeze(proposals), settlements: Object.freeze(settlements), effects: Object.freeze(effects), constraintOutcomes: Object.freeze(outcomes), liquidityShortfalls: Object.freeze(shortfalls), statements: deriveStatements(finalState, transactions, input.baseCurrency), diagnostics: Object.freeze(diagnostics), traceRefs: Object.freeze(mergeTraceRefs(traceRefs) ?? []) });
+  observeAuthoritativeSourceHistory(finalState, runContext);
   return Object.freeze({ state: finalState, primitiveState: finalPrimitiveState, period });
 };
 
@@ -382,6 +383,7 @@ const runVerticalSlice4Internal = <Metadata extends Partial<Pick<VerticalSlice4R
   assertRunContext(request.runContext);
   const runMetadata = metadata(months, initialPrimitiveState);
   const finish = (body: Omit<VerticalSlice4RunResult, "runMetadata">) => {
+    if (preparedLoan === undefined) observeAuthoritativeSourceHistory(body.state, request.runContext);
     const result = Object.assign(body, runMetadata);
     Object.freeze(result);
     return result;

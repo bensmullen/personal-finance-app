@@ -9,6 +9,9 @@ import { firstDependencyOrder, indexReachability, indexSequencingInstants } from
 import { compareReachableStates, createReachableStateCounters } from "./r3/reachableStates.js";
 import { fixedLoanDebitDenial } from "./d2/integration/fixedLoanOriginalBridge/bank.js";
 import { withFixedLoanOriginalObservations } from "./d2/integration/fixedLoanOriginalBridge/observation.js";
+import { ownsFsaCashParticipant } from "./d2/integration/fsaCash/index.js";
+import { ownsCardBankParticipant } from "./d2/integration/cardBank/index.js";
+import { ownsHelocServicingParticipant } from "./d2/integration/helocServicing/index.js";
 import { createOutputCapabilityMerger } from "./r3/capabilities.js";
 import { createTaxDiagnosticKey, type TaxCapabilityDiagnostic, type TaxOutputCapabilities } from "./tax/contracts.js";
 import { fundingPoolConservationProof, guaranteedFundingIncomeProof } from "./r3/commutativity.js";
@@ -28,6 +31,7 @@ import {
   assertAuthoritativeStateCurrency,
   admitS4OpeningSources,
   observeAuthoritativeSourceHistory,
+  isSsaMedicareAuthorityParticipant,
   cloneAuthoritativeState,
   createIndexedExecutionState,
   createAuthoritativeState,
@@ -172,6 +176,12 @@ export interface HouseholdKernelParticipant {
   readonly observe?: (descriptor: HouseholdWorkDescriptor, facts: HouseholdOperationFacts, runtime: Readonly<Record<string, unknown>>,
     observation?: { readonly postingProofs: AuthoritativeState["d2PostedTransactions"]; readonly context: RunContext }) => Readonly<Record<string, unknown>>;
 }
+
+// Only a built-in prepare call inside this execution may use the scheduler's
+// opening and release admissions. Standalone prepare calls admit their own history.
+interface HouseholdPreparationAttempt { readonly hasExternalParticipants: boolean }
+const ownedParticipantInputs = new WeakMap<object, HouseholdPreparationAttempt>();
+export const householdPreparationAttempt = (input: object): HouseholdPreparationAttempt | undefined => ownedParticipantInputs.get(input);
 
 /** Explicit reusable boundary for repeated deterministic evaluations. */
 interface HouseholdKernelRunInput {
@@ -404,6 +414,9 @@ const runCompiledHouseholdProjectionInternal = (
     : applyHouseholdExecutionOverlay(reusable, source));
   const compiled = kernel.executable;
   const participants = [...(compiled.participants ?? []), ...(request.participants ?? [])].sort((a, b) => a.id.localeCompare(b.id));
+  const externalParticipants = new Set(participants.filter(participant => !ownsFsaCashParticipant(participant) &&
+    !ownsCardBankParticipant(participant) && !ownsHelocServicingParticipant(participant) && !isSsaMedicareAuthorityParticipant(participant)));
+  const preparationAttempt = Object.freeze({ hasExternalParticipants: externalParticipants.size > 0 });
   if (String(runContext.scenarioId) !== compiled.scenarioIdentity)
     throw new ValidationError({
       severity: "error",
@@ -430,6 +443,10 @@ const runCompiledHouseholdProjectionInternal = (
   admitS4OpeningSources(compiled.reconciledOpeningState, runContext);
   if (periodRetention?.resume !== undefined)
     admitS4OpeningSources(periodRetention.resume.state, runContext);
+  if (externalParticipants.size < participants.length) {
+    observeAuthoritativeSourceHistory(compiled.reconciledOpeningState, runContext);
+    if (periodRetention?.resume !== undefined) observeAuthoritativeSourceHistory(periodRetention.resume.state, runContext);
+  }
   let state = createIndexedExecutionState(cloneAuthoritativeState(compiled.reconciledOpeningState), counts => performance.counters(counts));
   let primitiveState = createPrimitiveRuntimeStateStore(
     compiled.reconciledPrimitiveState,
@@ -487,21 +504,34 @@ const runCompiledHouseholdProjectionInternal = (
     const periodContext = Object.freeze({ ...runContext, simulationStart: period.start, simulationEnd: period.end });
     const builtins = householdDomainParticipants({ cash, investments, liabilities }, compiled, periodContext, kernel, tier);
     const additional = participants.map(participant => {
-      const prepared = participant.prepare(periodContext, period, {
+      const external = externalParticipants.has(participant);
+      if (external) observeAuthoritativeSourceHistory(investmentOpening, runContext);
+      const participantOpening: OperationState = {
         state: cloneAuthoritativeState(investmentOpening),
         primitiveState: createPrimitiveRuntimeStateStore(investmentPrimitiveOpening),
         runtime: operationRuntime(opening),
-      }, builtins.flatMap(item => item.operations.map(operation => operation.descriptor)), tier);
+      };
+      if (!external) ownedParticipantInputs.set(participantOpening, preparationAttempt);
+      let prepared: ReturnType<HouseholdKernelParticipant["prepare"]>;
+      try {
+        prepared = participant.prepare(periodContext, period, participantOpening,
+          builtins.flatMap(item => item.operations.map(operation => operation.descriptor)), tier);
+      } finally {
+        ownedParticipantInputs.delete(participantOpening);
+      }
       if (prepared.id !== participant.id)
         throw new ValidationError({ severity: "error", code: "HOUSEHOLD_PARTICIPANT_MISMATCH",
           message: "Prepared participant identity must match its registration.", entityType: "household_projection" });
       return { id: prepared.id, operations: prepared.operations.map(operation => ({
         ...operation,
-        execute: (opening: OperationState, statuses: Map<string, string>) => operation.execute({
-          state: cloneAuthoritativeState(opening.state),
-          primitiveState: createPrimitiveRuntimeStateStore(opening.primitiveState),
-          runtime: opening.runtime,
-        }, statuses),
+        execute: (opening: OperationState, statuses: Map<string, string>) => {
+          if (external) observeAuthoritativeSourceHistory(opening.state, runContext);
+          return operation.execute({
+            state: cloneAuthoritativeState(opening.state),
+            primitiveState: createPrimitiveRuntimeStateStore(opening.primitiveState),
+            runtime: opening.runtime,
+          }, statuses);
+        },
       })) };
     });
     const operations = indexPreparedOperations([...builtins, ...additional]);
@@ -644,7 +674,15 @@ const runCompiledHouseholdProjectionInternal = (
           let runtime = operationRuntime(nextState);
           for (const participant of participants) if (participant.observe !== undefined) {
             performance.counters({ [`participant.${participant.id}.observations`]: 1 });
-            runtime = participant.observe(descriptor, result.facts, runtime, { postingProofs: nextState.d2PostedTransactions, context: runContext });
+            const external = externalParticipants.has(participant);
+            if (external) observeAuthoritativeSourceHistory(nextState, runContext);
+            const observation = { postingProofs: nextState.d2PostedTransactions, context: runContext };
+            if (!external) ownedParticipantInputs.set(observation, preparationAttempt);
+            try {
+              runtime = participant.observe(descriptor, result.facts, runtime, observation);
+            } finally {
+              ownedParticipantInputs.delete(observation);
+            }
           }
           restoreOperationRuntime(nextState, runtime);
           if (tier === "summary") performance.counters({ summaryOperationsExecuted: 1 });
@@ -1211,7 +1249,7 @@ export const observeHouseholdForecastSources = (forecast: Pick<HouseholdForecast
   const admit = restoredReplayAdmission.get(forecast.replay);
   if (admit !== undefined) admit();
   else {
-    const state = forecastTerminalRoots.get(forecast);
+    const state = forecastTerminalRoots.get(forecast.replay);
     if (state === undefined) throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: missing source history root");
     observeAuthoritativeSourceHistory(state, forecast.replay.runContext);
   }
@@ -1219,7 +1257,7 @@ export const observeHouseholdForecastSources = (forecast: Pick<HouseholdForecast
 
 /** Private committed root for encoding a delta against the last checkpoint. */
 export const householdReplayTerminalRoot = (forecast: HouseholdForecastSummaryResult): AuthoritativeState =>
-  snapshotAuthoritativeCheckpoint(forecastTerminalRoots.get(forecast) ?? forecast.state,
+  snapshotAuthoritativeCheckpoint(forecastTerminalRoots.get(forecast.replay) ?? forecast.state,
     forecastCheckpoints.get(forecast)?.at(-1)?.state);
 
 /** Non-materializing engineering evidence; never exports authoritative state. */
@@ -1236,10 +1274,14 @@ export const householdReplayCheckpointSelection = (
 
 /** Materialized data only; private persistent indexes never cross transport. */
 export const exportHouseholdReplayCheckpoints = (forecast: Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods">): readonly HouseholdReplayCheckpoint[] =>
-  Object.freeze((forecastCheckpoints.get(forecast) ?? []).map(checkpoint => Object.freeze({ ...checkpoint,
+{
+  const checkpoints = Object.freeze((forecastCheckpoints.get(forecast) ?? []).map(checkpoint => Object.freeze({ ...checkpoint,
     state: createAuthoritativeState(checkpoint.state),
     primitiveState: materializePrimitiveRuntimeStateStore(checkpoint.primitiveState),
   })));
+  observeHouseholdForecastSources(forecast);
+  return checkpoints;
+};
 
 /** Portable export consumes safe persistent views, not the legacy materialized
  * diagnostic API above. No additional history/cache is retained by this view. */
@@ -1347,7 +1389,7 @@ export const runHouseholdForecastSummary = (
     forecast = Object.freeze({ ...result, resultTier: "summary", periods: Object.freeze(summaries),
       replay: Object.freeze({ kernel, runContext }) });
     forecastCheckpoints.set(forecast, Object.freeze(checkpoints));
-    forecastTerminalRoots.set(forecast, terminalRoot ?? result.state);
+    forecastTerminalRoots.set(forecast.replay, terminalRoot ?? cloneAuthoritativeState(result.state));
     performance.counters({ replayCheckpointsRetained: checkpoints.length, summaryPeriodsRetained: summaries.length });
   } finally {
     performance.finish();

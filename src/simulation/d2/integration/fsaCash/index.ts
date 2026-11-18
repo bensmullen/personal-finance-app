@@ -1,8 +1,8 @@
 import { applyAccountingTransactionAtomically, applyD2SettlementAtomically, applyNativeHouseholdOriginalAtomically,
-  requalifyD2SettlementReceiptHistory,
-  type AuthoritativeState, type D2FsaSettlementReceipt } from "../../../../state/index.js";
+  authoritativeFsaPlanReceipts, requalifyD2SettlementReceiptHistory,
+  type AuthoritativeState } from "../../../../state/index.js";
 import type { AccountingTransaction } from "../../../../accounting/index.js";
-import { applyHouseholdExecutionOverlay, type CompiledHouseholdKernel, type HouseholdKernelParticipant } from "../../../householdExecution.js";
+import { applyHouseholdExecutionOverlay, householdPreparationAttempt, type CompiledHouseholdKernel, type HouseholdKernelParticipant } from "../../../householdExecution.js";
 import { immutableConfiguration } from "../../../r3/compiledHousehold.js";
 import { registerHouseholdParticipantCodec } from "../../../r3/participantCodec.js";
 import { SummaryOperationSink } from "../../../r3/summarySink.js";
@@ -17,6 +17,8 @@ export type { FsaCashSource, FsaCashSourceProvider, FsaCashReference, FsaCashOri
 export interface FsaCashInput { readonly sources: readonly FsaCashReference[]; readonly forecastEnd?: string }
 const participantId = "d2_fsa_cash";
 const codec = "d2-fsa-cash/v2";
+const ownedParticipants = new WeakSet<HouseholdKernelParticipant>();
+export const ownsFsaCashParticipant = (participant: HouseholdKernelParticipant): boolean => ownedParticipants.has(participant);
 function incomplete(detail: string): never { throw new FsaCashIncomplete("source_not_qualified", detail); }
 
 function checkArchive(state: AuthoritativeState, s: FsaCashSource, required: boolean): boolean {
@@ -31,19 +33,16 @@ function checkArchive(state: AuthoritativeState, s: FsaCashSource, required: boo
   if (posted || proof || required) throw new FsaCashIncomplete("original_journal_unavailable", s.original.medicalReceiptId);
   return false;
 }
-function checkHistory(state: AuthoritativeState, s: FsaCashSource, sources: readonly FsaCashSource[]): void {
+const medicalKey = (planId: string, proofId: string, receiptId: string) => JSON.stringify([planId, proofId, receiptId]);
+function checkHistory(state: AuthoritativeState, s: FsaCashSource, receipts: ReadonlyMap<string, FsaCashSource>): void {
   const result = evaluateFsa(s.request);
-  const history = Object.values(state.d2SettlementReceipts ?? {}).filter((r): r is D2FsaSettlementReceipt => r.kind === "fsa_paid_reimbursement"
-    && r.source.householdId === s.original.householdId && r.source.personId === s.original.personId
-    && r.source.planId === s.original.planId && r.source.planYearId === s.original.planYearId
-    && r.effectiveAt <= s.deposit.settledAt);
+  const history = authoritativeFsaPlanReceipts(state, s.original).filter(r => r.effectiveAt <= s.deposit.settledAt);
   for (const r of s.request.receipts) {
     const h = r.reimbursement;
     if (r.proofId === s.original.proofId || h?.status !== "settled") continue;
     // Another independently sourced deposit can be later in the same period.
     // Its documentary flag must not demand or fabricate a posting ahead of its event.
-    const later = sources.find(other => other.original.proofId === r.proofId
-      && other.original.medicalReceiptId === r.receiptId && other.request.plan.planId === s.request.plan.planId);
+    const later = receipts.get(medicalKey(s.request.plan.planId, r.proofId, r.receiptId));
     const laterDeposit = later && eventsFor(later)[1];
     if (laterDeposit && (laterDeposit.at > s.deposit.settledAt ||
       laterDeposit.at === s.deposit.settledAt && precedes(eventsFor(s)[1]!, laterDeposit))) continue;
@@ -112,19 +111,47 @@ function createParticipant(configuration: FsaCashInput, format: FsaCashSourceFor
     incomplete("Distinct source references required");
   // Codec restore re-reads independent source facts instead of treating portable bytes as authority.
   input.sources.forEach(r => readFsaCashSource(r.sourceId, r.expectedSource, format));
-  return Object.freeze({ id: participantId, version: `paid-expense-reimbursement/${format}`,
+  const catalogs = new WeakMap<object, { sources: readonly FsaCashSource[]; months: ReadonlyMap<string, readonly Event[]>;
+    instants: ReadonlyMap<string, readonly Event[]>; receipts: ReadonlyMap<string, FsaCashSource>; coverageSources: readonly FsaCashSource[] }>();
+  const references = new Map(input.sources.map(reference => [reference.sourceId, reference]));
+  const participant = Object.freeze({ id: participantId, version: `paid-expense-reimbursement/${format}`,
     portableCodec: format === "v1" ? "d2-fsa-cash/v1" : codec, economicInputs: input,
     prepare: (context, period, opening, work = [], tier = "detail") => {
-      const sources = input.sources.map(r => readFsaCashSource(r.sourceId, r.expectedSource, format, context));
-      try { requalifyD2SettlementReceiptHistory(opening.state, context); }
+      const attempt = householdPreparationAttempt(opening);
+      const cached = attempt === undefined ? undefined : catalogs.get(attempt);
+      const sources = cached?.sources ?? input.sources.map(r => readFsaCashSource(r.sourceId, r.expectedSource, format, context));
+      try { if (attempt === undefined) requalifyD2SettlementReceiptHistory(opening.state, context); }
       catch (error) {
         if (error instanceof FsaCashIncomplete) throw error;
         throw new FsaCashIncomplete("source_not_qualified", error instanceof Error ? error.message : "Canonical history unavailable");
       }
-      const all = sources.flatMap(eventsFor);
+      // These references pin the entire dated FSA catalog. The selected
+      // operation still reads the publisher on both sides of its writer.
+      const events = cached === undefined ? sources.flatMap(eventsFor) : undefined;
+      const catalog = cached ?? (() => {
+        const months = new Map<string, Event[]>(), instants = new Map<string, Event[]>();
+        for (const event of events!) {
+          for (const [key, index] of [[event.at.slice(0, 7), months], [event.at, instants]] as const) {
+            const sameTime = index.get(key) ?? [];
+            sameTime.push(event);
+            index.set(key, sameTime);
+          }
+        }
+        const receipts = new Map<string, FsaCashSource>();
+        for (const source of sources) {
+          const key = medicalKey(source.request.plan.planId, source.original.proofId, source.original.medicalReceiptId);
+          if (!receipts.has(key)) receipts.set(key, source);
+        }
+        const coverageSources = input.forecastEnd === undefined ? sources : sources.filter(source =>
+          source.deposit.amount.compare(source.original.amount) < 0 || source.deposit.settledAt >= input.forecastEnd! ||
+          source.householdBank && source.deposit.status !== "posted");
+        return { sources, months, instants, receipts, coverageSources };
+      })();
+      const active = (attempt !== undefined ? catalog.months.get(period.start.slice(0, 7)) ?? [] : events!)
+        .filter(event => event.at >= period.start && event.at < period.end);
       const operations: ReturnType<HouseholdKernelParticipant["prepare"]>["operations"][number][] = [];
       const posted = new Set<string>();
-      for (const s of sources) {
+      for (const s of cached === undefined ? sources : new Set(active.map(event => event.source))) {
         if (s.original.paidAt < period.end) {
           qualifyFsaCashOriginal(s, context);
           if (checkArchive(opening.state, s, s.original.paidAt < period.start)) posted.add(originalOperationId(s));
@@ -139,7 +166,7 @@ function createParticipant(configuration: FsaCashInput, format: FsaCashSourceFor
             throw new FsaCashIncomplete("posted_journal_unavailable", "Past deposit is not canonically committed");
         }
       }
-      const active = all.filter(e => e.at >= period.start && e.at < period.end);
+      if (attempt !== undefined && cached === undefined) catalogs.set(attempt, catalog);
       for (const e of active) {
         for (const other of active) if (other !== e && other.at === e.at
           && other.source.original.bankAccountId === e.source.original.bankAccountId
@@ -158,7 +185,7 @@ function createParticipant(configuration: FsaCashInput, format: FsaCashSourceFor
           sequencingInstant: tx.date, dependsOn: [...new Set(dependencies)],
           resourceAccesses: [{ kind: "account_cash", accountId: s.original.bankAccountId, mode: e.role === "original" ? "consume" : "produce" }], traceRefs },
           execute: candidate => {
-            const ref = input.sources.find(r => r.sourceId === s.sourceId)!;
+            const ref = references.get(s.sourceId)!;
             const current = readFsaCashSource(ref.sourceId, ref.expectedSource, format, context);
             const bank = candidate.state.accounts[s.original.bankAccountId];
             if (!bank || bank.ownerId !== (current.householdBank ? current.original.householdId : current.original.personId) ||
@@ -180,7 +207,7 @@ function createParticipant(configuration: FsaCashInput, format: FsaCashSourceFor
               if (registration.nativeHousehold) applyNativeHouseholdOriginalAtomically(candidate.state, transaction, registration, context);
               else applyAccountingTransactionAtomically(candidate.state, transaction, registration);
             } else {
-              checkArchive(candidate.state, current, true); checkHistory(candidate.state, current, sources);
+              checkArchive(candidate.state, current, true); checkHistory(candidate.state, current, catalog.receipts);
               const receipt = qualifyFsaCashSource(current, context, format);
               const result = applyD2SettlementAtomically(candidate.state, receipt, context);
               if (result.status === "incomplete") throw new FsaCashIncomplete(result.reason, current.sourceId);
@@ -189,7 +216,7 @@ function createParticipant(configuration: FsaCashInput, format: FsaCashSourceFor
             }
             // Loss/amendment during posting fails the surrounding period candidate as well.
             readFsaCashSource(ref.sourceId, ref.expectedSource, format, context);
-            const facts = coverage(sources, period.end, input.forecastEnd ?? context.simulationEnd);
+            const facts = coverage(catalog.coverageSources, period.end, input.forecastEnd ?? context.simulationEnd);
             if (tier === "summary") {
               const sink = new SummaryOperationSink(transaction.legs[0]!.amount.currency); sink.transaction(transaction);
               return { ...candidate, facts: { ...facts, summary: { evidence: sink.snapshot() } } };
@@ -199,17 +226,22 @@ function createParticipant(configuration: FsaCashInput, format: FsaCashSourceFor
       }
       operations.push({ descriptor: { id: `fsa-cash:coverage:${period.start}`, domain: "fsa", operationClass: "fsa:coverage",
         sequencingInstant: period.start, dependsOn: [], resourceAccesses: [], traceRefs: [] },
-        execute: candidate => ({ ...candidate, facts: coverage(sources, period.end, input.forecastEnd ?? context.simulationEnd) }) });
+        execute: candidate => ({ ...candidate, facts: coverage(catalog.coverageSources, period.end, input.forecastEnd ?? context.simulationEnd) }) });
       return { id: participantId, operations };
     },
-    observe: (descriptor, _facts, runtime) => {
-      const events = input.sources.flatMap(r => eventsFor(readFsaCashSource(r.sourceId, r.expectedSource, format)));
+    observe: (descriptor, _facts, runtime, observation) => {
+      const attempt = observation === undefined ? undefined : householdPreparationAttempt(observation);
+      const catalog = attempt === undefined ? undefined : catalogs.get(attempt);
+      const events = catalog === undefined ? input.sources.flatMap(r => eventsFor(readFsaCashSource(r.sourceId, r.expectedSource, format)))
+        : catalog.instants.get(descriptor.sequencingInstant) ?? [];
       if (!events.some(e => e.id === descriptor.id) && events.some(e => e.at === descriptor.sequencingInstant
         && descriptor.resourceAccesses.some(a => a.accountId === e.source.original.bankAccountId)))
         incomplete("Another participant used BANK at an unordered FSA instant");
       return runtime;
     },
   } satisfies HouseholdKernelParticipant);
+  ownedParticipants.add(participant);
+  return participant;
 }
 registerHouseholdParticipantCodec({ codec, restore: value => createFsaCashParticipant(value as FsaCashInput) });
 registerHouseholdParticipantCodec({ codec: "d2-fsa-cash/v1", restore: value => createParticipant(value as FsaCashInput, "v1") });

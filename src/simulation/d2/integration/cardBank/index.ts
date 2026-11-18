@@ -4,7 +4,7 @@ import { domainId } from "../../../../identity/index.js";
 import { calculationTraceId, calculationTraceRef } from "../../../../lineage/index.js";
 import { claimId, recognitionId, settlementId } from "../../../../semantics/identity.js";
 import { applyAccountingTransactionAtomically, applyD2SettlementAtomically, d2SettlementPostingRegistration,
-  d2SettlementSourceFingerprint, registerD2SettlementSourceAuthority, requalifyD2SettlementReceiptHistory,
+  d2SettlementSourceFingerprint, hasConflictingCardReceipt, registerD2SettlementSourceAuthority, requalifyD2SettlementReceiptHistory,
   registerAuthoritativeIdentity,
   applyNativeHouseholdOriginalAtomically, registerHouseholdEconomicOriginalAuthority,
   type AuthoritativeState, type D2CardSettlementReceipt, type D2PostingRegistration,
@@ -13,7 +13,7 @@ import { sha256 } from "../../../../rules/tax/t1b/contentIdentity.js";
 import { qualifyHouseholdBankRoute } from "../householdBank/index.js";
 import { instant, type Instant } from "../../../../time/index.js";
 import { Money } from "../../../../values/index.js";
-import { applyHouseholdExecutionOverlay, type CompiledHouseholdKernel, type HouseholdKernelParticipant } from "../../../householdExecution.js";
+import { applyHouseholdExecutionOverlay, householdPreparationAttempt, type CompiledHouseholdKernel, type HouseholdKernelParticipant } from "../../../householdExecution.js";
 import type { HouseholdWorkDescriptor } from "../../../intraperiodScheduler.js";
 import { immutableConfiguration } from "../../../r3/compiledHousehold.js";
 import { registerHouseholdParticipantCodec } from "../../../r3/participantCodec.js";
@@ -286,20 +286,29 @@ const warning = (reason: string) => ({
 
 /** Configuration contains lookup IDs only. Prepare and execute independently
  * requalify the publisher; canonical state is the only balance/journal writer. */
+const ownedParticipants = new WeakSet<HouseholdKernelParticipant>();
+export const ownsCardBankParticipant = (participant: HouseholdKernelParticipant): boolean => ownedParticipants.has(participant);
 export function createCardBankParticipant(configuration: CardBankInput): HouseholdKernelParticipant {
   const input = immutableConfiguration({ sourceIds: [...configuration.sourceIds].sort() });
   if (input.sourceIds.some(id => !text(id)) || new Set(input.sourceIds).size !== input.sourceIds.length) fail("Unique source lookup IDs required");
-  return Object.freeze({ id: participantId, version: "1", portableCodec: codec, economicInputs: input,
+  const catalogs = new WeakMap<object, ReadonlyMap<string, ReadonlySet<D2CardSettlementReceipt>>>();
+  const participant = Object.freeze({ id: participantId, version: "1", portableCodec: codec, economicInputs: input,
     prepare: (context, period, opening, work = [], tier = "detail") => {
-      requalifyD2SettlementReceiptHistory(opening.state, context);
+      const attempt = householdPreparationAttempt(opening);
+      const catalog = attempt === undefined ? undefined : catalogs.get(attempt);
+      const due = catalog?.get(period.start.slice(0, 7));
+      if (attempt === undefined) requalifyD2SettlementReceiptHistory(opening.state, context);
       const operations: ReturnType<HouseholdKernelParticipant["prepare"]>["operations"][number][] = [];
       if (input.sourceIds.length) operations.push({ descriptor: { id: `card-bank:coverage:${period.start}`,
         domain: "liabilities", operationClass: "liabilities:card_coverage", sequencingInstant: period.start,
         dependsOn: [], resourceAccesses: [], traceRefs: [] },
       execute: candidate => ({ ...candidate, facts: warning("future APR, grace, tax and future-cycle projection unavailable") }) });
       const qualified: Qualified[] = [];
-      for (const sourceId of input.sourceIds) {
+      const expected = catalog === undefined ? undefined : new Map([...(due ?? [])].map(receipt => [receipt.source.sourceId, receipt]));
+      for (const sourceId of expected?.keys() ?? input.sourceIds) {
         const q = qualifyCardBankSource(sourceId, context);
+        if (expected !== undefined && (q.status !== "qualified" || !same(expected.get(sourceId), q.receipt)))
+          fail("Issuer or BANK source changed after catalog observation");
         if (q.status === "incomplete") {
           if (Object.values(opening.state.d2PostedTransactions ?? {}).some(proof => proof.registration.kind === "card_interest_payment"))
             fail("Archived card posting cannot be admitted without its independently qualified source");
@@ -312,11 +321,8 @@ export function createCardBankParticipant(configuration: CardBankInput): Househo
       for (const { receipt: r } of qualified) {
         if (r.nativeHousehold && r.nativeHousehold.original.context.runId !== context.runId)
           fail("Issuer run binding differs from actual execution context");
-        for (const prior of Object.values(opening.state.d2SettlementReceipts ?? {})) {
-          if (prior.kind === "card_interest_payment" && prior.id !== r.id && prior.source.issuerId === r.source.issuerId &&
-            (prior.source.quoteId === r.source.quoteId || prior.source.chargeId === r.source.chargeId || prior.source.statementId === r.source.statementId))
-            fail("Issuer quote, charge or statement evidence already consumed by another payment");
-        }
+        if (hasConflictingCardReceipt(opening.state, r))
+          fail("Issuer quote, charge or statement evidence already consumed by another payment");
         for (const key of [`source:${r.source.sourceApprovalId}`, `quote:${r.source.issuerId}:${r.source.quoteId}`,
           `charge:${r.source.issuerId}:${r.source.chargeId}`, `posting:${r.originalTransaction.id}`, `payment:${r.paymentTransaction.id}`,
           `authorization:${r.authorizationId}`, `approval:${r.source.paymentApprovalId}`, `claim:${r.claimId}`]) {
@@ -326,7 +332,7 @@ export function createCardBankParticipant(configuration: CardBankInput): Househo
         assertResources(opening.state, r);
         hasOriginal(opening.state, r);
       }
-      for (const proof of Object.values(opening.state.d2PostedTransactions ?? {})) {
+      for (const proof of catalog === undefined ? Object.values(opening.state.d2PostedTransactions ?? {}) : []) {
         if (proof.registration.kind !== "card_interest_payment") continue;
         const owner = qualified.find(q => (proof.registration.role === "original" ? q.receipt.originalTransaction.id
           : q.receipt.paymentTransaction.id) === proof.transaction.id);
@@ -336,6 +342,16 @@ export function createCardBankParticipant(configuration: CardBankInput): Househo
           !same(proof.registration, original ? registration(r) : d2SettlementPostingRegistration(r, "settlement")) ||
           (!original && !opening.state.d2SettlementReceipts?.[r.id]))
           fail("Archived card journal differs from independently approved posting or paid receipt");
+      }
+      if (attempt !== undefined && catalog === undefined && qualified.length === input.sourceIds.length) {
+        const months = new Map<string, Set<D2CardSettlementReceipt>>();
+        for (const { receipt } of qualified) for (const tx of [receipt.originalTransaction, receipt.paymentTransaction]) {
+          const month = tx.date.slice(0, 7);
+          const events = months.get(month) ?? new Set<D2CardSettlementReceipt>();
+          events.add(receipt);
+          months.set(month, events);
+        }
+        catalogs.set(attempt, months);
       }
       const events = qualified.flatMap(q => (["original", "settlement"] as const).map(role => ({ q, role,
         tx: role === "original" ? q.receipt.originalTransaction : q.receipt.paymentTransaction })));
@@ -393,6 +409,8 @@ export function createCardBankParticipant(configuration: CardBankInput): Househo
       return { id: participantId, operations };
     },
   } satisfies HouseholdKernelParticipant);
+  ownedParticipants.add(participant);
+  return participant;
 }
 registerHouseholdParticipantCodec({ codec, restore: value => createCardBankParticipant(value as CardBankInput) });
 

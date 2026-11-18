@@ -1,5 +1,24 @@
 # Issue #348: outward-boundary WIP and reference scope gap
 
+## Current repair checkpoint
+
+This checkpoint adds final original-source observation to standalone and
+reference VS4, the generic scenario comparison, and application comparison
+release. It associates committed source history with the immutable replay
+basis, removes duplicate warm restore admissions, separates portable export
+from cold-restore publisher counts, and checks custom callback payloads.
+Cold restore reconstructs configured source history for the admitted adapters.
+
+The new tests describe the standalone and comparison withdrawal cases, custom
+and evidence-worker callbacks, one funded retirement/J1 occurrence, and the
+HELOC-specific 1/12/24 source-byte and exact-cent checks. The local bounded
+verifier was skipped because Node was unavailable. The combined five-family
+1/12/24 independent oracle, complete publisher-byte and history-work census,
+and remaining application and replay negatives are open. Treat the new tests
+and production changes as unverified until GitHub runs them.
+
+## Earlier checkpoint at `82ec56cb`
+
 This is an incomplete checkpoint, not acceptance evidence or a merge-ready
 implementation. The monthly history optimization, combined 1/12/24 source-byte
 oracle, full HELOC cross-document admission, occurrence-complete cold replay,
