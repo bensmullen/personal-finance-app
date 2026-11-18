@@ -2816,6 +2816,14 @@ export const requalifyD2SettlementReceiptHistory = (state: AuthoritativeState, c
       throw new Error("D2_SETTLEMENT_SOURCE_INCOMPLETE: posted_journal_unavailable");
   }
 };
+/** Observe independent publishers at an outward boundary. An indexed root or
+ * archived receipt establishes structure, never publisher authority. */
+export const observeAuthoritativeSourceHistory = (state: AuthoritativeState, context: D2SettlementSourceContext): void => {
+  validateAuthoritativeState(state);
+  requalifyD2SettlementReceiptHistory(state, context);
+  requalifyRetirementDistributionHistory(state, context);
+};
+
 interface D2RemainingReimbursement {
   readonly remainingReimbursement?: { readonly status: "incomplete";
     readonly reason: "entitlement_installment_port_required"; readonly unreimbursedExpense: Money };

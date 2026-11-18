@@ -2,7 +2,7 @@ import type { HouseholdForecastPoint, PersonalHouseholdForecastReadModel } from 
 import { restoreHouseholdForecastEvidence } from "./householdProjection.js";
 import type { PortableModelEnvelope } from "../model/modelVersion.js";
 import { restorePortableHouseholdReplayArtifact, type PortableHouseholdReplayArtifact, type ReplayRestoreObserver } from "../simulation/r3/replayArtifact.js";
-import { replayHouseholdForecastWindow, householdReplayCheckpointSelection } from "../simulation/householdExecution.js";
+import { observeHouseholdForecastSources, replayHouseholdForecastWindow, householdReplayCheckpointSelection } from "../simulation/householdExecution.js";
 import { instant } from "../time/index.js";
 import { Currency, Money, decimal, RoundingPolicy } from "../values/index.js";
 import { createForecastDiagnosticEquality, createForecastDiagnosticTransport, validateForecastCatalogTable, type ForecastCatalogTable } from "./forecastDiagnosticTransport.js";
@@ -53,7 +53,7 @@ function evidenceWindow(basis: EvidenceBasis, start: string, end: string, observ
   const key = `${start}:${end}`;
   const cache = evidenceWindows.get(basis) ?? new Map<string, EvidenceWindow>();
   const cached = cache.get(key);
-  if (cached) { cache.delete(key); cache.set(key, cached); evidencePhase(observation, "replay_cached"); return cached; }
+  if (cached) { cache.delete(key); cache.set(key, cached); evidencePhase(observation, "replay_cached"); observeHouseholdForecastSources(basis); return cached; }
   const replay = replayHouseholdForecastWindow(basis, { start: instant(start), end: instant(end) }, undefined,
     (phase, counts) => { try { observation?.phase?.(phase, counts); } catch { /* Observation only. */ } });
   const boundedReplay = Object.freeze({ periods: replay.periods, closingLiabilities: replay.state.liabilities });
@@ -67,7 +67,7 @@ function evidenceWindow(basis: EvidenceBasis, start: string, end: string, observ
 export function householdEvidenceMonth(basis: EvidenceBasis, start: string, end: string, observation?: HouseholdEvidenceObserver): EvidenceReplay["periods"] {
   for (const boundedReplay of evidenceWindows.get(basis)?.values() ?? []) {
     const period = boundedReplay.periods.find(period => period.period.start === start && period.period.end === end);
-    if (period) { evidencePhase(observation, "replay_cached"); return Object.freeze([period]); }
+    if (period) { evidencePhase(observation, "replay_cached"); observeHouseholdForecastSources(basis); return Object.freeze([period]); }
   }
   return evidenceWindow(basis, start, end, observation).periods;
 }
@@ -166,6 +166,7 @@ export function restoreHouseholdEvidencePoints(basis: HouseholdEvidenceProof, se
     return { ...ref, replayArtifact: { ...address, basis } };
   }) }));
   if (restored[0]!.traceRefs.find(ref => ref.replayArtifact !== undefined)?.traceId !== fingerprint) throw new Error("Mismatched forecast identity");
+  observeHouseholdForecastSources(original);
   return restored;
 }
 

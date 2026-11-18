@@ -27,6 +27,7 @@ import {
 import {
   assertAuthoritativeStateCurrency,
   admitS4OpeningSources,
+  observeAuthoritativeSourceHistory,
   cloneAuthoritativeState,
   createIndexedExecutionState,
   createAuthoritativeState,
@@ -1165,11 +1166,14 @@ export const runCompiledHouseholdProjection = (
   observer?: PerformanceObserver,
 ): CompiledHouseholdProjectionRunResult => {
   const performance = createPerformanceSession(observer);
+  let result: CompiledHouseholdProjectionRunResult | undefined;
   try {
-    return runCompiledHouseholdProjectionInternal(request, performance);
+    result = runCompiledHouseholdProjectionInternal(request, performance);
   } finally {
     performance.finish();
   }
+  observeAuthoritativeSourceHistory(result.state, request.runContext);
+  return result;
 };
 
 export interface HouseholdForecastSummaryResult extends Omit<CompiledHouseholdProjectionRunResult, "periods"> {
@@ -1199,6 +1203,18 @@ const restoredReplayAdmission = new WeakMap<object, () => void>();
 /** Recheck independently supplied originals when a restored basis is actually used. */
 export const registerRestoredReplayAdmission = (replay: HouseholdForecastSummaryResult["replay"], admit: () => void): void => {
   restoredReplayAdmission.set(replay, admit);
+};
+
+/** Reobserve the exact admitted history without executing another forecast.
+ * Restored bases retain their independently reconstructed terminal inventory. */
+export const observeHouseholdForecastSources = (forecast: Pick<HouseholdForecastSummaryResult, "replay">): void => {
+  const admit = restoredReplayAdmission.get(forecast.replay);
+  if (admit !== undefined) admit();
+  else {
+    const state = forecastTerminalRoots.get(forecast);
+    if (state === undefined) throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: missing source history root");
+    observeAuthoritativeSourceHistory(state, forecast.replay.runContext);
+  }
 };
 
 /** Private committed root for encoding a delta against the last checkpoint. */
@@ -1310,6 +1326,7 @@ export const runHouseholdForecastSummary = (
   const summaries: HouseholdForecastSummaryPeriod[] = [];
   const checkpoints: HouseholdReplayCheckpoint[] = [];
   let terminalRoot: AuthoritativeState | undefined;
+  let forecast: HouseholdForecastSummaryResult | undefined;
   try {
     const result = runCompiledHouseholdProjectionInternal({
       compiled: { ...kernel.executable, executionKernel: kernel }, runContext,
@@ -1327,15 +1344,16 @@ export const runHouseholdForecastSummary = (
           state: cloneAuthoritativeState(state), primitiveState: createPrimitiveRuntimeStateStore(primitiveState) }));
       },
     });
-    const forecast: HouseholdForecastSummaryResult = Object.freeze({ ...result, resultTier: "summary", periods: Object.freeze(summaries),
+    forecast = Object.freeze({ ...result, resultTier: "summary", periods: Object.freeze(summaries),
       replay: Object.freeze({ kernel, runContext }) });
     forecastCheckpoints.set(forecast, Object.freeze(checkpoints));
-    if (terminalRoot !== undefined) forecastTerminalRoots.set(forecast, terminalRoot);
+    forecastTerminalRoots.set(forecast, terminalRoot ?? result.state);
     performance.counters({ replayCheckpointsRetained: checkpoints.length, summaryPeriodsRetained: summaries.length });
-    return forecast;
   } finally {
     performance.finish();
   }
+  observeHouseholdForecastSources(forecast);
+  return forecast;
 };
 
 export type HouseholdReplayPhase = "replay_started" | "replay_executed" | "verification_started"
@@ -1441,6 +1459,7 @@ export const replayHouseholdForecastWindow = (
     throw new ValidationError({ severity: "error", code: "HOUSEHOLD_REPLAY_WINDOW_INVALID",
       message: "Replay requires an aligned window of successfully committed forecast periods.", entityType: "household_projection" });
   const performance = createPerformanceSession(observer);
+  let result: CompiledHouseholdProjectionRunResult | undefined;
   try {
     restoredReplayAdmission.get(forecast.replay)?.();
     const checkpoint = (forecastCheckpoints.get(forecast) ?? []).filter(value => value.at <= selectedWindow.start).at(-1);
@@ -1463,8 +1482,11 @@ export const replayHouseholdForecastWindow = (
         message: "Immutable forecast artifacts did not reproduce the displayed forecast exactly.", entityType: "household_projection" });
     }
     report("replay_verified");
-    return Object.freeze({ ...replay, requestedHorizon: Object.freeze({ ...selectedWindow }) });
+    result = Object.freeze({ ...replay, requestedHorizon: Object.freeze({ ...selectedWindow }) });
   } finally {
     performance.finish();
   }
+  observeHouseholdForecastSources(forecast);
+  observeAuthoritativeSourceHistory(result.state, runContext);
+  return result;
 };

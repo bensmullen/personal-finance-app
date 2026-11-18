@@ -4,6 +4,7 @@ import { householdEvidenceProof, householdEvidenceSelectionMeasurements, restore
 import { runPersonalForecast } from "../../src/application/personalMvp.js";
 import type { PerformanceClock } from "../../src/application/performance.js";
 import { sampledJsHeapBytes } from "../../src/application/performance.js";
+import { restoreHouseholdForecastEvidence } from "../../src/application/householdProjection.js";
 import type { EvidenceWorkerRequest, EvidenceWorkerResponse, ForecastWorkerRequest, ForecastWorkerResponse, StandaloneWorkerRequest, StandaloneWorkerResponse } from "./protocol.js";
 
 let source: EvidenceWorkerRequest["source"];
@@ -84,10 +85,12 @@ export function executeForecastWorkerRequest(message: ForecastWorkerRequest | Ev
       ...(restoredAt === undefined || projectedAt === undefined ? {} : { replayAndProjectionMs: Math.max(0, projectedAt - restoredAt) }),
       ...(heap === undefined ? {} : { workerHeapAfterBytes: heap }) };
     report("projected");
-    return { ...boundary, outcome: "result", ...result, measurements, ownership, sourceIdentityMatched, ...(verification ? { verification } : {}), ...timing() };
+    const response = { ...boundary, outcome: "result" as const, ...result, measurements, ownership, sourceIdentityMatched, ...(verification ? { verification } : {}), ...timing() };
+    restoreHouseholdForecastEvidence(source.basis, source.model);
+    return response;
   } catch {
     source = undefined;
     // Portable messages contain no financial facts or raw runtime errors.
-    return { ...boundary, outcome: "error", ownership, sourceIdentityMatched, ...(verification ? { verification } : {}), error: "Monthly evidence has missing or mismatched period/source data. Update the forecast and retry.", ...timing() };
+    return { ...boundary, outcome: "error", ownership, sourceIdentityMatched: false, ...(verification ? { verification } : {}), error: "Monthly evidence has missing or mismatched period/source data. Update the forecast and retry.", ...timing() };
   }
 }

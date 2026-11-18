@@ -1,5 +1,5 @@
 import { Currency, DecimalAmount, Money, Percentage, Quantity, Rate, Ratio, RoundingPolicy, Unit, type RateConvention, type RoundingMode } from "../../values/index.js";
-import { equalHouseholdReplaySummaries, exportHouseholdReplayCheckpointRoots, registerHouseholdReplayCheckpoints, registerRestoredReplayAdmission, householdReplayCheckpointSelection, householdReplayTerminalRoot, runHouseholdForecastSummary, type HouseholdReplayCheckpoint, type HouseholdForecastSummaryResult, type ExecutableHouseholdProjection } from "../householdExecution.js";
+import { observeHouseholdForecastSources, equalHouseholdReplaySummaries, exportHouseholdReplayCheckpointRoots, registerHouseholdReplayCheckpoints, registerRestoredReplayAdmission, householdReplayCheckpointSelection, householdReplayTerminalRoot, runHouseholdForecastSummary, type HouseholdReplayCheckpoint, type HouseholdForecastSummaryResult, type ExecutableHouseholdProjection } from "../householdExecution.js";
 import { assertD2PostedTransactionHistoryPreserved, assertD2SettlementReceiptHistoryPreserved, createAuthoritativeState,
   authoritativeCheckpointDelta, restoreAuthoritativeCheckpointDelta, requalifyD2SettlementReceiptHistory,
   assertSsaMedicarePaymentHistoryPreserved,
@@ -314,6 +314,7 @@ export const createPortableHouseholdReplayArtifact = (forecast: HouseholdForecas
   try { observe?.({ checkpointCount: checkpoints.length, checkpointIndexNodesVisited: visited, checkpointRecordChanges: changed,
     checkpointEqualityComparisons: comparisons, encodedValues: graph.encodedValues, encodedBytes: new TextEncoder().encode(encoded).byteLength,
     materializedCheckpointStates: materialized }); } catch { /* Measurement only. */ }
+  observeHouseholdForecastSources(forecast);
   return artifact;
 };
 function requalifyReplaySources(forecast: Pick<HouseholdForecastSummaryResult, "replay" | "periods">,
@@ -513,6 +514,7 @@ export const restorePortableHouseholdReplayArtifact = (artifact: unknown, observ
       const sourceRequalificationMs = elapsed(sourceStarted, safeNow(observer));
       try { observer?.phase?.("restore_warm"); } catch { /* Observation is optional. */ }
       report("warm", cached.forecast, sourceRequalificationMs === undefined ? {} : { sourceRequalificationMs });
+      observeHouseholdForecastSources(cached.forecast);
       return cached.forecast;
     }
     const timings: RestoreTimings = {};
@@ -521,6 +523,7 @@ export const restorePortableHouseholdReplayArtifact = (artifact: unknown, observ
       version: supplied.version, encoded: supplied.encoded, integrity: supplied.integrity, forecast, modeledPayroll, sourceHistoryState, checkpoints, recheckFixedLoans,
     });
     report("cold", forecast, timings);
+    observeHouseholdForecastSources(forecast);
     return forecast;
   }
   catch (error) {

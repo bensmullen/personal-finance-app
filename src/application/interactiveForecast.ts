@@ -4,7 +4,7 @@ import { canonicalSerialize } from "../simulation/run.js";
 import type { ExecutableScenarioIntent } from "./compiler/scenarios.js";
 import type { HouseholdForecastRequest, MajorAssetDebtAddition, PersonalHouseholdForecastReadModel, PersonalHouseholdScenarioComparisonReadModel } from "./householdProjection.js";
 import type { PerformanceClock, PerformanceContext, PerformanceObserver, PerformanceRecord } from "./performance.js";
-import { runPersonalHouseholdForecast, comparePersonalHouseholdScenarioIntents, comparePersonalHouseholdMajorAssetDebtAddition } from "./householdProjection.js";
+import { observeHouseholdReadModelSources, runPersonalHouseholdForecast, comparePersonalHouseholdScenarioIntents, comparePersonalHouseholdMajorAssetDebtAddition } from "./householdProjection.js";
 import { createApplicationPerformanceObserver, forecastTransportCounters, sampledJsHeapBytes } from "./performance.js";
 import { validateForecastCatalogTable, validateForecastDiagnostics, validateForecastLawReference } from "./forecastDiagnosticTransport.js";
 
@@ -58,7 +58,9 @@ export const executeForecastWorkerRequest = (message: ForecastWorkerRequest, clo
       } catch { /* Bounded, optional diagnostics only. */ }
     }
     // Comparison APIs have no observer seam. Do not invent their timing.
-    return { ...boundary, outcome: "result", result: toForecastWorkerResult(result), records };
+    const packaged = toForecastWorkerResult(result);
+    observeHouseholdReadModelSources(packaged, message.model);
+    return { ...boundary, outcome: "result", result: packaged, records };
   } catch {
     // Runtime error text is deliberately portable and contains no personal data.
     return { ...boundary, outcome: "error", error: { code: "EXECUTION_ERROR", message: "Unexpected household execution error." }, records };

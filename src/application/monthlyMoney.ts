@@ -1,6 +1,7 @@
 import type { HouseholdForecastPoint } from "./householdProjection.js";
 import { restoreHouseholdForecastEvidence } from "./householdProjection.js";
 import { householdEvidenceMonth } from "./mortgageChartData.js";
+import { observeHouseholdForecastSources } from "../simulation/householdExecution.js";
 import { Currency, Money, decimal, RoundingPolicy, Unit } from "../values/index.js";
 import type { PortableModelEnvelope } from "../model/modelVersion.js";
 import { objects } from "./compiler/shared.js";
@@ -171,6 +172,7 @@ export function inspectMonthlyMoney(point: HouseholdForecastPoint, model?: Porta
   const denominator = payroll.isPositive() ? payroll : income;
   const totalUses = categories.reduce((sum, item) => sum.plus(Money.parse(item.amount, currency)), Money.zero(currency));
   const comparison = denominator.minus(totalUses);
+  observeHouseholdForecastSources(basis);
   return { currency: currency.code, income: income.amount.toString(), payroll: payroll.amount.toString(), otherIncome: otherIncome.amount.toString(),
     basis: payroll.isPositive() ? "gross_payroll" as const : "household_income" as const,
     denominator: denominator.amount.toString(), categories, totalUses: totalUses.amount.toString(),
