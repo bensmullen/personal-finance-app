@@ -978,7 +978,7 @@
         "PFA-DET-023",
         "PFA-TAX-015"
       ],
-      "scope": "Test-only S8-5A two-person combined S1–S5 native-source financial witness, independent exact-cent postings, rollback and portable replay. Requires independently merged #336 SSA/Medicare, #340 fixed-loan source/BANK, and #348 proportional source-history admission; no new production writer or modeled-source substitute. Full D2-A/B/C, tax, UI authoring and UAT remain with #149/#120."
+      "scope": "Test-only S8-5A two-person combined S1–S5 source-qualified financial witness, independent exact-cent postings, rollback and portable replay; original cross-domain 1/12/24 source/read/work growth assertions retained, with separately measured intrinsic cumulative legacy HELOC issuer original bytes and B1 checks (not a proportional all-family source-byte claim). Requires independently merged #336, #340, and #348 production source-history admission; no writer or modeled-source substitute. Full D2-A/B/C, tax, UI authoring and UAT remain #149/#120."
     },
     {
       "issue_number": 332,
@@ -1057,7 +1057,7 @@
         "PFA-DET-023",
         "PFA-PERF-019"
       ],
-      "scope": "Mandatory source-history admission efficiency for combined native S1–S5 FSA/card/SSA/HELOC/fixed-loan issuer and BANK posting: proportional original publisher reads, historical validation and bytes under authentic history, while retaining immediate selected-source checks, publication-boundary withdrawal rejection, canonical journal, contention rollback, replay and one supported sourced retirement correctness witness. Repeated independently revocable retirement/RMD original scaling belongs to #350. Must merge before test-only #331 resumes."
+      "scope": "Mandatory source-history admission efficiency for combined native S1–S5 FSA/card/SSA/HELOC/fixed-loan issuer and BANK posting: proportional avoidable publisher rereads, non-HELOC source bytes and redundant historical validation, preserving current original checks, outward-boundary withdrawal rejection, exact journal, rollback, replay and one supported retirement correctness witness. Existing HELOC issuer originals contain cumulative repayment checkpoints: mandatory B1/issuer checkpoint bytes and per-original validation are separately measured, not represented as proportional. Must merge before test-only #331 resumes."
     },
     {
       "issue_number": 350,
