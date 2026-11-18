@@ -66,12 +66,19 @@ describe("issue-backed roadmap traceability", () => {
     for (const id of [100, 101, 102, 105, 120, 146, 147, 148, 149]) expect(ids).toContain(id);
     for (const id of [94, 99, 103, 104]) expect(ids).not.toContain(id);
     expect(registry.stage_gates.D1_U1?.required_issue_numbers).toEqual([120]);
-    expect(registry.stage_gates.D2?.required_issue_numbers).toEqual([114, 146, 147, 148, 149, 202, 203, 204, 276, 277, 278, 279, 280, 285, 286, 331, 332, 336, 340]);
+    expect(registry.stage_gates.D2?.required_issue_numbers).toEqual([114, 146, 147, 148, 149, 202, 203, 204, 276, 277, 278, 279, 280, 285, 286, 331, 332, 336, 340, 348]);
     const fixedLoanPrerequisite = registry.issues.find(row => row.issue_number === 340)!;
     expect(fixedLoanPrerequisite.owner_stage).toBe("D2-D-S8-5A-fixed-loan-original-bank-servicing-prerequisite");
     expect(fixedLoanPrerequisite.blocking_gate).toBe("D2");
     expect(fixedLoanPrerequisite.depends_on).toEqual([276, 285, 286]);
     expect(registry.issues.find(row => row.issue_number === 331)?.depends_on).toContain(340);
+    const historyEfficiency = registry.issues.find(row => row.issue_number === 348)!;
+    expect(historyEfficiency.owner_stage).toBe("D2-D-S8-5A-proportional-source-history-admission-prerequisite");
+    expect(historyEfficiency.blocking_gate).toBe("D2");
+    expect(historyEfficiency.depends_on).toContain(340);
+    expect(historyEfficiency.depends_on).toContain(336);
+    expect(registry.issues.find(row => row.issue_number === 331)?.depends_on).toContain(348);
+    expect(roadmap).toContain("#348");
     // The register describes stable outcomes. File authorization and live task state belong to GitHub V3 issues.
     for (const row of registry.issues) {
       expect(row.scope).not.toMatch(/\bsrc\/|\btest\/(?:[\w-]+\/|[^ ]+\.(?:ts|tsx|js|mjs))|ALLOWED_PATHS|TARGET_BRANCH|PFM_TASK_V3/);
