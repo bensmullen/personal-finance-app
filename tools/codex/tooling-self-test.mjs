@@ -1136,6 +1136,9 @@ for (const failure of ['none', 'typecheck', 'unit']) {
   for (const sub of ['.codex/runtime', 'node_modules/typescript/bin', 'node_modules/vitest']) {
     fs.mkdirSync(path.join(directory, sub), { recursive: true });
   }
+  // Mimic a sandbox-protected .codex/logs path. The trusted helper must never
+  // touch it, even when typecheck and the selected unit genuinely execute.
+  fs.writeFileSync(path.join(directory, '.codex/logs'), 'sandbox-protected');
   fs.writeFileSync(path.join(directory, 'package.json'), JSON.stringify({ scripts: {
     typecheck: 'tsc --noEmit && tsc -p tsconfig.next.json',
   } }));
@@ -1160,7 +1163,8 @@ for (const failure of ['none', 'typecheck', 'unit']) {
   assert(log.includes('unit run test/affected.test.ts') === (failure !== 'typecheck'), 'unit only after full typecheck success');
   assert(result.stdout.trim().startsWith('PFM_PREFLIGHT_RESULT ') && result.stdout.trim().split('\n').length === 1,
     'all raw test output remains in ignored diagnostics, not model context');
-  assert(!fs.existsSync(path.join(directory, '.codex/logs')), 'sandboxed helper never writes protected .codex paths');
+  assert(fs.readFileSync(path.join(directory, '.codex/logs'), 'utf8') === 'sandbox-protected',
+    'sandboxed helper never writes to protected .codex paths');
   const repeated = run(process.execPath, [path.join(root, 'tools/codex/limited-local-verification.mjs'),
     'test/affected.test.ts'], { cwd: directory });
   assert(repeated.status === 0 && repeated.stdout.includes('SKIP') && repeated.stdout.includes('no tests executed'),
