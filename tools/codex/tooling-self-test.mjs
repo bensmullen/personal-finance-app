@@ -1237,7 +1237,9 @@ process.exit(${failure === 'unit' || failure.startsWith('unit-') ? 1 : 0});`);
   const invoked = run(python, [path.join(root, 'tools/codex/limited-local-verification-launcher.py'),
     'test/affected.test.ts'], { cwd: directory, env: environment });
   assert(invoked.status === 0 && invoked.stdout.includes('PFM_PREFLIGHT_RESULT '),
-    'trusted launcher must find previously installed Node without installing packages');
+    'trusted launcher must find installed Node without packages: status=' +
+      String(invoked.status) + ' stdout=' + String(invoked.stdout).slice(0,1500) +
+      ' stderr=' + String(invoked.stderr).slice(0,1500));
   const report = JSON.parse(invoked.stdout.split('PFM_PREFLIGHT_RESULT ')[1].trim());
   assert(report.status === 'PASS', 'existing Node22 runs both typecheck phases and selected unit');
   const log = fs.readFileSync(path.join(directory, report.log), 'utf8');
