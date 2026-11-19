@@ -107,7 +107,9 @@ conditions when useful. Their exact headings are not parser requirements.
   (30s); no flags, chaining, wrappers, installs or prerequisites. A missing
   environment yields SKIP. The sandboxed helper writes bounded logs and
   per-case progress only to ignored `.pfm-preflight/`; protected hook state
-  records the actual PostToolUse outcome. Timeouts are TIMEOUT/INCOMPLETE and
+  records the actual PostToolUse outcome. Process and individual test-case
+  timeouts are TIMEOUT/INCOMPLETE (mixed assertion failure retains FAIL and
+  timeout evidence), with Vitest's own retries disabled, and
   must never cause a local retry, even after other tests completed. Missing
   results, interrupted execution, SKIP and PASS also never permit a local
   retry. Only one changed-patch correction retry after an observed FAIL with
