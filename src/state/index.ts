@@ -540,7 +540,7 @@ const paymentValue = (value: unknown): string => {
     : v instanceof Money ? ["USD-money", v.currency.code, v.amount.toString()]
     : Array.isArray(v) ? v.map(plain) : v !== null && typeof v === "object"
       ? "toJSON" in v && typeof v.toJSON === "function" ? plain(v.toJSON())
-        : Object.fromEntries(Object.entries(v).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([k, x]) => [k, plain(x)])) : v;
+        : Object.fromEntries(Object.keys(v).sort().map(k => [k, plain((v as Record<string, unknown>)[k])])) : v;
   return JSON.stringify(plain(value));
 };
 const frozenPaymentValues = new WeakSet<object>();
@@ -1716,7 +1716,8 @@ const validateRetirementDistribution = (state: AuthoritativeState, key: string, 
     instant(a.deadline);
     total = total.plus(a.amount);
   }
-  if (total.compare(d.gross) > 0 || new Set(retirementKeys(d)).size !== retirementKeys(d).length)
+  const keys = retirementKeys(d);
+  if (total.compare(d.gross) > 0 || new Set(keys).size !== keys.length)
     d2Invalid("Allocation exceeds posted gross or reuses an approval/allocation identity");
 };
 const generatedRetirementRecords = new WeakSet<RetirementDistributionRecord>();
@@ -2305,6 +2306,7 @@ const validateD2Posting = (state: AuthoritativeState, key: string, proof: D2Post
     if (bank.id !== r.bankAccountId || bank.kind !== r.evidence.route.accountKind) d2Invalid("Household BANK identity/kind differs from original");
     if (r.role !== "original" || r.operationId !== c.eventId || r.personId !== c.personId ||
         r.householdId !== c.householdId || r.bankAccountId !== c.bankAccountId) d2Invalid("Household route context differs");
+    qualifyHouseholdPosting(tx, r.evidence);
     const cashLegs = tx.legs.filter(leg => leg.type === "cash");
     if (tx.legs.some(leg => !(leg.amount instanceof Money) || leg.amount.isNegative() ||
         !leg.amount.amount.fitsScale(bank.cash.currency.minorUnitScale))) d2Invalid("Household journal requires exact currency units");
@@ -2368,9 +2370,9 @@ export const validateD2PostedTransactions = (state: AuthoritativeState): void =>
   const s4Proofs = previous?.s4Proofs.fork() ?? new PersistentStringIndex<D2PostedTransactionProof>();
   const fixedLoanTotals = previous?.fixedLoanTotals.fork() ?? new PersistentStringIndex<{ readonly amount: Money; readonly inventoryDigest: string }>();
   const priorIds = previous === undefined ? undefined : identityIndexes.get(previous.identities), nextIds = identityIndexes.get(state.identities);
-  const checkIds = (proof: D2PostedTransactionProof): void => {
+  const checkIds = (proof: D2PostedTransactionProof, commitment = d2PostingKey(proof)): void => {
     if (!state.identities.postedTransactionIds.includes(proof.transaction.id) ||
-        !state.identities.externalIdempotencyKeys.includes(d2PostingKey(proof))) d2Invalid("Orphan posting proof lacks canonical commit identities");
+        !state.identities.externalIdempotencyKeys.includes(commitment)) d2Invalid("Orphan posting proof lacks canonical commit identities");
   };
   for (const change of index.changesSince(previous?.index ?? new PersistentStringIndex<object>()).changes) {
     if (change.before !== undefined) {
@@ -2378,11 +2380,13 @@ export const validateD2PostedTransactions = (state: AuthoritativeState): void =>
       continue;
     }
     const proof = state.d2PostedTransactions?.[accountingTransactionId(change.key)] ?? d2Invalid("Missing posting proof");
-    validateD2Posting(state, change.key, proof); checkIds(proof);
     // A cold archive has no trusted structural ancestry. Re-read independently
     // before accepting its first roots; warm appends use the writer's final
     // source check instead of scanning previously committed events.
     const cold = previous === undefined || nativeCheckpointImports.has(state);
+    validateD2Posting(state, change.key, proof);
+    const commitment = d2PostingKey(proof);
+    checkIds(proof, commitment);
     if (cold) {
       // The SSA proof just requalified both original owners above.
       if (proof.registration.nativeHousehold && !(proof.registration.kind === "ssa_medicare_payment" &&
@@ -2399,7 +2403,7 @@ export const validateD2PostedTransactions = (state: AuthoritativeState): void =>
     if (proof.registration.nativeHousehold || proof.registration.kind === "heloc_phase_service" || proof.registration.kind === "payroll_health_deduction" || proof.registration.kind === "household_domain" || proof.registration.kind === "fixed_loan_original" || personBankOriginalKind(proof) !== undefined)
       sourceProofs.set(proof.transaction.id, proof);
     if (isS4Posting(proof)) s4Proofs.set(proof.transaction.id, proof);
-    inventory.set(d2PostingKey(proof), proof.transaction.id);
+    inventory.set(commitment, proof.transaction.id);
     const r = proof.registration;
     if (r.kind === "fixed_loan_original") {
       const e = r.evidence, k = e.classification;
@@ -2430,9 +2434,9 @@ export const validateD2PostedTransactions = (state: AuthoritativeState): void =>
       : r.kind === "ssa_medicare_payment" ? [JSON.stringify([r.kind, r.paymentKey])]
       : [JSON.stringify([r.kind, "wage", r.deduction.source.incomeId, r.deduction.source.occurrenceId]),
         JSON.stringify([r.kind, "claim", r.deduction.source.claimId])];
-    // Cold roots authenticate the whole posting. Live composite payroll also
-    // needs the qualified health claim for the cross-posting identity index.
-    const healthSource = r.kind === "household_domain" && (cold || isCompositePayrollPosting(proof))
+    // Check the newly archived posting again after establishing its journal
+    // and identity binding. Composite payroll also indexes its health claim.
+    const healthSource = r.kind === "household_domain"
       ? qualifyHouseholdPosting(proof.transaction, r.evidence)?.deduction.source : undefined;
     if (healthSource) sourceKeys.push(JSON.stringify(["payroll_health_deduction", "claim", healthSource.claimId]));
     for (const sourceKey of sourceKeys) {
@@ -2613,13 +2617,10 @@ const validateD2Receipt = (state: AuthoritativeState, key: string, r: D2Settleme
   const bank = state.accounts[r.bankAccountId];
   if (!bank || !["checking", "savings"].includes(bank.kind) || bank.ownerId !== (r.nativeHousehold ? r.source.householdId : r.source.personId))
     d2Invalid("Receipt requires an independently source-bound owned BANK");
-  if (r.nativeHousehold) {
-    for (const role of ["original", "settlement"] as const) {
-      const a = r.nativeHousehold[role];
-      if (!a) d2Invalid("Both actual native original and settlement attachments are required");
-      qualifyNativeRegistration(role === "original" ? r.originalTransaction : r.paymentTransaction, d2SettlementPostingRegistration(r, role));
-    }
-  }
+  // The receipt must match each validated journal. Current publisher reads
+  // belong to qualifyD2Receipt, including both native source attachments.
+  if (r.nativeHousehold && (!r.nativeHousehold.original || !r.nativeHousehold.settlement))
+    d2Invalid("Both actual native original and settlement attachments are required");
   for (const amount of d2ReceiptAmounts(r))
     if (!(amount instanceof Money) || amount.isNegative() || !amount.currency.equals(bank!.cash.currency) ||
         !amount.amount.fitsScale(amount.currency.minorUnitScale)) d2Invalid("Nonnegative exact same-currency money required");
@@ -2857,13 +2858,25 @@ export const admitS4OpeningSources = (state: AuthoritativeState, current: D2Sett
 };
 /** Portable restore must call this separately from structural state validation.
  * The artifact's integrity fingerprint cannot replace source-owner admission. */
-export const requalifyD2SettlementReceiptHistory = (state: AuthoritativeState, context: D2SettlementSourceContext): void => {
+const observeD2SettlementReceiptHistory = (state: AuthoritativeState, context: D2SettlementSourceContext,
+  retirementObservedSeparately: boolean): void => {
   if (state.d2PostedTransactions === undefined && state.d2SettlementReceipts === undefined) return;
   validateD2PostedTransactions(state);
   validateD2SettlementReceipts(state);
   const receipts = Object.values(state.d2SettlementReceipts ?? {});
+  const nativePostingsObservedByReceipt = new Set<string>();
+  for (const receipt of receipts) {
+    if (!receipt.nativeHousehold) continue;
+    for (const attachment of [receipt.nativeHousehold.original, receipt.nativeHousehold.settlement])
+      if (attachment.context.asOf === context.asOf && attachment.context.dataCutoff === context.dataCutoff)
+        nativePostingsObservedByReceipt.add(attachment.transactionId);
+  }
   let settledOriginals: ReadonlySet<string> | undefined;
   for (const [, proof] of d2PostingHistories.get(state)!.sourceProofs.entries()) {
+    if (retirementObservedSeparately && proof.registration.kind === "retirement_cash_distribution") continue;
+    // The exact matched receipt observes these attachments at this same
+    // cutoff below. Unsettled originals still require their own read.
+    if (nativePostingsObservedByReceipt.has(proof.transaction.id)) continue;
     const personOriginal = personBankOriginalKind(proof);
     if (personOriginal !== undefined) {
       settledOriginals ??= new Set(receipts.map(receipt => receipt.originalTransaction.id));
@@ -2917,13 +2930,18 @@ export const requalifyD2SettlementReceiptHistory = (state: AuthoritativeState, c
       throw new Error("D2_SETTLEMENT_SOURCE_INCOMPLETE: posted_journal_unavailable");
   }
 };
+export const requalifyD2SettlementReceiptHistory = (state: AuthoritativeState, context: D2SettlementSourceContext): void =>
+  observeD2SettlementReceiptHistory(state, context, false);
+
 /** Observe independent publishers at an outward boundary. An indexed root or
  * archived receipt establishes structure, never publisher authority. */
 export const observeAuthoritativeSourceHistory = (state: AuthoritativeState, context: D2SettlementSourceContext): void => {
   if (state.d2PostedTransactions === undefined && state.d2SettlementReceipts === undefined &&
       state.retirementDistributionAllocations === undefined && state.ssaMedicarePayments === undefined) return;
   validateAuthoritativeState(state);
-  requalifyD2SettlementReceiptHistory(state, context);
+  // The retirement journal has been matched to the actual posting above.
+  // Its own observation checks the distribution source and native BANK route.
+  observeD2SettlementReceiptHistory(state, context, true);
   requalifyRetirementDistributionHistory(state, context, true);
 };
 
@@ -2951,9 +2969,12 @@ export const applyD2SettlementAtomically = (state: AuthoritativeState, input: D2
   context: D2SettlementSourceContext): D2SettlementCommitResult => {
   validateD2PostedTransactions(state);
   const receipt = freezePayment(input);
-  if (receipt.nativeHousehold) qualifyNativeRegistration(receipt.paymentTransaction,
-    d2SettlementPostingRegistration(receipt, "settlement"), context);
   validateD2Receipt(state, receipt.id, receipt);
+  if (receipt.nativeHousehold) {
+    const settlement = receipt.nativeHousehold.settlement.context;
+    if (settlement.asOf !== context.asOf || settlement.dataCutoff !== context.dataCutoff)
+      d2Invalid("Native settlement differs from the actual observation boundary");
+  }
   const qualification = qualifyD2Receipt(receipt, context);
   if (qualification.status === "incomplete") return qualification;
   validateD2SettlementReceipts(state);
@@ -3303,10 +3324,9 @@ export const applyAccountingTransactionAtomically = (
     }
     const proof = freezePayment<D2PostedTransactionProof>({ schemaVersion: "d2-shared/posted-transaction/v1",
       writer: "applyAccountingTransactionAtomically/v1", registration: proofRegistration, transaction });
-    // The new SSA proof is appended only to this isolated candidate.
-    // Its first archive validation below authenticates both original owners.
-    if (proofRegistration.kind !== "ssa_medicare_payment" ||
-        !isNativeSsaMedicareOriginalInput(candidate.ssaMedicarePayments?.[proofRegistration.paymentKey]?.sourceInputs))
+    // Attached native proofs are validated when this isolated candidate's
+    // archive and receipt indexes advance below.
+    if (proofRegistration.nativeHousehold === undefined)
       validateD2Posting(candidate, transaction.id, proof);
     generatedD2PostingProofs.add(proof);
     const archive = candidate.d2PostedTransactions ?? createD2PostingRecord(new PersistentStringIndex<D2PostedTransactionProof>());

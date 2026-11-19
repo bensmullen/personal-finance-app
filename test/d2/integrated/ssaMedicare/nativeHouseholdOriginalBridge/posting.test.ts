@@ -193,10 +193,10 @@ describe("independent native SSA and Medicare originals", () => {
     const restored = restorePortableHouseholdReplayArtifact(portable);
     const before = { ...originalReadCounts };
     expect(restorePortableHouseholdReplayArtifact(retained).periods).toEqual(summary.periods);
-    // Two reads each for the combined receipt/frontier check, the state
-    // receipt check, and the two independent economic original authorities.
-    expect(originalReadCounts.ssa - before.ssa).toBe(8 * events.length);
-    expect(originalReadCounts.medicare - before.medicare).toBe(8 * events.length);
+    // The configured frontier and the archived journal each rebuild the
+    // payment through A1/C2. Each rebuild reads and rechecks both publishers.
+    expect(originalReadCounts.ssa - before.ssa).toBe(4 * events.length);
+    expect(originalReadCounts.medicare - before.medicare).toBe(4 * events.length);
     const selected = summary.periods[12]!.period;
     expect(replayHouseholdForecastWindow(restored, selected).state).toEqual(summary.state);
     faults.unavailable = events[12]!.eventId;

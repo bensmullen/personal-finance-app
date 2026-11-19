@@ -35,7 +35,7 @@ import { cutoff as publicationDate, originalPayment, providers as domainPublishe
 import { fixture as ssaFixture, ids } from "../../ssaMedicare/scenario.js";
 
 const testId = (index: number) => `34800000-0000-4000-8000-${String(index).padStart(12, "0")}`;
-const bytes = (value: unknown) => new TextEncoder().encode(canonicalSerialize(value)).byteLength;
+const bytes = (value: unknown) => Buffer.byteLength(canonicalSerialize(value));
 
 function mapDocument<T>(value: T, change: (field: string) => string): T {
   const visit = (field: unknown): unknown => {
@@ -369,12 +369,9 @@ function expectCommittedOriginals(state: AuthoritativeState, count: number): voi
 describe("combined independent FSA/card/SSA/HELOC/fixed loan original history", () => {
   it("posts 1/12/24 distinct installments with proportional non-HELOC publisher reads and bytes", () => {
     const measuredLinearFamilies = families.filter(family => family !== "helocIssuer");
-    const sourceMeasurements: { count: number; phase: string; work: Partial<Record<Family, SourceWork>> }[] = [];
-    const indexMeasurements: { count: number; phase: string; counters: Record<string, number> }[] = [];
     const baseline = new Map<string, SourceWork>();
     const structuralAt12 = new Map<string, number>();
     const limitReads = (phase: string, count: number, work: ReadonlyMap<Family, SourceWork> = reads) => {
-      sourceMeasurements.push({ count, phase, work: Object.fromEntries([...work].map(([family, stats]) => [family, { ...stats }])) });
       for (const family of measuredLinearFamilies) {
         const stats = work.get(family);
         expect(stats?.count, `${phase} ${family}`).toBeGreaterThanOrEqual(count);
@@ -390,17 +387,20 @@ describe("combined independent FSA/card/SSA/HELOC/fixed loan original history", 
     };
     let bytesAt12 = 0;
     let nodesAt12 = 0;
-    const measurements: { count: number; phase: string; cpuMicroseconds: number; wallMs: number }[] = [];
     const measure = <T>(count: number, phase: string, run: () => T): T => {
       const cpuAtStart = process.cpuUsage();
       const started = performance.now();
-      const result = run();
-      const cpu = process.cpuUsage(cpuAtStart);
-      measurements.push({ count, phase, cpuMicroseconds: cpu.user + cpu.system, wallMs: performance.now() - started });
-      return result;
+      try {
+        return run();
+      } finally {
+        const cpu = process.cpuUsage(cpuAtStart);
+        console.info("Synthetic combined source phase", JSON.stringify({ count, phase,
+          cpuMicroseconds: cpu.user + cpu.system, wallMs: performance.now() - started, sources: Object.fromEntries(reads) }));
+      }
     };
     for (const count of [1, 12, 24]) {
-      const { kernel, context, fixed, helocs, periods, retirement } = combined(count);
+      reads.clear();
+      const { kernel, context, fixed, helocs, periods, retirement } = measure(count, "fixture", () => combined(count));
       const n = BigInt(count);
       const expectedCash = [money("1500"), money(String(6000n - 200n * n)), money(String(2000n + 1300n * n)),
         money(String(500n - 11n * n)), money(String(100n - n))];
@@ -452,7 +452,7 @@ describe("combined independent FSA/card/SSA/HELOC/fixed loan original history", 
           if (count === 12) structuralAt12.set(key, value);
           if (count === 24) expect(value, key).toBeLessThanOrEqual(3 * structuralAt12.get(key)!);
         }
-        indexMeasurements.push({ count, phase: tier, counters: Object.fromEntries(structural) });
+        console.info("Synthetic combined execution index", JSON.stringify({ count, tier, counters: Object.fromEntries(structural) }));
         expect(beforeRelease).toBeDefined();
         limitReads(`${tier} execution`, count, beforeRelease);
         const release = new Map<Family, SourceWork>();
@@ -461,6 +461,7 @@ describe("combined independent FSA/card/SSA/HELOC/fixed loan original history", 
           release.set(family, { count: total.count - (earlier?.count ?? 0), bytes: total.bytes - (earlier?.bytes ?? 0),
             consumedEnvelopeBytes: total.consumedEnvelopeBytes - (earlier?.consumedEnvelopeBytes ?? 0) });
         }
+        console.info("Synthetic combined source release", JSON.stringify({ count, tier, sources: Object.fromEntries(release) }));
         limitReads(`${tier} release`, count, release);
         limitReads(tier, count);
         expect(reads.get("ssaInstallment")!.count).toBeLessThanOrEqual(20 * count);
@@ -488,13 +489,13 @@ describe("combined independent FSA/card/SSA/HELOC/fixed loan original history", 
       expect(cold?.cache).toBe("cold");
       expect(cold?.checkpointFullStateMaterializations ?? 0).toBe(0);
       expect(exported?.materializedCheckpointStates).toBe(0);
-      indexMeasurements.push({ count, phase: "portable checkpoints", counters: {
+      console.info("Synthetic combined portable index", JSON.stringify({ count, counters: {
         serializedBytes: wire.length, helocIssuerRows: intrinsicRows, helocIssuerBytes: intrinsicBytes,
         exportIndexNodesVisited: exported?.checkpointIndexNodesVisited ?? 0,
         exportRecordChanges: exported?.checkpointRecordChanges ?? 0,
         restoreIndexNodesVisited: cold?.checkpointIndexNodesVisited ?? 0,
         restoreRecordChanges: cold?.checkpointRecordChanges ?? 0,
-      } });
+      } }));
       if (count === 12) nodesAt12 = (exported?.checkpointIndexNodesVisited ?? 0) + (cold?.checkpointIndexNodesVisited ?? 0);
       if (count === 24) expect((exported?.checkpointIndexNodesVisited ?? 0) + (cold?.checkpointIndexNodesVisited ?? 0))
         .toBeLessThanOrEqual(3 * nodesAt12);
@@ -510,10 +511,9 @@ describe("combined independent FSA/card/SSA/HELOC/fixed loan original history", 
       const latest = measure(count, "terminal window", () => replayHouseholdForecastWindow(restored, terminal));
       limitReads("terminal window", count);
       expect(latest.state).toEqual(summary.state);
-      expect(replayHouseholdForecastWindow(restored, terminal)).toEqual(latest);
+      reads.clear();
+      expect(measure(count, "repeat terminal window", () => replayHouseholdForecastWindow(restored, terminal))).toEqual(latest);
     }
-    console.info("Synthetic combined source history timings", JSON.stringify(measurements));
-    console.info("Synthetic combined source and index measurements", JSON.stringify({ sourceMeasurements, indexMeasurements }));
   }, 60_000);
 
   it("refuses a committed SSA original withdrawn by a replay-phase callback", () => {
@@ -588,9 +588,16 @@ describe("combined independent FSA/card/SSA/HELOC/fixed loan original history", 
         throw new Error("Expected encoded terminal identities");
       return list as { kind: "array"; value: string[] };
     };
-    const commitmentPrefix = idempotencyKey("d2-shared:posted-proof", "sentinel").slice(0, -"8:sentinel".length);
-    const commitments = added("externalIdempotencyKeys").value.filter(key =>
-      key.startsWith(commitmentPrefix) && key.endsWith(`"transactionId":"${eventId}","writer":"${proof.writer}"}`));
+    const commitmentNamespace = "d2-shared:posted-proof";
+    const commitmentPrefix = idempotencyKey(commitmentNamespace, "sentinel").slice(0, -"8:sentinel".length);
+    const commitments = added("externalIdempotencyKeys").value.filter(key => {
+      if (!key.startsWith(commitmentPrefix)) return false;
+      const binding = key.slice(key.indexOf(":", commitmentPrefix.length) + 1);
+      if (!binding.startsWith("{") || idempotencyKey(commitmentNamespace, binding) !== key) return false;
+      const value = JSON.parse(binding) as { transactionId?: string; writer?: string; registration?: { paymentKey?: string } };
+      return value.transactionId === proof.transaction.id && value.writer === proof.writer &&
+        value.registration?.paymentKey === receipt.id;
+    });
     expect(commitments).toHaveLength(1);
     remove("ssaMedicarePayments", receipt.id);
     remove("d2PostedTransactions", eventId);

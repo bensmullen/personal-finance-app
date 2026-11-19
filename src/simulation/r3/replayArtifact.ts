@@ -1,5 +1,5 @@
 import { Currency, DecimalAmount, Money, Percentage, Quantity, Rate, Ratio, RoundingPolicy, Unit, type RateConvention, type RoundingMode } from "../../values/index.js";
-import { observeHouseholdForecastSources, equalHouseholdReplaySummaries, exportHouseholdReplayCheckpointRoots, registerHouseholdReplayCheckpoints, registerRestoredReplayAdmission, householdReplayCheckpointSelection, householdReplayTerminalRoot, runHouseholdForecastSummary, type HouseholdReplayCheckpoint, type HouseholdForecastSummaryResult, type ExecutableHouseholdProjection } from "../householdExecution.js";
+import { observeHouseholdForecastSources, assertHouseholdReplayRegenerates, exportHouseholdReplayCheckpointRoots, registerHouseholdReplayCheckpoints, registerRestoredReplayAdmission, householdReplayCheckpointSelection, householdReplayTerminalRoot, type HouseholdReplayCheckpoint, type HouseholdForecastSummaryResult, type ExecutableHouseholdProjection } from "../householdExecution.js";
 import { assertD2PostedTransactionHistoryPreserved, assertD2SettlementReceiptHistoryPreserved, createAuthoritativeState, observeAuthoritativeSourceHistory,
   authoritativeCheckpointDelta, restoreAuthoritativeCheckpointDelta, requalifyD2SettlementReceiptHistory,
   assertSsaMedicarePaymentHistoryPreserved,
@@ -72,6 +72,27 @@ const usesFixedLoanOriginals = (executable: ExecutableHouseholdProjection): bool
   executable.liabilityInput?.loans.some(loan => loan.originalSource !== undefined) === true;
 
 interface EncodingGraph { readonly identities: Map<object, Wire>; readonly content: Map<string, Wire>; readonly active: Set<object>; encodedValues: number }
+const graphEdge = (wire: Wire): Wire =>
+  typeof wire === "object" && wire !== null && wire.kind === "definition"
+    ? { kind: "reference", value: (wire.value as [number, Wire])[0] } : wire;
+
+const graphContentKey = (wire: Wire): string => {
+  if (typeof wire !== "object" || wire === null) return JSON.stringify(wire);
+  const { kind, value } = wire;
+  // Only container codecs carry nested graph edges. Normalize their immediate
+  // children without a recursive JSON replacer or expanding a shared history.
+  switch (kind) {
+    case "record": return JSON.stringify({ kind, value: (value as [string, Wire][]).map(([key, child]) => [key, graphEdge(child)]) });
+    case "array": return JSON.stringify({ kind, value: (value as Wire[]).map(graphEdge) });
+    case "rate": {
+      const [amount, convention] = value as [string, Wire];
+      return JSON.stringify({ kind, value: [amount, graphEdge(convention)] });
+    }
+    case "tax_economics":
+    case "tax_diagnostics": return JSON.stringify({ kind, value: graphEdge(value as Wire) });
+    default: return JSON.stringify(wire);
+  }
+};
 const encode = (value: unknown, graph?: EncodingGraph): Wire => {
   if (graph !== undefined) graph.encodedValues++;
   if (graph === undefined || value === null || typeof value !== "object") return encodeValue(value, graph);
@@ -87,15 +108,7 @@ const encode = (value: unknown, graph?: EncodingGraph): Wire => {
   // key, retaining quadratic/cubic intermediate strings in graph.content.
   // Graph IDs are unique within this artifact, so reference-key equality is
   // still exact (and content deduplication remains deterministic).
-  const key = JSON.stringify(payload, (_field, nested: unknown) => {
-    if (nested !== null && typeof nested === "object" && !Array.isArray(nested) &&
-        "kind" in nested && nested.kind === "definition" &&
-        "value" in nested && Array.isArray(nested.value) &&
-        typeof nested.value[0] === "number") {
-      return { kind: "reference", value: nested.value[0] };
-    }
-    return nested;
-  }), shared = graph.content.get(key);
+  const key = graphContentKey(payload), shared = graph.content.get(key);
   if (shared !== undefined) { graph.identities.set(value, shared); return shared; }
   const id = graph.content.size, reference = { kind: "reference", value: id };
   graph.content.set(key, reference); graph.identities.set(value, reference);
@@ -329,35 +342,14 @@ function validateReplaySsaOccurrences(forecast: Pick<HouseholdForecastSummaryRes
 
 function admitConfiguredReplayHistory(forecast: Pick<HouseholdForecastSummaryResult, "replay" | "periods" | "runMetadata">,
   state: AuthoritativeState, checkpoints: readonly HouseholdReplayCheckpoint[], verifyFullInventory: boolean): (() => void) | undefined {
-  const { kernel, runContext } = forecast.replay;
-  const fixedLoans = usesFixedLoanOriginals(kernel.executable);
+  const fixedLoans = usesFixedLoanOriginals(forecast.replay.kernel.executable);
   if (!fixedLoans && !verifyFullInventory) return undefined;
   // Independently regenerate the dated occurrence inventory on cold admission.
   // Warm admissions keep the admitted journal and reobserve its actual sources.
-  const regenerate = () => runHouseholdForecastSummary({ kernel, runContext });
-  const fixedObservations = fixedLoans ? captureFixedLoanReplayObservations(regenerate) : undefined;
-  const expected = fixedObservations?.result ?? regenerate();
-  const mismatch = (): never => {
-    throw new Error(`HOUSEHOLD_REPLAY_BASIS_MISMATCH: ${fixedLoans ? "fixed loan " : ""}committed history differs from independent execution`);
-  };
-  if (canonicalSerialize(expected.runMetadata) !== canonicalSerialize(forecast.runMetadata) ||
-      !equalHouseholdReplaySummaries(expected.periods, forecast.periods)) mismatch();
-  const expectedAt = new Map(exportHouseholdReplayCheckpointRoots(expected).map(checkpoint => [checkpoint.at, checkpoint]));
-  let archivedBefore = kernel.executable.reconciledOpeningState, expectedBefore = archivedBefore;
-  const compare = (archived: AuthoritativeState, reconstructed: AuthoritativeState) => {
-    if (canonicalSerialize(encodeStateDelta(archived, archivedBefore)) !==
-        canonicalSerialize(encodeStateDelta(reconstructed, expectedBefore))) mismatch();
-    archivedBefore = archived;
-    expectedBefore = reconstructed;
-  };
-  for (const checkpoint of checkpoints) {
-    const reconstructed = expectedAt.get(checkpoint.at) ?? mismatch();
-    if (canonicalSerialize(checkpoint.primitiveState) !== canonicalSerialize(reconstructed.primitiveState) ||
-        canonicalSerialize(checkpoint.runtime) !== canonicalSerialize(reconstructed.runtime)) mismatch();
-    compare(checkpoint.state, reconstructed.state);
-  }
-  compare(state, householdReplayTerminalRoot(expected));
-  return fixedObservations?.recheck;
+  const regenerate = () => assertHouseholdReplayRegenerates(forecast, state, checkpoints, fixedLoans);
+  if (fixedLoans) return captureFixedLoanReplayObservations(regenerate).recheck;
+  regenerate();
+  return undefined;
 }
 
 const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObserver, timings: RestoreTimings = {}, sample: () => void = () => {}, independentSource?: unknown): {
@@ -440,12 +432,12 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
   const verifyFullInventory = supplied.version === "household-replay/v3" &&
     (admittedExecutable.participants?.some(participant => ownsFsaCashParticipant(participant) || ownsCardBankParticipant(participant) ||
       ownsHelocServicingParticipant(participant) || participant.portableCodec === "d2-retirement-cash/v3") ?? false);
-  const regenerate = usesFixedLoanOriginals(admittedExecutable) || verifyFullInventory;
   const recheckFixedLoans = measure("sourceRequalificationMs", () => {
     validateReplaySsaOccurrences(forecast, sourceHistoryState, checkpoints);
-    if (observer?.phase !== undefined) requalifyD2SettlementReceiptHistory(sourceHistoryState, restored.runContext);
-    if (observer?.phase !== undefined || regenerate)
+    if (observer?.phase !== undefined) {
+      requalifyD2SettlementReceiptHistory(sourceHistoryState, restored.runContext);
       requalifyRetirementDistributionHistory(sourceHistoryState, restored.runContext, true);
+    }
     return admitConfiguredReplayHistory(forecast, sourceHistoryState, checkpoints, verifyFullInventory);
   });
   try { observer?.phase?.("source_requalified"); } catch { /* Observation is optional. */ }
