@@ -1,13 +1,47 @@
 import { expect, it, vi } from "vitest";
 import { validateAuthoritativeState } from "../../../../../src/state/index.js";
 import { attachRetirementCash, evaluateFundedRmdSatisfaction } from "../../../../../src/simulation/d2/integration/retirementCash/index.js";
-import { qualifyRetirementRecordedSource, readRetirementRawSource } from "../../../../../src/simulation/d2/integration/retirementCash/source.js";
+import { qualifyRetirementRawSource, qualifyRetirementRecordedSource, readRetirementRawSource, retirementRawSourceDigest } from "../../../../../src/simulation/d2/integration/retirementCash/source.js";
 import { observeHouseholdForecastSources, replayHouseholdForecastWindow, runHouseholdKernel } from "../../../../../src/simulation/householdExecution.js";
 import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact, type ReplayRestoreMeasurement } from "../../../../../src/simulation/r3/replayArtifact.js";
 import { canonicalSerialize } from "../../../../../src/simulation/run.js";
+import { instant } from "../../../../../src/time/index.js";
 import { money } from "../../../../../src/values/index.js";
 import { funded, sources } from "../../retirementCash/fundedScenario.js";
 import { fixture, ids } from "../../retirementCash/scenario.js";
+
+it("checks the fresh retirement publication and cutoff even after evaluating identical contents", () => {
+  const f = fixture(), plan = funded(f, "reobserved-computation");
+  const original = { ...plan.raw, availability: [...plan.raw.availability] };
+  const reads = vi.spyOn(sources, "get");
+  const occurrence = original.availability[0]!;
+  try {
+    const first = readRetirementRawSource(plan.reference, f.context)!;
+    const pinned = { ...plan.reference, contentDigest: retirementRawSourceDigest(first) };
+    const qualifies = (raw: typeof first, context = f.context) => qualifyRetirementRawSource(raw, occurrence.operationId, context).status;
+    expect(qualifies(first)).toBe("qualified");
+    sources.set(original.sourceId, original);
+    const reread = readRetirementRawSource(pinned, f.context)!;
+    expect(reread).toBe(first);
+    expect(qualifies(reread)).toBe("qualified");
+
+    const early = { ...f.context, dataCutoff: instant(new Date(Date.parse(occurrence.knownAt) - 1).toISOString()) };
+    expect(qualifies(readRetirementRawSource(pinned, early)!, early)).toBe("incomplete");
+
+    // Reuse the same publisher object identity with a changed nested original.
+    original.availability[0] = { ...occurrence, knownAt: instant(new Date(Date.parse(occurrence.knownAt) + 1).toISOString()) };
+    expect(readRetirementRawSource(pinned, f.context)).toBeUndefined();
+    expect(qualifies(readRetirementRawSource(plan.reference, f.context)!)).toBe("incomplete");
+    expect(first.availability[0]).toEqual(occurrence);
+
+    sources.delete(original.sourceId);
+    expect(readRetirementRawSource(pinned, f.context)).toBeUndefined();
+    expect(reads).toHaveBeenCalledTimes(6);
+  } finally {
+    reads.mockRestore();
+    sources.delete(original.sourceId);
+  }
+});
 
 // The protected 1/2/13 benchmark owns the ordinary CI budget. Detailed
 // instrumentation for the full batch runs only in a separate profiling job.

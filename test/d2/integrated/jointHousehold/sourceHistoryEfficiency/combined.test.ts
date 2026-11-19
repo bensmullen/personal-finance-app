@@ -82,10 +82,10 @@ function meterEnvelope<T>(original: T, complete: () => void): T {
   }
   return visit(original) as T;
 }
-function observe<T>(family: Family, original: T | undefined): T | undefined {
+function observe<T>(family: Family, original: T | undefined, issuedBytes?: number): T | undefined {
   if (original === undefined) return undefined;
   const stats = reads.get(family) ?? { count: 0, bytes: 0, consumedEnvelopeBytes: 0 };
-  const size = bytes(original);
+  const size = issuedBytes ?? bytes(original);
   stats.count++;
   stats.bytes += size;
   reads.set(family, stats);
@@ -224,9 +224,15 @@ function combined(count: number) {
   const periods = utcMonthlyPeriods(context.simulationStart, count + 1);
   const events = periods.slice(0, count).map(period => publishBenefit(period.start.slice(0, 7), context.dataCutoff));
   const helocs = mapDocument(documents(count, true), value => scope(helocIds, value));
-  const issuer = new Map(helocs.map(pair => [pair.issuer.sourceId, pair.issuer]));
+  // The fixture only publishes these fixed issuer documents. Account for the
+  // same bytes on every read without reserializing each cumulative original
+  // inside the test publisher. The engine still consumes the complete original.
+  const issuer = new Map(helocs.map(pair => [pair.issuer.sourceId, { original: pair.issuer, issuedBytes: bytes(pair.issuer) }]));
   const bank = new Map(helocs.map(pair => [pair.bank.id, pair.bank]));
-  publisher.issuer = id => observe("helocIssuer", issuer.get(id));
+  publisher.issuer = id => {
+    const publication = issuer.get(id);
+    return observe("helocIssuer", publication?.original, publication?.issuedBytes);
+  };
   publisher.bank = id => observe("helocBank", bank.get(id));
   const loan = loanFixture("auto", "growth", count).input.loans[0]!;
   const originalSource = { ...loan.originalSource!, publisherId: lenderId };
@@ -523,6 +529,7 @@ describe("combined independent FSA/card/SSA/HELOC/fixed loan original history", 
     const artifact = createPortableHouseholdReplayArtifact(summary);
     const transported = { ...artifact };
     const restored = restorePortableHouseholdReplayArtifact(transported, {
+      now: () => performance.now(),
       record: () => { transported.encoded = "invalid artifact"; },
     });
     // The restored basis belongs to the verified wire, including when the

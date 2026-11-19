@@ -118,10 +118,8 @@ const ownedParticipants = new WeakSet<object>();
 registerHouseholdCallbackOwner("retirement_cash", participant => ownedParticipants.has(participant));
 const same = (a: unknown, b: unknown): boolean => canonicalSerialize(a) === canonicalSerialize(b);
 const compareText = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
-const ordered = <T>(values: readonly T[]): readonly T[] => [...values].sort((a, b) => {
-  const left = canonicalSerialize(a), right = canonicalSerialize(b);
-  return left < right ? -1 : left > right ? 1 : 0;
-});
+const ordered = <T>(values: readonly T[]): readonly T[] => values.map(value => ({ value, key: canonicalSerialize(value) }))
+  .sort((a, b) => compareText(a.key, b.key)).map(item => item.value);
 /** Unordered evidence is canonicalized for identity, never used as priority. */
 function snapshot(configuration: RetirementCashInput): RetirementCashInput {
   const raw = configuration.withdrawals;

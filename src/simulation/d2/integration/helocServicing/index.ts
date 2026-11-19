@@ -52,10 +52,12 @@ function principalHistory(state: AuthoritativeState, q: QualifiedHelocService, c
   inherited?: ReadonlySet<D2HelocSettlementReceipt["id"]>,
   verifiedRepayments?: WeakMap<D2HelocSettlementReceipt, D2PostedTransactionProof>): void {
   const c = q.document.request.checkpoint, r = q.receipt, history = c.history;
+  const closingAt = serviceInstant(c.closingAt);
   const repayments = Object.values(state.d2SettlementReceipts ?? {}).filter((x): x is D2HelocSettlementReceipt =>
-    x.kind === "heloc_phase_service" && x.liabilityId === r.liabilityId && x.effectiveAt <= serviceInstant(c.closingAt));
+    x.kind === "heloc_phase_service" && x.liabilityId === r.liabilityId && x.effectiveAt <= closingAt);
   const actualRepayments = new Map(repayments.map(row => [row.paymentTransaction.id, row]));
   const reportedHistory = new Map(history.map(row => [row.postingId, row]));
+  const reportedRows = inherited === undefined || inherited.size > 0 ? new Map<string, string>() : undefined;
   for (const old of repayments) {
     if (old.source.issuerId !== r.source.issuerId || old.source.lineId !== r.source.lineId
       || old.source.personId !== r.source.personId || old.source.householdId !== r.source.householdId
@@ -74,7 +76,14 @@ function principalHistory(state: AuthoritativeState, q: QualifiedHelocService, c
     if (prior.originalAt !== c.originalAt || !prior.originalPrincipal.equals(c.originalPrincipal) || !same(prior.originalSource, c.originalSource)
       || prior.history.some(h => {
         const reported = reportedHistory.get(h.postingId);
-        return reported === undefined || !same(reported, h);
+        if (reported === undefined) return true;
+        if (reportedRows === undefined) return !same(reported, h);
+        let key = reportedRows.get(h.postingId);
+        if (key === undefined) {
+          key = canonicalSerialize(reported);
+          reportedRows.set(h.postingId, key);
+        }
+        return key !== canonicalSerialize(h);
       }))
       fail("Original principal or already posted historical evidence changed between installments");
   }

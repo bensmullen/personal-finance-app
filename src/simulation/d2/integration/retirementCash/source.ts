@@ -4,7 +4,7 @@ import { calculationTraceId } from "../../../../lineage/index.js";
 import { registerHouseholdEconomicOriginalAuthority, registerRetirementDistributionSourceAuthority, retirementDistributionSourceFingerprint,
   type AuthoritativeState, type D2SettlementSourceContext, type RetirementDistributionRecord, type RetirementSourceQualification } from "../../../../state/index.js";
 import { civilDate, instant, type Instant } from "../../../../time/index.js";
-import { Money, USD } from "../../../../values/index.js";
+import { DecimalAmount, Money, USD } from "../../../../values/index.js";
 import { sha256 } from "../../../../rules/tax/t1b/contentIdentity.js";
 import { immutableConfiguration } from "../../../r3/compiledHousehold.js";
 import { canonicalSerialize } from "../../../run.js";
@@ -32,28 +32,81 @@ let provider: RetirementRawSourcePort | undefined;
 const same = (a: unknown, b: unknown) => canonicalSerialize(a) === canonicalSerialize(b);
 const at = (date: string) => instant(`${date}T00:00:00.000Z`);
 const canonicalRaw = (value: unknown): unknown => {
-  if (Array.isArray(value)) return value.map(canonicalRaw).sort((a, b) => {
-    const left = canonicalSerialize(a), right = canonicalSerialize(b);
-    return left < right ? -1 : left > right ? 1 : 0;
-  });
+  if (Array.isArray(value)) return value.map(item => {
+    const normalized = canonicalRaw(item);
+    return { normalized, key: canonicalSerialize(normalized) };
+  }).sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0).map(item => item.normalized);
   if (value && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null))
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, canonicalRaw(item)]));
   return value;
 };
 
+// Publisher objects can be mutable, even when the lookup returns the same
+// identity. Walk the latest response before sharing its detached snapshot.
+// Compare ordered inputs as observed; the digest's set normalization is only
+// a change witness. Unknown value types take the uncached path.
+function matchesObservedValue(value: unknown, snapshot: unknown): boolean {
+  if (!value || typeof value !== "object" || !snapshot || typeof snapshot !== "object")
+    return typeof value !== "function" && Object.is(value, snapshot);
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.getPrototypeOf(snapshot)) return false;
+  if (prototype === Money.prototype) {
+    if (value !== snapshot || !Object.isFrozen(value) || Reflect.ownKeys(value).length !== 2) return false;
+    const amount: unknown = Object.getOwnPropertyDescriptor(value, "amount")?.value;
+    return Object.getOwnPropertyDescriptor(value, "currency")?.value === USD && amount instanceof DecimalAmount
+      && Object.getPrototypeOf(amount) === DecimalAmount.prototype && Object.isFrozen(amount)
+      && Reflect.ownKeys(amount).length === 0;
+  }
+  if (value === USD) return snapshot === USD;
+  if (prototype === Array.prototype) {
+    const left = value as readonly unknown[], right = snapshot as readonly unknown[];
+    if (left.length !== right.length || Reflect.ownKeys(left).length !== left.length + 1) return false;
+    for (let i = 0; i < left.length; i++) {
+      if (!Object.hasOwn(left, i) || !matchesObservedValue(left[i], right[i])) return false;
+    }
+    return true;
+  }
+  if (prototype !== Object.prototype) return false;
+  const left = value as Record<string, unknown>, right = snapshot as Record<string, unknown>;
+  const keys = Object.keys(left), expected = Object.keys(right);
+  return keys.length === expected.length && keys.every((key, index) =>
+    key === expected[index] && matchesObservedValue(left[key], right[key]));
+}
+
+// One detached snapshot per observation context. This also handles providers
+// that return a new envelope on each call without retaining their old objects.
+const recentOriginals = new WeakMap<D2SettlementSourceContext, RetirementRawSource>();
+interface OriginalComputation {
+  digest?: string;
+  legacy?: string;
+  a4?: ReturnType<typeof evaluateA4>;
+}
+const originalComputations = new WeakMap<RetirementRawSource, OriginalComputation>();
+const serializeOriginal = (raw: RetirementRawSource): string => canonicalSerialize(canonicalRaw(raw));
+
 /** Full original evidence, including identity, cash, approvals and prior usage.
  * Evidence arrays are sets; explicit ordering edges retain economic precedence.
  * This version is a change witness, never publisher authentication. */
-export const retirementRawSourceDigest = (raw: RetirementRawSource): string =>
-  `retirement-raw/v2:sha256:${sha256(canonicalSerialize(canonicalRaw(raw)))}`;
+export function retirementRawSourceDigest(raw: RetirementRawSource): string {
+  const computation = originalComputations.get(raw);
+  if (computation?.digest !== undefined) return computation.digest;
+  const digest = `retirement-raw/v2:sha256:${sha256(serializeOriginal(raw))}`;
+  if (computation) computation.digest = digest;
+  return digest;
+}
+
+function legacyWitness(raw: RetirementRawSource): string {
+  const computation = originalComputations.get(raw);
+  return computation ? computation.legacy ??= serializeOriginal(raw) : serializeOriginal(raw);
+}
 
 /** Regenerate old witnesses from the live original; never echo archived bytes. */
 export function qualifyRetirementRecordedSource(raw: RetirementRawSource, operationId: string,
   context: D2SettlementSourceContext, ruleVersion: string): RetirementSourceQualification {
-  const legacy = canonicalSerialize(canonicalRaw(raw));
-  if (ruleVersion !== legacy && ruleVersion !== retirementRawSourceDigest(raw))
+  const legacy = typeof ruleVersion === "string" && ruleVersion.startsWith("{");
+  if (ruleVersion !== (legacy ? legacyWitness(raw) : retirementRawSourceDigest(raw)))
     return { status: "incomplete", reason: "source_not_qualified" };
-  return qualifyRetirementRawSource(raw, operationId, context, ruleVersion === legacy);
+  return qualifyRetirementRawSource(raw, operationId, context, legacy);
 }
 
 /** Called by the embedding composition root, including in every restore process.
@@ -88,10 +141,21 @@ export function registerRetirementRawSourcePort(port: RetirementRawSourcePort): 
 
 export function readRetirementRawSource(reference: RetirementSourceReference, context: D2SettlementSourceContext): RetirementRawSource | undefined {
   try {
-    const raw = provider?.read(reference, context);
-    if (!raw || raw.sourceId !== reference.sourceId || raw.sourceVersion !== reference.sourceVersion
+    const observed = provider?.read(reference, context);
+    if (!observed) return undefined;
+    const previous = recentOriginals.get(context);
+    let raw: RetirementRawSource;
+    if (previous && matchesObservedValue(observed, previous)) raw = previous;
+    else {
+      raw = immutableConfiguration(observed);
+      if (matchesObservedValue(raw, raw)) {
+        recentOriginals.set(context, raw);
+        if (!originalComputations.has(raw)) originalComputations.set(raw, {});
+      } else recentOriginals.delete(context);
+    }
+    if (raw.sourceId !== reference.sourceId || raw.sourceVersion !== reference.sourceVersion
       || (reference.contentDigest !== undefined && reference.contentDigest !== retirementRawSourceDigest(raw))) return undefined;
-    return immutableConfiguration(raw);
+    return raw;
   } catch { return undefined; }
 }
 
@@ -123,14 +187,22 @@ export function qualifyRetirementRawSource(raw: RetirementRawSource, operationId
   catch { return { status: "incomplete", reason: "source_not_qualified" }; }
 }
 
+function evaluateA4(raw: RetirementRawSource) {
+  const evaluation = evaluateWithdrawals(raw.cash.withdrawals), binding = evaluateWithdrawalRmd(raw.binding);
+  return { evaluation, allocations: binding.bundle?.allocations, obligations: binding.rmd.obligations,
+    sameWithdrawals: same(raw.binding.withdrawals, raw.cash.withdrawals) };
+}
+
 function rebuildRetirementDistribution(raw: RetirementRawSource, operationId: string,
   context: D2SettlementSourceContext, legacy: boolean): RetirementSourceQualification {
   const incomplete = { status: "incomplete", reason: "source_not_qualified" } as const;
-  const evaluation = evaluateWithdrawals(raw.cash.withdrawals), binding = evaluateWithdrawalRmd(raw.binding);
+  const computation = originalComputations.get(raw);
+  const { evaluation, allocations: boundAllocations, obligations, sameWithdrawals } = computation
+    ? computation.a4 ??= evaluateA4(raw) : evaluateA4(raw);
   // Plain household transfers still use the native journal, with no invented RMD rows.
   const plainHousehold = raw.cash.withdrawals.requests.every(r => r.bank.householdDestination)
     && raw.binding.allocations.length === 0 && raw.binding.rmd.requests.length === 0;
-  if ((!plainHousehold && !binding.bundle) || evaluation.coverage !== "complete" || !same(raw.binding.withdrawals, raw.cash.withdrawals)
+  if ((!plainHousehold && !boundAllocations) || evaluation.coverage !== "complete" || !sameWithdrawals
     || raw.cash.withdrawals.knownAt > context.dataCutoff.slice(0, 10) || raw.cash.withdrawals.knownAt > context.asOf.slice(0, 10)
     || !plainHousehold && (raw.binding.rmd.knownAt > context.dataCutoff.slice(0, 10) || raw.binding.rmd.knownAt > context.asOf.slice(0, 10))
     || raw.binding.rmd.requests.some(r => r.aggregation || r.accounts.length !== 1)) return incomplete;
@@ -161,9 +233,9 @@ function rebuildRetirementDistribution(raw: RetirementRawSource, operationId: st
     || new Set(q.reservations.map(r => r.id)).size !== q.reservations.length) return incomplete;
   const reserved = q.reservations.reduce((sum, r) => sum.plus(r.amount), Money.zero(USD));
   if (q.sourceCashBefore.minus(reserved).compare(c.grossAmount) < 0) return incomplete;
-  const rows = plainHousehold ? [] : binding.bundle!.allocations.filter(a => a.withdrawalId === c.claimId);
+  const rows = plainHousehold ? [] : boundAllocations!.filter(a => a.withdrawalId === c.claimId);
   const allocations: RetirementDistributionRecord["allocations"] = rows.map(row => {
-    const o = binding.rmd.obligations.find(o => o.id === row.rmdObligationId)!;
+    const o = obligations.find(o => o.id === row.rmdObligationId)!;
     const r = raw.binding.rmd.requests.find(r => r.personId === o.personId && r.taxYear === o.taxYear
       && r.accounts[0]?.id === c.sourceAccountId)!;
     return { allocationId: row.allocationId, approvalId: row.approval!.id, obligationId: o.id,
@@ -181,7 +253,7 @@ function rebuildRetirementDistribution(raw: RetirementRawSource, operationId: st
   };
   const source: RetirementDistributionRecord["source"] = { sourceId: raw.sourceId, sourceVersion: raw.sourceVersion,
     // Change witness only: publisher authentication always comes from read().
-    ruleVersion: legacy ? canonicalSerialize(canonicalRaw(raw)) : retirementRawSourceDigest(raw), publishedAt: clock.publishedAt, knownAt: clock.knownAt,
+    ruleVersion: legacy ? legacyWitness(raw) : retirementRawSourceDigest(raw), publishedAt: clock.publishedAt, knownAt: clock.knownAt,
     householdId: domainId("household", c.householdId), personId: domainId("person", c.actorId),
     sourceApprovalId: q.source.id, paymentApprovalId: q.ordering.source.id,
     executionOrder: { sequenceId: raw.sourceId, position: ancestors(c.operationId).size - 1 } };
