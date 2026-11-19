@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shlex
 import shutil
 import subprocess
@@ -168,17 +169,19 @@ def preflight_patch(root, state):
     return digest.hexdigest()
 
 
-def limited_preflight(command, root, state):
+def limited_preflight(command, root, state, tool_use_id=None):
     # Match literal text, not shell tokens: no wrappers, substitutions or flags.
     match = re.fullmatch(r"node tools/codex/limited-local-verification\.mjs(?: (test/[A-Za-z0-9_/-]+\.test\.ts))?", command)
     if not match:
         return "Only the exact bounded preflight command is permitted"
     if not shutil.which('node'):
         return "SKIP bounded preflight: node unavailable; no installation required"
-    helper = "tools/codex/limited-local-verification.mjs"
-    trusted = run_git(["show", f"origin/main:{helper}"], root)
-    if trusted.returncode or not (root / helper).is_file() or (root / helper).read_text() != trusted.stdout:
-        return "Bounded helper must equal merged origin/main; unavailable during its own implementation"
+    # Both executable and reporter must be pristine merged framework sources.
+    for helper in ("tools/codex/limited-local-verification.mjs",
+                   "tools/codex/local-preflight-progress-reporter.mjs"):
+        trusted = run_git(["show", f"origin/main:{helper}"], root)
+        if trusted.returncode or not (root / helper).is_file() or (root / helper).read_text() != trusted.stdout:
+            return "Bounded helper/reporters must equal merged origin/main"
     test = match.group(1)
     if test:
         path = root / test
@@ -205,18 +208,27 @@ def limited_preflight(command, root, state):
     used = state.get("PREFLIGHT", {})
     fingerprint = preflight_patch(root, state)
     if used:
-        receipt_path = root / '.codex/logs' / f"preflight-{state['AUTHORIZATION_ID']}.json"
-        try:
-            receipt = json.loads(receipt_path.read_text())
-        except Exception:
-            # The helper could not start or persist its result (e.g. sandbox
-            # EPERM). Allow one bounded re-attempt, never a third invocation.
-            if used.get('count', 0) >= 2 or fingerprint != used.get('patch') or test != used.get('test'):
-                return "Only one same-patch retry after an unrecorded preflight is permitted"
-        else:
-            if used.get('count', 0) >= 2 or receipt.get('status') != 'FAIL' or receipt.get('patch') != used.get('patch') or fingerprint == used.get('patch') or test != used.get('test'):
-                return "Only one correction retry after FAIL on a changed patch and the same test is permitted"
-    state['PREFLIGHT'] = {'count': used.get('count', 0) + 1, 'patch': fingerprint, 'test': test}
+        previous = used.get("result")
+        if previous is None:
+            # Backwards compatibility: previously protected receipt from an old turn.
+            try:
+                previous = json.loads((root / ".codex/logs" /
+                    f"preflight-{state['AUTHORIZATION_ID']}.json").read_text())
+            except (OSError, ValueError):
+                previous = {"status": "INCOMPLETE"}
+        if (used.get("count", 0) >= 2 or previous.get("status") != "FAIL" or
+                previous.get("patch", used.get("patch")) != used.get("patch") or
+                fingerprint == used.get("patch") or test != used.get("test")):
+            return ("Only a corrected, observed FAIL permits one local retry. "
+                    "TIMEOUT, SKIP, INCOMPLETE, PASS and missing results never rerun locally")
+    count = used.get("count", 0) + 1
+    state["PREFLIGHT"] = {
+        "count": count, "patch": fingerprint, "test": test,
+        "nonce": secrets.token_hex(16),
+        "tool_use_id": str(tool_use_id) if tool_use_id else None,
+        "result": {"status": "INCOMPLETE", "patch": fingerprint, "attempt": count,
+                   "reason": "No verified host result; no local retry"},
+    }
     return None
 
 
@@ -230,11 +242,14 @@ def actionable_preflight_failure(root, state):
     used = state.get("PREFLIGHT")
     if not used:
         return None
-    receipt_path = root / ".codex" / "logs" / f"preflight-{state['AUTHORIZATION_ID']}.json"
-    try:
-        receipt = json.loads(receipt_path.read_text())
-    except (OSError, ValueError):
-        return None
+    if "result" in used:
+        receipt = used["result"]
+    else:
+        try:
+            receipt = json.loads((root / ".codex/logs" /
+                f"preflight-{state['AUTHORIZATION_ID']}.json").read_text())
+        except (OSError, ValueError):
+            return None
     if (receipt.get("status") == "FAIL" and
             receipt.get("attempt") == used.get("count") and
             receipt.get("patch") == used.get("patch")):
@@ -1396,7 +1411,7 @@ def pre_tool(payload, root):
             deny('GitHub CLI is publication-only; CI polling/watching is prohibited.')
             return
         if re.search(r'(^|\s)(node|npx|bash|sh|env|python[0-9]*)[ \t]+[^\n]*limited-local-verification', command):
-            error = limited_preflight(command, root, state)
+            error = limited_preflight(command, root, state, payload.get('tool_use_id'))
             if error:
                 deny(error)
             else:
