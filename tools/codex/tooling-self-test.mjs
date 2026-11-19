@@ -1247,7 +1247,7 @@ for (const dirty of [false, true]) {
   f.invoke('Stop', { last_assistant_message: 'TASK_STATUS: BLOCKED\nBLOCKER: owner done' });
   assert(fs.readFileSync(receipt, 'utf8') === before, 'idempotent old Stop cannot replace new owner');
 }
-const preparePreflightHookFixture = () => {
+const preparePreflightHookFixture = ({ startTask = true } = {}) => {
   const f = recoveryFixture({ initial: "none" });
   const helper = 'tools/codex/limited-local-verification.mjs';
   const reporter = 'tools/codex/local-preflight-progress-reporter.mjs';
@@ -1263,7 +1263,7 @@ const preparePreflightHookFixture = () => {
   f.git('add', '.'); f.git('commit', '-m', 'preflight fixture');
   f.git('update-ref', 'refs/remotes/origin/main', f.git('rev-parse', 'HEAD'));
   f.git('push', 'origin', 'codex/policy-self-test');
-  assert(f.start().hookSpecificOutput, 'preflight fixture prepares from shared head');
+  if (startTask) assert(f.start().hookSpecificOutput, 'preflight fixture prepares from shared head');
   const preflight = value => f.invoke('PreToolUse', { tool_name: 'Bash', tool_input: { command: value } });
   const state = () => {
     const pointer = JSON.parse(fs.readFileSync(path.join(f.repository, '.codex/runtime/latest-task.json')));
@@ -1286,24 +1286,28 @@ const preparePreflightHookFixture = () => {
   };
   return { f, helper, reporter, command, preflight, state, post };
 };
-// A task branch may remain on a *merged historical main* while origin/main
-// advances with a newer trusted helper or reporter. The pinned ancestor must
-// still authorize the unchanged branch versions, without allowing feature-only
-// framework changes to be executed.
-{
-  const { f, command, preflight, state } = preparePreflightHookFixture();
+// Advance only the synthetic REMOTE main tip. The task branch retains a
+// historically merged helper/reporter version until explicitly synchronized.
+const advanceSyntheticVerifierMain = (f, id) => {
   const earlierMain = f.git('rev-parse', 'refs/remotes/origin/main');
-  const advance = path.join(temp, 'pfm-main-advanced-verifier');
+  const advance = path.join(temp, 'pfm-trusted-main-' + id);
   mustRun('git', ['worktree', 'add', '--detach', advance, earlierMain], { cwd: f.repository });
   for (const helper of ['tools/codex/limited-local-verification.mjs',
-                         'tools/codex/local-preflight-progress-reporter.mjs']) {
-    fs.appendFileSync(path.join(advance, helper), '// subsequent merged main framework update\n');
+                        'tools/codex/local-preflight-progress-reporter.mjs']) {
+    fs.appendFileSync(path.join(advance, helper), '// subsequent merged main framework update\\n');
   }
   mustRun('git', ['add', 'tools/codex/limited-local-verification.mjs',
                  'tools/codex/local-preflight-progress-reporter.mjs'], { cwd: advance });
   mustRun('git', ['commit', '-m', 'synthetic newer merged main verifier'], { cwd: advance });
   const newerMain = mustRun('git', ['rev-parse', 'HEAD'], { cwd: advance }).stdout.trim();
   f.git('update-ref', 'refs/remotes/origin/main', newerMain);
+  return { earlierMain, newerMain, advance };
+};
+// A task branch may retain a *merged historical main* as origin/main advances,
+// while neither invoking unmerged tools nor forcing an unrelated product merge.
+{
+  const { f, command, preflight, state } = preparePreflightHookFixture();
+  const { earlierMain } = advanceSyntheticVerifierMain(f, 'historical');
   assert(f.git('merge-base', '--all', 'HEAD', 'origin/main') === earlierMain,
     'branch trust baseline must remain the earlier merged main');
   assert(f.git('show', 'origin/main:tools/codex/limited-local-verification.mjs') !==
@@ -1312,8 +1316,43 @@ const preparePreflightHookFixture = () => {
   assert(JSON.stringify(f.claim()) === '{}', 'old-base task admits a writer independently of current main');
   f.dirty();
   assert(JSON.stringify(preflight(command)) === '{}',
-    'unmodified trusted historical main helper and reporter are permitted in older worktrees');
-  assert(state().PREFLIGHT.count === 1, 'one bounded reservation, without executing test or retry');
+    'unchanged older merged helper AND reporter are authorized after main advances');
+  assert(state().PREFLIGHT.count === 1, 'one bounded reservation, without execution or retry');
+}
+// An operator may synchronize ONLY the complete currently merged framework
+// tool pair without merging unrelated financial-engine changes. Pin to one
+// identical main snapshot, before task admission/authorization.
+{
+  const { f, helper, reporter, command, preflight, state } = preparePreflightHookFixture({ startTask: false });
+  const { earlierMain, advance } = advanceSyntheticVerifierMain(f, 'operator-pair');
+  for (const file of [helper, reporter]) {
+    fs.copyFileSync(path.join(advance, file), path.join(f.repository, file));
+  }
+  f.git('add', helper, reporter);
+  f.git('commit', '-m', 'operator-reviewed complete merged framework tooling');
+  f.git('push', 'origin', 'codex/policy-self-test');
+  assert(f.git('merge-base', '--all', 'HEAD', 'origin/main') === earlierMain,
+    'framework-only synchronization must not silently merge main history');
+  assert(f.start().hookSpecificOutput, 'new task authorization after operator sync');
+  assert(JSON.stringify(f.claim()) === '{}', 'task is a writer only after authorization');
+  f.dirty();
+  assert(JSON.stringify(preflight(command)) === '{}',
+    'complete current-main helper/reporter pair allowed without full main merge');
+  assert(state().PREFLIGHT.count === 1, 'synchronized task receives exactly one reservation');
+}
+// A mixture of versions from different trusted commits is not a trusted pair.
+{
+  const { f, helper, command, preflight } = preparePreflightHookFixture({ startTask: false });
+  const { advance } = advanceSyntheticVerifierMain(f, 'mixed-pair');
+  fs.copyFileSync(path.join(advance, helper), path.join(f.repository, helper));
+  f.git('add', helper);
+  f.git('commit', '-m', 'synthetic mixed merged and historical tool versions');
+  f.git('push', 'origin', 'codex/policy-self-test');
+  assert(f.start().hookSpecificOutput, 'mixed-pair fixture creates task after operator change');
+  assert(JSON.stringify(f.claim()) === '{}', 'fixture admits writer');
+  f.dirty();
+  assert(preflight(command).hookSpecificOutput?.permissionDecisionReason.includes('complete trusted'),
+    'mixed-version helper/reporter pair is denied even when both individually existed on main');
 }
 {
   const { f, helper, command, preflight } = preparePreflightHookFixture();
