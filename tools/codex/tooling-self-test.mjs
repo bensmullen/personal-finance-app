@@ -1390,7 +1390,7 @@ const preparePreflightHookFixture = () => {
   f.dirty();
   assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'changed patch cannot retry SKIP');
   fs.appendFileSync(path.join(f.repository, reporter), '// unmerged edit\n');
-  assert(preflight(command).hookSpecificOutput?.permissionDecisionReason.includes('merged origin/main'),
+  assert(preflight(command).hookSpecificOutput?.permissionDecisionReason.includes('trusted origin/main'),
     'an edited reporter must be denied just like an edited helper');
 }
 {
