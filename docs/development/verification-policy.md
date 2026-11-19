@@ -37,6 +37,9 @@ an assertion PASS/FAIL or by itself prevents publication. Each started and
 completed Vitest case has an append-only diagnostic event; a process kill keeps
 already-written case outcomes but never satisfies full-file acceptance.
 Completed cases must not cause automatic local retries of an incomplete run.
+If a correction retry following a real FAIL times out or lacks a host result,
+the original observed failure continues to block ordinary push/COMPLETE; Codex
+must report BLOCKED with a preserved checkpoint, not rerun locally.
 A BLOCKED task may still checkpoint authorized WIP to the task branch with
 explicit disclosure; that is preservation, **not** a successful completion.
 This rule does not grant Codex permission to install tools or run unbounded
