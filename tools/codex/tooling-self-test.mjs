@@ -1346,14 +1346,18 @@ const preparePreflightHookFixture = ({ startTask = true } = {}) => {
   const { f, command, launchCommand, preflight, state } = preparePreflightHookFixture();
   assert(JSON.stringify(f.claim()) === '{}', 'existing task may claim scope before preflight');
   f.dirty();
-  const sparse = { PATH: '/usr/bin:/bin' };
+  const sparseDir = path.join(temp, 'preflight-hook-sparse-bin');
+  fs.mkdirSync(sparseDir);
+  const python = mustRun('python3', ['-c', 'import sys; print(sys.executable)']).stdout.trim();
+  fs.symlinkSync(python, path.join(sparseDir, 'python3'));
+  fs.symlinkSync(realGit, path.join(sparseDir, 'git'));
+  const sparse = { PATH: sparseDir };
   const direct = f.invoke('PreToolUse', { tool_name: 'Bash',
     tool_input: { command } }, sparse);
-  if (direct.hookSpecificOutput?.permissionDecision === 'deny') {
-    assert(direct.hookSpecificOutput.permissionDecisionReason.includes('launcher'),
-      'when Node is hidden, the hook guides Codex to its trusted launcher');
-    assert(!state().PREFLIGHT, 'a rejected direct Node command must not consume an attempt');
-  }
+  assert(direct.hookSpecificOutput?.permissionDecision === 'deny' &&
+    direct.hookSpecificOutput.permissionDecisionReason.includes('launcher'),
+    'missing Node in hook PATH directs Codex to the launcher');
+  assert(!state().PREFLIGHT, 'a rejected direct Node command must not consume an attempt');
   const granted = f.invoke('PreToolUse', { tool_name: 'Bash',
     tool_input: { command: launchCommand } }, sparse);
   assert(JSON.stringify(granted) === '{}', 'trusted launcher accepted regardless of hook Node PATH');
