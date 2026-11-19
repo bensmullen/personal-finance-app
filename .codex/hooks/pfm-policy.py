@@ -296,7 +296,7 @@ def observe_preflight_response(response, state, tool_use_id=None):
                 observed_exit = response[key]
                 break
     if observed_exit is None:
-        code = re.search(r"Process exited with code (\\d+)", "\\n".join(texts))
+        code = re.search(r"Process exited with code (\d+)", "\n".join(texts))
         if code:
             observed_exit = int(code.group(1))
 
@@ -1626,7 +1626,7 @@ def post_tool(payload, root):
     command = str((payload.get("tool_input") or {}).get("command") or "")
     used = state.get("PREFLIGHT") or {}
     if (state.get("ACTIVE") and payload.get("tool_name") == "Bash" and
-            re.fullmatch(r"node tools/codex/limited-local-verification\\.mjs(?: test/[A-Za-z0-9_/-]+\\.test\\.ts)?", command) and
+            re.fullmatch(r"node tools/codex/limited-local-verification\.mjs(?: test/[A-Za-z0-9_/-]+\.test\.ts)?", command) and
             used.get("result", {}).get("status") == "INCOMPLETE"):
         used["result"] = observe_preflight_response(payload.get("tool_response"), state,
                                                      payload.get("tool_use_id"))
