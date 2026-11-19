@@ -1668,14 +1668,25 @@ const retirementTransaction = (d: RetirementDistributionRecord): AccountingTrans
     createAccountingLeg({ type: "cash", posting: "credit", amount: d.gross, accountId: d.sourceAccountId, cashFlowClass: "investing" }),
   ],
 });
-const retirementKeys = (d: RetirementDistributionRecord): readonly IdempotencyKey[] => [
-  idempotencyKey("retirement-j1:record", paymentValue(d)),
-  idempotencyKey("retirement-j1:operation", d.operationId),
-  idempotencyKey("retirement-j1:withdrawal", d.withdrawalId),
-  ...[d.authorizationId, d.source.sourceApprovalId, d.source.paymentApprovalId, ...d.allocations.map(a => a.approvalId)]
-    .map(id => idempotencyKey("retirement-j1:approval", id)),
-  ...d.allocations.map(a => idempotencyKey("retirement-j1:allocation", a.allocationId)),
-];
+// These are exact structural commitments. Reuse their bytes for immutable
+// journal rows without carrying any publisher admission across observations.
+const frozenRetirementKeys = new WeakMap<RetirementDistributionRecord, readonly IdempotencyKey[]>();
+const retirementKeys = (d: RetirementDistributionRecord): readonly IdempotencyKey[] => {
+  const existing = frozenRetirementKeys.get(d);
+  if (existing !== undefined) return existing;
+  const keys = [
+    idempotencyKey("retirement-j1:record", paymentValue(d)),
+    idempotencyKey("retirement-j1:operation", d.operationId),
+    idempotencyKey("retirement-j1:withdrawal", d.withdrawalId),
+    ...[d.authorizationId, d.source.sourceApprovalId, d.source.paymentApprovalId, ...d.allocations.map(a => a.approvalId)]
+      .map(id => idempotencyKey("retirement-j1:approval", id)),
+    ...d.allocations.map(a => idempotencyKey("retirement-j1:allocation", a.allocationId)),
+  ];
+  if (frozenPaymentValues.has(d)) frozenRetirementKeys.set(d, keys);
+  return keys;
+};
+const sameRetirementDistribution = (left: RetirementDistributionRecord | undefined, right: RetirementDistributionRecord): boolean =>
+  left === right || paymentValue(left) === paymentValue(right);
 const validateRetirementDistribution = (state: AuthoritativeState, key: string, d: RetirementDistributionRecord): void => {
   const s = d.source, source = state.accounts[d.sourceAccountId], bank = state.accounts[d.destinationAccountId];
   if ((d.nativeHousehold === undefined ? d.version !== "retirement-distribution/v1" : d.version !== "retirement-distribution/v2") || key !== d.transactionId || d.originalPostingProofId !== d.transactionId ||
@@ -1772,7 +1783,7 @@ const validateRetirementDistributions = (state: AuthoritativeState): void => {
   const check = (d: RetirementDistributionRecord): void => {
     const proof = state.d2PostedTransactions?.[d.originalPostingProofId];
     if (!proof || proof.registration.kind !== "retirement_cash_distribution" ||
-        paymentValue(proof.registration.distribution) !== paymentValue(d) || paymentValue(proof.transaction) !== paymentValue(retirementTransaction(d)) ||
+        !sameRetirementDistribution(proof.registration.distribution, d) || paymentValue(proof.transaction) !== paymentValue(retirementTransaction(d)) ||
         !state.identities.postedTransactionIds.includes(d.transactionId) ||
         retirementKeys(d).some(id => !state.identities.externalIdempotencyKeys.includes(id))) d2Invalid("Retirement evidence lacks its original actual writer posting/commit inventory");
   };
@@ -1806,17 +1817,22 @@ const validateRetirementDistributions = (state: AuthoritativeState): void => {
   for (const c of postings.changesSince(previous?.postings ?? new PersistentStringIndex<object>()).changes) {
     const proof = state.d2PostedTransactions?.[accountingTransactionId(c.key)];
     if (proof?.registration.kind === "retirement_cash_distribution" &&
-        paymentValue(state.retirementDistributionAllocations?.[c.key]) !== paymentValue(proof.registration.distribution))
+        !sameRetirementDistribution(state.retirementDistributionAllocations?.[c.key], proof.registration.distribution))
       d2Invalid("Actual retirement posting must preserve its same-candidate journal");
   }
   const priorIds = previous === undefined ? undefined : identityIndexes.get(previous.identities), ids = identityIndexes.get(state.identities);
+  const checkCommitment = (id: string) => {
+    if (id.startsWith(retirementRecordPrefix) && !consumed.has(id)) d2Invalid("Retirement commitment orphaned from journal");
+  };
   if (priorIds && ids) {
-    for (const c of ids.externalIdempotencyKeys.changesSince(priorIds.externalIdempotencyKeys).changes)
+    for (const c of ids.externalIdempotencyKeys.changesSince(priorIds.externalIdempotencyKeys).changes) {
       if (c.before !== undefined && c.after === undefined && consumed.has(c.key)) d2Invalid("Retirement commit inventory removed");
-  } else if (previous && previous.identities !== state.identities) for (const [, value] of index.entries()) check(value as RetirementDistributionRecord);
-  const prefix = retirementRecordPrefix;
-  const added = priorIds && ids ? ids.externalIdempotencyKeys.changesSince(priorIds.externalIdempotencyKeys).changes.flatMap(c => c.after === undefined ? [] : [c.after]) : state.identities.externalIdempotencyKeys;
-  for (const id of added) if (id.startsWith(prefix) && !consumed.has(id)) d2Invalid("Retirement commitment orphaned from journal");
+      if (c.after !== undefined) checkCommitment(c.after);
+    }
+  } else {
+    if (previous && previous.identities !== state.identities) for (const [, value] of index.entries()) check(value as RetirementDistributionRecord);
+    for (const id of state.identities.externalIdempotencyKeys) checkCommitment(id);
+  }
   for (const key of indexedRecords.get(state.accounts)?.dirty ?? Object.keys(state.accounts)) {
     const d = sources.get(key), account = state.accounts[key];
     if (d && (!account || account.id !== d.sourceAccountId || account.kind !== "retirement" || account.ownerId !== d.personId || !retirementExact(account.cash)))
@@ -1867,15 +1883,15 @@ export const applyRetirementDistributionAtomically = (state: AuthoritativeState,
   const registration: D2PostingRegistration = { role: "original", kind: "retirement_cash_distribution", operationId: d.operationId,
     householdId: d.householdId, personId: d.personId, bankAccountId: d.destinationAccountId, distribution: d,
     ...(d.nativeHousehold === undefined ? {} : { nativeHousehold: d.nativeHousehold }) };
-  qualifyNativeRegistration(retirementTransaction(d), registration, context);
+  const transaction = retirementTransaction(d);
+  qualifyNativeRegistration(transaction, registration, context);
   if (d.nativeHousehold) approvedNativeRegistrations.add(registration);
   approvedRetirementRegistrations.add(registration);
   // All posting, journal and one-time inventories commit on this candidate.
-  const candidate = cloneAuthoritativeState(state);
-  applyAccountingTransactionAtomically(candidate, retirementTransaction(d), registration);
+  const candidate = stageAccountingTransaction(state, transaction, registration);
   const late = qualifyRetirement(d, context);
   if (late.status === "incomplete") return late;
-  qualifyNativeRegistration(retirementTransaction(d), registration, context);
+  qualifyNativeRegistration(transaction, registration, context);
   commitCandidate(state, candidate);
   return { status: "qualified", distribution: d };
 };
@@ -3276,6 +3292,14 @@ export const applyAccountingTransactionAtomically = (
   transaction: AccountingTransaction,
   proofRegistration?: D2PostingRegistration,
 ): void => {
+  commitCandidate(state, stageAccountingTransaction(state, transaction, proofRegistration));
+};
+
+const stageAccountingTransaction = (
+  state: AuthoritativeState,
+  transaction: AccountingTransaction,
+  proofRegistration?: D2PostingRegistration,
+): AuthoritativeState => {
   if (proofRegistration?.nativeHousehold && !approvedNativeRegistrations.delete(proofRegistration))
     d2Invalid("Native posting requires the independently qualified native transition");
   if (proofRegistration?.kind === "ssa_medicare_payment" && !proofRegistration.nativeHousehold)
@@ -3334,9 +3358,10 @@ export const applyAccountingTransactionAtomically = (
     }
     const proof = freezePayment<D2PostedTransactionProof>({ schemaVersion: "d2-shared/posted-transaction/v1",
       writer: "applyAccountingTransactionAtomically/v1", registration: proofRegistration, transaction });
-    // Attached native proofs are validated when this isolated candidate's
-    // archive and receipt indexes advance below.
-    if (proofRegistration.nativeHousehold === undefined)
+    // Retirement checks the new proof and its matching journal together when
+    // the candidate indexes advance below. Native proofs also wait for their
+    // attached records to be staged.
+    if (proofRegistration.nativeHousehold === undefined && proofRegistration.kind !== "retirement_cash_distribution")
       validateD2Posting(candidate, transaction.id, proof);
     generatedD2PostingProofs.add(proof);
     const archive = candidate.d2PostedTransactions ?? createD2PostingRecord(new PersistentStringIndex<D2PostedTransactionProof>());
@@ -3353,7 +3378,7 @@ export const applyAccountingTransactionAtomically = (
     }
   }
   validateAuthoritativeState(candidate, transaction.id);
-  commitCandidate(state, candidate);
+  return candidate;
 };
 
 export const serializeAuthoritativeIdentityRegistry = (
