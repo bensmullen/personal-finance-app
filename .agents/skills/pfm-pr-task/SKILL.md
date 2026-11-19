@@ -105,19 +105,22 @@ conditions when useful. Their exact headings are not parser requirements.
   affected tracked `test/name.test.ts`. Use one simple shell tool call. The
   audited helper runs the complete typecheck (60s total), then the named unit
   (30s); no flags, chaining, wrappers, installs or prerequisites. A missing
-  environment yields SKIP. Permission-denied logs, missing dependencies,
-  spawn errors and bounded timeouts also yield SKIP (never a fabricated failed
-  assertion); an invocation with no persisted result may be retried once on
-  the same patch. Only one changed-patch correction retry after an explicit
-  recorded FAIL with the same test is allowed. A persisted executed FAIL blocks
-  ordinary push/COMPLETE until corrected and followed by a PASS or genuine
-  unavailable-environment SKIP. Do not deliberately skip failing tests or
+  environment yields SKIP. The sandboxed helper writes bounded logs and
+  per-case progress only to ignored `.pfm-preflight/`; protected hook state
+  records the actual PostToolUse outcome. Timeouts are TIMEOUT/INCOMPLETE and
+  must never cause a local retry, even after other tests completed. Missing
+  results, interrupted execution, SKIP and PASS also never permit a local
+  retry. Only one changed-patch correction retry after an observed FAIL with
+  the same test is allowed. A known FAIL blocks ordinary push/COMPLETE until
+  corrected and followed by a PASS or genuine unavailable-environment SKIP.
+  A timed-out/unobserved correction does not clear the original FAIL: report
+  BLOCKED and preserve WIP; do not rerun locally. Do not deliberately skip failing tests or
   weaken expectations. FAIL outside authorized scope requires BLOCKED
   disclosure and WIP preservation, not arbitrary file edits. PASS never grants
   acceptance.
 - All other local tests, builds, validators, E2E, benchmarks, dev servers and
-  performance captures remain prohibited. Do not run the helper in the #218
-  implementation turn; the hook requires its merged origin/main version.
+  performance captures remain prohibited. Do not run the helper during its own framework implementation turn; the hook
+  requires both helper and reporter to match their merged origin/main versions.
 - GitHub CI owns ordinary verification.
 - Resolve implementation questions from repository authority: canonical financial
   specification, executable financial semantics, capability/slice specifications,
