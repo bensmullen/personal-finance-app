@@ -1459,6 +1459,17 @@ const advanceSyntheticVerifierMain = (f, id) => {
   assert(preflight(command).hookSpecificOutput?.permissionDecisionReason.includes('one trusted origin/main ancestor'),
     'missing or unverifiable local main history fails closed, never trusts arbitrary helper');
 }
+// A task-local edit to the launcher itself must never gain execution authority.
+{
+  const { f, launcher, launchCommand, preflight } = preparePreflightHookFixture();
+  assert(JSON.stringify(f.claim()) === '{}', 'launcher tamper fixture starts with approved writer');
+  f.dirty();
+  fs.appendFileSync(path.join(f.repository, launcher), '# unmerged launcher modification\\n');
+  const denied = preflight(launchCommand);
+  assert(denied.hookSpecificOutput?.permissionDecision === 'deny' &&
+    denied.hookSpecificOutput.permissionDecisionReason.includes('complete trusted'),
+    'unmerged launcher changes are rejected even if Node is otherwise discoverable');
+}
 // A no-log startup SKIP is still a protected SKIP, not an invented PASS.
 {
   const { f, command, preflight, state } = preparePreflightHookFixture();
@@ -1479,7 +1490,7 @@ const advanceSyntheticVerifierMain = (f, id) => {
     'startup SKIP cannot automatically rerun local tests');
 }
 {
-  const { f, helper, reporter, command, preflight, state } = preparePreflightHookFixture();
+  const { f, helper, reporter, launcher, launchCommand, command, preflight, state } = preparePreflightHookFixture();
   assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'prepared task cannot reserve preflight');
   assert(JSON.stringify(f.claim()) === '{}', 'first edit admits writer before preflight');
   assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'unaffected named file rejected');
@@ -1487,7 +1498,11 @@ const advanceSyntheticVerifierMain = (f, id) => {
   for (const unsafe of [`bash -c '${command}'`, `${command}; echo bypass`, `${command} && true`,
     `${command}\ntrue`, `${command} --passWithNoTests`, `npx ${helper}`,
     `node ${helper} test/../outside.test.ts`, `NODE_OPTIONS=--import=bad ${command}`,
-    `node ${helper} test/not-found.test.ts`, 'npm test', 'npm run codex:verify',
+    `node ${helper} test/not-found.test.ts`,
+    `python3 ${launcher} --illegal`, `python3 ${launcher} test/not-found.test.ts`,
+    `python3 ${launcher} test/../outside.test.ts`, `${launchCommand}; echo bypass`,
+    `NODE_OPTIONS=--import=bad ${launchCommand}`,
+    'npm test', 'npm run codex:verify',
     'npm run build:web', 'npx playwright test', 'npm ci']) {
     assert(preflight(unsafe).hookSpecificOutput?.permissionDecision === 'deny', `unsafe preflight denied: ${unsafe}`);
   }
