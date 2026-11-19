@@ -61,7 +61,7 @@ const compactGraphTag = (_key: string, value: unknown): unknown => {
   if (value.kind === "definition") return { d: value.value };
   return { t: [value.kind, value.value] };
 };
-const expandGraphTag = (_key: string, value: unknown): unknown => {
+const expandGraphTag = (value: Wire): Wire => {
   if (value === null || typeof value !== "object" || Object.keys(value).length !== 1) return value;
   if ("r" in value) return { kind: "reference", value: value.r };
   if ("d" in value) return { kind: "definition", value: value.d };
@@ -133,15 +133,17 @@ const encodeValue = (value: unknown, graph?: EncodingGraph): Wire => {
     return { kind: "record", value: Object.entries(value).filter(([, item]) => item !== undefined).map(([key, item]) => [key, encode(item, graph)]) };
   throw new Error("HOUSEHOLD_REPLAY_ARTIFACT_UNSUPPORTED: non-portable execution input");
 };
-const decode = (wire: Wire, references = new Map<number, unknown>()): unknown => {
+const decode = (wire: Wire, compactGraph: boolean, references = new Map<number, unknown>()): unknown => {
   if (wire === null || typeof wire !== "object") return wire;
+  if (compactGraph) wire = expandGraphTag(wire) as Exclude<Wire, null | boolean | number | string>;
+  const child = (item: Wire) => decode(item, compactGraph, references);
   const value = wire.value;
   const pair = value as [string, string];
   switch (wire.kind) {
     case "definition": {
       const [id, payload] = value as [number, Wire];
       if (!Number.isSafeInteger(id) || id < 0 || references.has(id)) throw new Error("HOUSEHOLD_REPLAY_ARTIFACT_UNSUPPORTED: invalid shared definition");
-      const restored = decode(payload, references); references.set(id, restored); return restored;
+      const restored = child(payload); references.set(id, restored); return restored;
     }
     case "reference": {
       if (typeof value !== "number" || !references.has(value)) throw new Error("HOUSEHOLD_REPLAY_ARTIFACT_UNSUPPORTED: missing shared definition");
@@ -152,18 +154,18 @@ const decode = (wire: Wire, references = new Map<number, unknown>()): unknown =>
     case "currency": return Currency.of(value as string);
     case "unit": return Unit.of(value as string);
     case "quantity": return Quantity.parse(pair[0], Unit.of(pair[1]));
-    case "rate": { const rate = value as [string, Wire]; return Rate.fromDecimal(rate[0], decode(rate[1], references) as RateConvention); }
+    case "rate": { const rate = value as [string, Wire]; return Rate.fromDecimal(rate[0], child(rate[1]) as RateConvention); }
     case "ratio": return Ratio.parse(value as string);
     case "percentage": return Percentage.parse(value as string);
     case "rounding": { const policy = value as [number, RoundingMode]; return new RoundingPolicy(policy[0], policy[1]); }
-    case "tax_economics": return TaxEconomicLedger.empty().with(decode(value as Wire, references) as readonly RecognizedTaxEconomics[]);
-    case "tax_diagnostics": return TaxDiagnosticLedger.empty().with(decode(value as Wire, references) as readonly TaxCapabilityDiagnostic[]);
-    case "array": return Object.freeze((value as Wire[]).map(item => decode(item, references)));
+    case "tax_economics": return TaxEconomicLedger.empty().with(child(value as Wire) as readonly RecognizedTaxEconomics[]);
+    case "tax_diagnostics": return TaxDiagnosticLedger.empty().with(child(value as Wire) as readonly TaxCapabilityDiagnostic[]);
+    case "array": return Object.freeze((value as Wire[]).map(child));
     case "record": {
       const entries = value as [string, Wire][];
       if (new Set(entries.map(([key]) => key)).size !== entries.length)
         throw new Error("HOUSEHOLD_REPLAY_ARTIFACT_UNSUPPORTED: duplicate record key");
-      return Object.freeze(Object.fromEntries(entries.map(([key, item]) => [key, decode(item, references)])));
+      return Object.freeze(Object.fromEntries(entries.map(([key, item]) => [key, child(item)])));
     }
     default: throw new Error("HOUSEHOLD_REPLAY_ARTIFACT_UNSUPPORTED: unknown value representation");
   }
@@ -334,9 +336,9 @@ export const createPortableHouseholdReplayArtifact = (forecast: HouseholdForecas
   return artifact;
 };
 function validateReplaySsaOccurrences(forecast: Pick<HouseholdForecastSummaryResult, "replay" | "periods">,
-  state: AuthoritativeState, checkpoints: readonly HouseholdReplayCheckpoint[]): void {
+  state: AuthoritativeState, checkpoints: readonly HouseholdReplayCheckpoint[]): () => void {
   const { kernel, runContext } = forecast.replay;
-  validateSsaMedicareReplayHistory(kernel.executable.participants, kernel.executable.reconciledOpeningState,
+  return validateSsaMedicareReplayHistory(kernel.executable.participants, kernel.executable.reconciledOpeningState,
     runContext, checkpoints, { state, at: forecast.periods.at(-1)?.period.end ?? runContext.simulationStart }, kernel.executable.cashFlowInput);
 }
 
@@ -352,13 +354,14 @@ function admitConfiguredReplayHistory(forecast: Pick<HouseholdForecastSummaryRes
   return undefined;
 }
 
-const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObserver, timings: RestoreTimings = {}, sample: () => void = () => {}, independentSource?: unknown): {
+const restorePortableArtifact = (supplied: PortableHouseholdReplayArtifact | undefined,
+  observer?: ReplayRestoreObserver, timings: RestoreTimings = {}, sample: () => void = () => {}, independentSource?: unknown): {
   forecast: Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods">; modeledPayroll?: ModeledPayrollReplayBasis;
   sourceHistoryState: AuthoritativeState;
   checkpoints: readonly HouseholdReplayCheckpoint[];
+  recheckSsa: () => void;
   recheckFixedLoans?: (() => void) | undefined;
 } => {
-  const supplied = artifact as PortableHouseholdReplayArtifact | undefined;
   if ((supplied?.version !== "household-replay/v1" && supplied?.version !== "household-replay/v2" && supplied?.version !== "household-replay/v3") || typeof supplied.encoded !== "string")
     throw new Error("HOUSEHOLD_REPLAY_ARTIFACT_UNAVAILABLE: original execution artifacts are required");
   const measure = <T>(phase: Exclude<keyof RestoreTimings, "serializedCheckpointBytes">, operation: () => T): T => {
@@ -370,9 +373,9 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
     }
   };
   const compactGraph = supplied.version === "household-replay/v3" && supplied.encoded.startsWith('{"d":');
-  const wire = measure("decodeMs", () => JSON.parse(supplied.encoded, compactGraph ? expandGraphTag : undefined) as Wire);
+  const wire = measure("decodeMs", () => JSON.parse(supplied.encoded) as Wire);
   const decodeStarted = safeNow(observer);
-  const restored = decode(wire) as {
+  const restored = decode(wire, compactGraph) as {
     executable: Omit<ExecutableHouseholdProjection, "participants"> & { readonly participants?: readonly PortableHouseholdParticipant[] }; runContext: RunContext; runMetadata: RunMetadata; periods: readonly HouseholdForecastSummaryPeriod[]; checkpoints?: readonly CheckpointDelta[]; modeledPayroll?: ModeledPayrollReplayBasis;
     terminalDelta?: AuthoritativeCheckpointDelta;
   };
@@ -432,10 +435,10 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
   const verifyFullInventory = supplied.version === "household-replay/v3" &&
     (admittedExecutable.participants?.some(participant => ownsFsaCashParticipant(participant) || ownsCardBankParticipant(participant) ||
       ownsHelocServicingParticipant(participant) || participant.portableCodec === "d2-retirement-cash/v3") ?? false);
-  const recheckFixedLoans = measure("sourceRequalificationMs", () => {
-    validateReplaySsaOccurrences(forecast, sourceHistoryState, checkpoints);
+  const { recheckSsa, recheckFixedLoans } = measure("sourceRequalificationMs", () => {
+    const recheckSsa = validateReplaySsaOccurrences(forecast, sourceHistoryState, checkpoints);
     if (observer?.phase !== undefined) observeAuthoritativeSourceHistory(sourceHistoryState, restored.runContext);
-    return admitConfiguredReplayHistory(forecast, sourceHistoryState, checkpoints, verifyFullInventory);
+    return { recheckSsa, recheckFixedLoans: admitConfiguredReplayHistory(forecast, sourceHistoryState, checkpoints, verifyFullInventory) };
   });
   try { observer?.phase?.("source_requalified"); } catch { /* Observation is optional. */ }
   if (supplied.version === "household-replay/v3") {
@@ -450,16 +453,18 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
     // Locate the original field in the parsed wire, without re-encoding decoded
     // catalogs or expanded states. Failure of measurement cannot affect restore.
     measure("checkpointSizeMeasurementMs", () => { try {
-      const root = typeof wire === "object" && wire !== null && wire.kind === "definition" ? (wire.value as [number, Wire])[1] : wire;
+      const outer = compactGraph ? expandGraphTag(wire) : wire;
+      const definition = typeof outer === "object" && outer !== null && outer.kind === "definition" ? (outer.value as [number, Wire])[1] : wire;
+      const root = compactGraph ? expandGraphTag(definition) : definition;
       if (typeof root === "object" && root !== null && root.kind === "record") {
         const checkpoints = (root.value as [string, Wire][]).find(([key]) => key === "checkpoints")?.[1];
         if (checkpoints !== undefined)
-          timings.serializedCheckpointBytes = new TextEncoder().encode(JSON.stringify(checkpoints, compactGraph ? compactGraphTag : undefined)).byteLength;
+          timings.serializedCheckpointBytes = new TextEncoder().encode(JSON.stringify(checkpoints)).byteLength;
       }
     } catch { /* Measurement is optional. */ } });
   }
-  bindReplayAdmission(forecast, restored.modeledPayroll, sourceHistoryState, checkpoints, independentSource, recheckFixedLoans);
-  return { forecast, sourceHistoryState, checkpoints, recheckFixedLoans, ...(restored.modeledPayroll === undefined ? {} : { modeledPayroll: restored.modeledPayroll }) };
+  bindReplayAdmission(forecast, restored.modeledPayroll, sourceHistoryState, independentSource, recheckSsa, recheckFixedLoans);
+  return { forecast, sourceHistoryState, checkpoints, recheckSsa, recheckFixedLoans, ...(restored.modeledPayroll === undefined ? {} : { modeledPayroll: restored.modeledPayroll }) };
 };
 
 // A transported result shares one attachment across all months. Revalidating
@@ -474,20 +479,27 @@ const restoredArtifacts = new WeakMap<object, {
   readonly sourceHistoryState: AuthoritativeState;
   readonly checkpoints: readonly HouseholdReplayCheckpoint[];
   readonly modeledPayroll?: ModeledPayrollReplayBasis | undefined;
+  readonly recheckSsa?: () => void;
   readonly recheckFixedLoans?: (() => void) | undefined;
 }>();
 function bindReplayAdmission(forecast: Pick<HouseholdForecastSummaryResult, "replay" | "periods">, basis: ModeledPayrollReplayBasis | undefined,
-  sourceHistoryState: AuthoritativeState, checkpoints: readonly HouseholdReplayCheckpoint[], independentSource: unknown,
+  sourceHistoryState: AuthoritativeState, independentSource: unknown, recheckSsa: () => void,
   recheckFixedLoans?: () => void): void {
   const { replay } = forecast;
   const admitModel = () => { qualifyModelBasis(basis, replay.kernel.executable, replay.runContext, independentSource); };
   registerRestoredReplayAdmission(replay, () => {
-    validateReplaySsaOccurrences(forecast, sourceHistoryState, checkpoints);
+    recheckSsa();
     recheckFixedLoans?.();
   }, { state: sourceHistoryState, ...(basis === undefined ? {} : { admitModel }) });
 }
 export const restorePortableHouseholdReplayArtifact = (artifact: unknown, observer?: ReplayRestoreObserver, independentSource?: unknown): Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods"> => {
   try { observer?.phase?.("restore_started"); } catch { /* Observation is optional. */ }
+  // Cache the same wire values we actually verify, even if an observer
+  // changes the caller's transported object during restoration.
+  const wire = artifact as PortableHouseholdReplayArtifact | undefined;
+  const integrity = wire?.integrity;
+  const supplied = wire == null ? undefined : { version: wire.version, encoded: wire.encoded,
+    ...(integrity === undefined ? {} : { integrity }) };
   const before = safeNow(observer), heapBefore = observer ? heapSample() : undefined;
   let peak = heapBefore;
   const sample = () => { const heap = heapSample(); if (heap !== undefined) peak = Math.max(peak ?? 0, heap); };
@@ -503,30 +515,30 @@ export const restorePortableHouseholdReplayArtifact = (artifact: unknown, observ
     } catch { /* Measurement cannot change financial execution. */ }
   };
   try {
-    const supplied = artifact as PortableHouseholdReplayArtifact | undefined;
     const cached = typeof artifact === "object" && artifact !== null ? restoredArtifacts.get(artifact) : undefined;
     if (cached && supplied?.version === cached.version && supplied.encoded === cached.encoded && supplied.integrity === cached.integrity) {
       try { observer?.phase?.("restore_warm"); } catch { /* Observation is optional. */ }
       report("warm", cached.forecast);
       const { kernel, runContext } = cached.forecast.replay;
       qualifyModelBasis(cached.modeledPayroll, kernel.executable, runContext, independentSource);
-      validateReplaySsaOccurrences(cached.forecast, cached.sourceHistoryState, cached.checkpoints);
+      const recheckSsa = cached.recheckSsa ?? (() => { validateReplaySsaOccurrences(cached.forecast, cached.sourceHistoryState, cached.checkpoints); });
+      recheckSsa();
       cached.recheckFixedLoans?.();
       observeAuthoritativeSourceHistory(cached.sourceHistoryState, runContext);
-      bindReplayAdmission(cached.forecast, cached.modeledPayroll, cached.sourceHistoryState, cached.checkpoints, independentSource, cached.recheckFixedLoans);
+      bindReplayAdmission(cached.forecast, cached.modeledPayroll, cached.sourceHistoryState, independentSource, recheckSsa, cached.recheckFixedLoans);
       return cached.forecast;
     }
     const timings: RestoreTimings = {};
-    const { forecast, modeledPayroll, sourceHistoryState, checkpoints, recheckFixedLoans } = restorePortableArtifact(artifact, observer, timings, sample, independentSource);
+    const { forecast, modeledPayroll, sourceHistoryState, checkpoints, recheckSsa, recheckFixedLoans } = restorePortableArtifact(supplied, observer, timings, sample, independentSource);
     report("cold", forecast, timings);
     observeHouseholdForecastSources(forecast);
     if (typeof artifact === "object" && artifact !== null && supplied) restoredArtifacts.set(artifact, {
-      version: supplied.version, encoded: supplied.encoded, integrity: supplied.integrity, forecast, modeledPayroll, sourceHistoryState, checkpoints, recheckFixedLoans,
+      version: supplied.version, encoded: supplied.encoded, integrity: supplied.integrity, forecast, modeledPayroll, sourceHistoryState, checkpoints, recheckSsa, recheckFixedLoans,
     });
     return forecast;
   }
   catch (error) {
-    if ((artifact as PortableHouseholdReplayArtifact | null)?.version === "household-replay/v3")
+    if (supplied?.version === "household-replay/v3")
       throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: portable checkpoint evidence is invalid or unavailable", { cause: error });
     throw error;
   }

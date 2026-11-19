@@ -2,7 +2,8 @@ import { accountingTransactionId, type AccountingTransaction } from "../../../..
 import { ValidationError } from "../../../../diagnostics/index.js";
 import { idempotencyKey } from "../../../../identity/index.js";
 import { applyD2HelocOriginalAtomically, applyD2SettlementAtomically, d2SettlementPostingRegistration,
-  requalifyD2SettlementReceiptHistory, registerHouseholdCallbackOwner, type AuthoritativeState, type D2HelocSettlementReceipt, type D2SettlementSourceContext } from "../../../../state/index.js";
+  requalifyD2SettlementReceiptHistory, registerHouseholdCallbackOwner, type AuthoritativeState, type D2HelocSettlementReceipt,
+  type D2PostedTransactionProof, type D2SettlementSourceContext } from "../../../../state/index.js";
 import { applyHouseholdExecutionOverlay, householdPreparationAttempt, type CompiledHouseholdKernel, type HouseholdKernelParticipant } from "../../../householdExecution.js";
 import type { HouseholdWorkDescriptor } from "../../../intraperiodScheduler.js";
 import { immutableConfiguration } from "../../../r3/compiledHousehold.js";
@@ -32,18 +33,24 @@ function resources(state: AuthoritativeState, r: D2HelocSettlementReceipt): void
       || !state.liabilities[r.chargeLiabilityId]!.balance.currency.equals(r.amount.currency))))
     fail("Exact existing owned BANK, original principal and separate source-owned temporary payable required");
 }
-function posted(state: AuthoritativeState, r: D2HelocSettlementReceipt, role: "original" | "settlement"): boolean {
+function posted(state: AuthoritativeState, r: D2HelocSettlementReceipt, role: "original" | "settlement",
+  verifiedRepayments?: WeakMap<D2HelocSettlementReceipt, D2PostedTransactionProof>): boolean {
   const tx = role === "original" ? r.originalTransaction : r.paymentTransaction, proof = state.d2PostedTransactions?.[tx.id];
   const id = state.identities.postedTransactionIds.includes(tx.id);
-  if (id !== (proof !== undefined) || proof && (!same(proof.transaction, tx)
-    || !same(proof.registration, d2SettlementPostingRegistration(r, role)))) fail("Canonical journal/registration differs from independently rebuilt original");
+  if (id !== (proof !== undefined)) fail("Canonical journal/registration differs from independently rebuilt original");
+  if (proof !== undefined && verifiedRepayments?.get(r) !== proof) {
+    if (!same(proof.transaction, tx) || !same(proof.registration, d2SettlementPostingRegistration(r, role)))
+      fail("Canonical journal/registration differs from independently rebuilt original");
+    verifiedRepayments?.set(r, proof);
+  }
   return id;
 }
 
 /** B1's history is a conditional input. Check every included original against
  * actual canonical postings; also reject omission of any committed repayment. */
 function principalHistory(state: AuthoritativeState, q: QualifiedHelocService, context: D2SettlementSourceContext,
-  inherited?: ReadonlySet<D2HelocSettlementReceipt["id"]>): void {
+  inherited?: ReadonlySet<D2HelocSettlementReceipt["id"]>,
+  verifiedRepayments?: WeakMap<D2HelocSettlementReceipt, D2PostedTransactionProof>): void {
   const c = q.document.request.checkpoint, r = q.receipt, history = c.history;
   const repayments = Object.values(state.d2SettlementReceipts ?? {}).filter((x): x is D2HelocSettlementReceipt =>
     x.kind === "heloc_phase_service" && x.liabilityId === r.liabilityId && x.effectiveAt <= serviceInstant(c.closingAt));
@@ -74,7 +81,7 @@ function principalHistory(state: AuthoritativeState, q: QualifiedHelocService, c
   for (const h of history) {
     if (h.kind === "principal_repayment") {
       const old = actualRepayments.get(accountingTransactionId(h.postingId));
-      if (!old || !posted(state, old, "settlement") || old.operationId !== h.operationId || old.authorizationId !== h.authorizationId
+      if (!old || !posted(state, old, "settlement", verifiedRepayments) || old.operationId !== h.operationId || old.authorizationId !== h.authorizationId
         || old.claimId !== h.claimId || old.source.fundingId !== h.fundingId || old.effectiveAt !== serviceInstant(h.effectiveAt)
         || !old.principalPaid.equals(h.principal) || !old.interest.equals(h.interest)
         || !old.principalPaid.plus(old.interest).equals(h.cash)) fail("Proposed or altered history is not posted principal authority");
@@ -120,10 +127,19 @@ export function createHelocServicingParticipant(configuration: HelocServicingInp
     months: ReadonlyMap<string, ReadonlySet<D2HelocSettlementReceipt>>;
     inherited: ReadonlySet<D2HelocSettlementReceipt["id"]>;
   }>();
+  // The internal writer's immutable repayment/proof pairs recur in later
+  // cumulative originals. Current publisher reads and all row comparisons
+  // still run. Only the exact archived journal comparison is shared.
+  const repaymentChecks = new WeakMap<object, WeakMap<D2HelocSettlementReceipt, D2PostedTransactionProof>>();
   const participant = Object.freeze({ id: participantId, version: "1", portableCodec: codec, economicInputs: input,
     prepare: (context, period, opening, work = [], tier = "detail") => {
       const attempt = householdPreparationAttempt(opening);
       const cached = attempt === undefined ? undefined : catalogs.get(attempt);
+      let verifiedRepayments: WeakMap<D2HelocSettlementReceipt, D2PostedTransactionProof> | undefined;
+      if (attempt?.hasExternalParticipants === false) {
+        verifiedRepayments = repaymentChecks.get(attempt) ?? new WeakMap();
+        repaymentChecks.set(attempt, verifiedRepayments);
+      }
       try { if (attempt === undefined) requalifyD2SettlementReceiptHistory(opening.state, context); }
       catch { fail("Historical source or signed journal no longer qualifies"); }
       const load = (id: string): QualifiedHelocService => {
@@ -213,7 +229,8 @@ export function createHelocServicingParticipant(configuration: HelocServicingInp
           const current = qualifyHelocServicingSource(r.source.sourceId, context);
           if (current.status !== "qualified" || !same(current.receipt, r)) fail("Issuer or BANK source changed after preparation");
           resources(candidate.state, r);
-          principalHistory(candidate.state, current, context, attempt?.hasExternalParticipants === false ? inherited : undefined);
+          principalHistory(candidate.state, current, context, attempt?.hasExternalParticipants === false ? inherited : undefined,
+            verifiedRepayments);
           const existing = candidate.state.d2SettlementReceipts?.[r.id];
           if (existing && !same(existing, r)) fail("Committed receipt changed");
           try {

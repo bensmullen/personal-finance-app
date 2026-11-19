@@ -520,8 +520,16 @@ describe("combined independent FSA/card/SSA/HELOC/fixed loan original history", 
     const { kernel, context, periods, events } = combined(1);
     const summary = runHouseholdKernel({ kernel, runContext: context });
     expect(summary.periods, JSON.stringify(summary.diagnostics)).toHaveLength(2);
-    const transported: unknown = JSON.parse(JSON.stringify(createPortableHouseholdReplayArtifact(summary)));
-    const restored = restorePortableHouseholdReplayArtifact(transported);
+    const artifact = createPortableHouseholdReplayArtifact(summary);
+    const transported = { ...artifact };
+    const restored = restorePortableHouseholdReplayArtifact(transported, {
+      record: () => { transported.encoded = "invalid artifact"; },
+    });
+    // The restored basis belongs to the verified wire, including when the
+    // restore callback changes the identity-keyed transport object in place.
+    expect(() => restorePortableHouseholdReplayArtifact(transported)).toThrow("HOUSEHOLD_REPLAY_BASIS_MISMATCH");
+    transported.encoded = artifact.encoded;
+    expect(restorePortableHouseholdReplayArtifact(transported)).toBe(restored);
     expect(replayHouseholdForecastWindow(restored, periods[1]!).state).toEqual(summary.state);
     expect(() => replayHouseholdForecastWindow(restored, periods[1]!, undefined, phase => {
       if (phase === "replay_verified") unavailableBenefit = events[0]!.eventId;

@@ -534,6 +534,10 @@ export const registerHouseholdCallbackOwner = (owner: HouseholdCallbackOwner, ow
 export const isOwnedHouseholdCallbackParticipant = (participant: object): boolean =>
   isSsaMedicareAuthorityParticipant(participant) || [...householdCallbackOwners.values()].some(owns => owns(participant));
 const paymentKey = (p: SsaPayableEvidence): string => JSON.stringify([p.householdId, p.recipientId, p.paymentId]);
+// Only the canonical SSA writer can stage this exact receipt in its private
+// accounting candidate. It observes the sources before staging and again
+// before committing. Imported and independently validated receipts still read.
+const stagingNativeSsaReceipt = new WeakMap<AuthoritativeState, SsaMedicarePaymentRecord>();
 // Exact structural equality also survives independent portable restoration.
 const paymentValue = (value: unknown): string => {
   const plain = (v: unknown): unknown => typeof v === "bigint" ? ["bigint", v.toString()]
@@ -1662,12 +1666,17 @@ const d2Invalid = (message: string): never => failValidation({ severity: "error"
 
 export const retirementDistributionSourceFingerprint = (source: RetirementDistributionRecord["source"]): string => paymentValue(source);
 const retirementExact = (m: Money): boolean => m instanceof Money && m.currency.code === "USD" && m.amount.fitsScale(2) && !m.isNegative();
-const retirementTransaction = (d: RetirementDistributionRecord): AccountingTransaction => createAccountingTransaction({
-  id: d.transactionId, type: "retirement_cash_transfer", date: d.effectiveAt, legs: [
+const retirementTransactions = new WeakMap<RetirementDistributionRecord, AccountingTransaction>();
+const retirementTransaction = (d: RetirementDistributionRecord): AccountingTransaction => {
+  const existing = retirementTransactions.get(d);
+  if (existing !== undefined) return existing;
+  const transaction = createAccountingTransaction({ id: d.transactionId, type: "retirement_cash_transfer", date: d.effectiveAt, legs: [
     createAccountingLeg({ type: "cash", posting: "debit", amount: d.netBank, accountId: d.destinationAccountId, cashFlowClass: "investing" }),
     createAccountingLeg({ type: "cash", posting: "credit", amount: d.gross, accountId: d.sourceAccountId, cashFlowClass: "investing" }),
-  ],
-});
+  ] });
+  if (frozenPaymentValues.has(d)) retirementTransactions.set(d, transaction);
+  return transaction;
+};
 // These are exact structural commitments. Reuse their bytes for immutable
 // journal rows without carrying any publisher admission across observations.
 const frozenRetirementKeys = new WeakMap<RetirementDistributionRecord, readonly IdempotencyKey[]>();
@@ -2350,7 +2359,8 @@ const validateD2Posting = (state: AuthoritativeState, key: string, proof: D2Post
         paymentValue(payment.nativeHousehold) !== paymentValue(r.nativeHousehold) ||
         paymentValue(payment.transaction) !== paymentValue(tx) || tx.type !== "ssa_medicare_same_event")
       d2Invalid("Native SSA posting must bind its actual payment");
-    if (isNativeSsaMedicareOriginalInput(payment!.sourceInputs)) validatePaymentSources(payment!);
+    if (isNativeSsaMedicareOriginalInput(payment!.sourceInputs) && stagingNativeSsaReceipt.get(state) !== payment)
+      validatePaymentSources(payment!);
     expected = tx.legs.map(({ traceRefs: _trace, ...leg }) => leg) as AccountingTransaction["legs"];
   } else if (r.kind === "fsa_paid_reimbursement") expected = r.role === "original"
     ? [createAccountingLeg({ type: "expense", posting: "debit", amount }), cash("credit")]
@@ -3124,7 +3134,7 @@ const validateSsaMedicarePayments = (state: AuthoritativeState): ExecutionStateI
       || record.sourceInputs === undefined || !(record.bankCashBefore instanceof Money)
       || record.bankCashBefore.currency.code !== "USD" || !record.bankCashBefore.amount.fitsScale(2) || record.bankCashBefore.isNegative())
       paymentInvalid("Malformed versioned payment receipt");
-    validatePaymentSources(record);
+    if (stagingNativeSsaReceipt.get(state) !== record) validatePaymentSources(record);
     const batch = paymentBatch(record);
     const bank = state.accounts[record.bankAccountId];
     const expected = ssaMedicarePaymentJournal(record);
@@ -3229,22 +3239,25 @@ export const applySsaMedicarePaymentAtomically = (state: AuthoritativeState, inp
       paymentKey: key, nativeHousehold: a };
     approvedNativeRegistrations.add(r);
     stagedNativeSsaPayments.set(r, record);
-    applyAccountingTransactionAtomically(candidate, transaction, r);
-  } else {
-    applyAccountingTransactionAtomically(candidate, transaction);
-    const receipts = candidate.ssaMedicarePayments ?? indexedRecord(new PersistentStringIndex<SsaMedicarePaymentRecord>(), false, undefined, freezePayment).record;
-    receipts[key] = record;
-    candidate.ssaMedicarePayments = receipts;
+    const posted = stageAccountingTransaction(candidate, transaction, r);
+    if (!executionStateIndexes.has(posted)) {
+      reconcileClaimIdentityHistory(posted);
+      validateAuthoritativeState(posted);
+    }
+    validatePaymentSources(input);
+    qualifyNativePosting(transaction, a, "ssa", input.payable.householdId, input.payable.recipientId, input.bankAccountId,
+      "credit", false, undefined, undefined, sourceQualifiedSsa);
+    commitCandidate(state, posted);
+    return record;
   }
+  applyAccountingTransactionAtomically(candidate, transaction);
+  const receipts = candidate.ssaMedicarePayments ?? indexedRecord(new PersistentStringIndex<SsaMedicarePaymentRecord>(), false, undefined, freezePayment).record;
+  receipts[key] = record;
+  candidate.ssaMedicarePayments = receipts;
   // Indexed insertion already registered each recognition/settlement above.
   // Rebuilding the registry here discards its persistent append-only proof.
   if (!executionStateIndexes.has(candidate)) reconcileClaimIdentityHistory(candidate);
   validateAuthoritativeState(candidate);
-  if (input.nativeHousehold) {
-    validatePaymentSources(input);
-    qualifyNativePosting(transaction, input.nativeHousehold, "ssa", input.payable.householdId, input.payable.recipientId, input.bankAccountId,
-      "credit", false, undefined, undefined, sourceQualifiedSsa);
-  }
   commitCandidate(state, candidate);
   return record;
 };
@@ -3377,7 +3390,13 @@ const stageAccountingTransaction = (
       candidate.retirementDistributionAllocations = journal;
     }
   }
-  validateAuthoritativeState(candidate, transaction.id);
+  const staged = proofRegistration?.kind === "ssa_medicare_payment"
+    ? candidate.ssaMedicarePayments?.[proofRegistration.paymentKey] : undefined;
+  if (staged !== undefined && isNativeSsaMedicareOriginalInput(staged.sourceInputs)) {
+    stagingNativeSsaReceipt.set(candidate, staged);
+    try { validateAuthoritativeState(candidate, transaction.id); }
+    finally { stagingNativeSsaReceipt.delete(candidate); }
+  } else validateAuthoritativeState(candidate, transaction.id);
   return candidate;
 };
 
