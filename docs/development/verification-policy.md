@@ -23,16 +23,19 @@ diagnostic logs and case-level progress. The separate PostToolUse hook seals
 the host-returned outcome in protected, hash-bound `.codex/runtime/` state;
 local diagnostic files are never acceptance or authorization receipts. No
 flags, wrappers, shell chaining, arbitrary test selection, installers or
-alternate runners. Both helper and progress reporter must match the **single trusted merged-main
-ancestor of the active task branch**. A long-lived worktree may retain its
-original, previously merged tool version after `origin/main` advances; a
-committed or uncommitted feature-only helper/reporter edit is never trusted.
-Missing or ambiguous main ancestry, a missing historical reporter, or a branch
-predating the sandbox-safe verifier is not fixed by weakening this guard:
-perform an operator-owned branch synchronization with a newer merged main
-before a fresh task turn. `bootstrap-pr.sh resume` fetches/fast-forwards the
-task branch only; it does **not** merge main or replace protected tooling.
-Neither helper nor reporter may execute during their own framework change turn.
+alternate runners. Both helper and progress reporter must together match **one complete trusted
+version** from either the task branch's unique merged-main ancestor or the
+current merged `origin/main` tip. Long-lived worktrees may retain their
+original merged verifier as main advances, and a reviewer/operator may also
+synchronize the complete latest framework tool pair without merging unrelated
+financial-engine code. Mixing versions or modifying any tool only on the
+feature branch is never trusted. Missing or ambiguous ancestry, a missing
+historical reporter, or a branch predating the sandbox-safe hook requires a
+reviewed operator-owned framework synchronization **including the hook**, and
+fresh task receipt authorization. `bootstrap-pr.sh resume` only fetches and
+fast-forwards its own branch; it does **not** merge main, replace tooling, or
+implicitly update the active Codex worktree. Neither helper nor reporter may
+execute during its own framework implementation turn.
 
 **Execution truth:** A nonzero exit from an executed bounded typecheck or
 selected unit test is FAIL, and a matching persisted FAIL blocks ordinary
