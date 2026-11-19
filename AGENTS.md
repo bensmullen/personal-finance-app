@@ -233,7 +233,7 @@ TIMEOUT/INCOMPLETE, not a PASS or a test assertion FAIL. No attempted local
 verification is required to publish. The sandboxed helper writes only ignored
 `.pfm-preflight/` diagnostic logs and per-case progress; the PostToolUse hook
 records the actual result in protected hash-bound task state. The hook authenticates
-both verifier and reporter as one complete merged tool version from the branch's
+launcher, verifier and reporter as one complete merged tool version from the branch's
 unique main ancestor **or** the current merged main tip; a feature-only edit or
 mixed version remains prohibited. Older worktrees lacking this mechanism need
 an operator-owned, reviewed framework-only update including the hook (or a safe
