@@ -30,7 +30,7 @@ diagnostic logs and case-level progress. The separate PostToolUse hook seals
 the host-returned outcome in protected, hash-bound `.codex/runtime/` state;
 local diagnostic files are never acceptance or authorization receipts. No
 flags, wrappers, shell chaining, arbitrary test selection, installers or
-alternate runners. Both helper and progress reporter must together match **one complete trusted
+alternate runners. Launcher, helper and progress reporter must together match **one complete trusted
 version** from either the task branch's unique merged-main ancestor or the
 current merged `origin/main` tip. Long-lived worktrees may retain their
 original merged verifier as main advances, and a reviewer/operator may also
