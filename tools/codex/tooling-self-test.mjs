@@ -1294,7 +1294,7 @@ const advanceSyntheticVerifierMain = (f, id) => {
   mustRun('git', ['worktree', 'add', '--detach', advance, earlierMain], { cwd: f.repository });
   for (const helper of ['tools/codex/limited-local-verification.mjs',
                         'tools/codex/local-preflight-progress-reporter.mjs']) {
-    fs.appendFileSync(path.join(advance, helper), '// subsequent merged main framework update\\n');
+    fs.appendFileSync(path.join(advance, helper), '// subsequent merged main framework update\n');
   }
   mustRun('git', ['add', 'tools/codex/limited-local-verification.mjs',
                  'tools/codex/local-preflight-progress-reporter.mjs'], { cwd: advance });
