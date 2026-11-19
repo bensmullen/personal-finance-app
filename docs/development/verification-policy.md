@@ -15,7 +15,7 @@ It runs the complete package typecheck API (`tsc --noEmit` then
 30 seconds. It invokes local binaries directly, avoiding npm lifecycle hooks.
 One simple tool call per coherent patch; at most one correction retry after
 a hook-observed FAIL, requiring changed content and the same test. No local
-retry is permitted after TIMEOUT, SKIP, PASS, missing PostToolUse result or
+retry is permitted after process-level or individual Vitest-case TIMEOUT, SKIP, PASS, missing PostToolUse result or
 any interrupted/unrecorded execution. The hook reserves each attempt BEFORE
 the sandboxed command runs; an unobserved outcome is INCOMPLETE, not a license
 to retry. The sandboxed helper may write only ignored `.pfm-preflight/`
