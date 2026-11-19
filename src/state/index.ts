@@ -1296,21 +1296,23 @@ export const createAuthoritativeIdentityRegistry = (
   externalIdempotencyKeys: Object.freeze(stableUnique(draft.externalIdempotencyKeys)),
 });
 
+const copyAuthoritativeState = (draft: AuthoritativeStateDraft): AuthoritativeState => ({
+  accounts: Object.fromEntries(Object.entries(draft.accounts ?? {}).map(([key, value]) => [key, { ...value }])),
+  positions: Object.fromEntries(Object.entries(draft.positions ?? {}).map(([key, value]) => [key, { ...value }])),
+  liabilities: Object.fromEntries(Object.entries(draft.liabilities ?? {}).map(([key, value]) => [key, { ...value }])),
+  obligations: Object.fromEntries(Object.entries(draft.obligations ?? {}).map(([key, value]) => [key, materializeClaimLifecycle(value)])),
+  identities: createAuthoritativeIdentityRegistry(draft.identities),
+  ...(draft.contributions === undefined ? {} : { contributions: { ...draft.contributions } }),
+  ...(draft.contingentPositions === undefined ? {} : { contingentPositions: Object.fromEntries(Object.entries(draft.contingentPositions).map(([key, value]) => [key, { ...value }])) }),
+  ...(draft.ssaMedicarePayments === undefined ? {} : { ssaMedicarePayments: Object.fromEntries(Object.entries(draft.ssaMedicarePayments).map(([key, value]) => [key, freezePayment(value)])) }),
+  ...(draft.d2SettlementReceipts === undefined ? {} : { d2SettlementReceipts: indexedRecord(new PersistentStringIndex(
+    Object.entries(draft.d2SettlementReceipts).map(([key, value]) => [key, freezePayment(value)] as const)), false, d2ReceiptWrite, freezePayment).record }),
+  ...(draft.d2PostedTransactions === undefined ? {} : { d2PostedTransactions: cloneD2PostingRecord(draft.d2PostedTransactions) }),
+  ...(draft.retirementDistributionAllocations === undefined ? {} : { retirementDistributionAllocations: cloneRetirementRecord(draft.retirementDistributionAllocations) }),
+});
+
 export const createAuthoritativeState = (draft: AuthoritativeStateDraft = {}): AuthoritativeState => {
-  const state: AuthoritativeState = {
-    accounts: Object.fromEntries(Object.entries(draft.accounts ?? {}).map(([key, value]) => [key, { ...value }])),
-    positions: Object.fromEntries(Object.entries(draft.positions ?? {}).map(([key, value]) => [key, { ...value }])),
-    liabilities: Object.fromEntries(Object.entries(draft.liabilities ?? {}).map(([key, value]) => [key, { ...value }])),
-    obligations: Object.fromEntries(Object.entries(draft.obligations ?? {}).map(([key, value]) => [key, materializeClaimLifecycle(value)])),
-    identities: createAuthoritativeIdentityRegistry(draft.identities),
-    ...(draft.contributions === undefined ? {} : { contributions: { ...draft.contributions } }),
-    ...(draft.contingentPositions === undefined ? {} : { contingentPositions: Object.fromEntries(Object.entries(draft.contingentPositions).map(([key, value]) => [key, { ...value }])) }),
-    ...(draft.ssaMedicarePayments === undefined ? {} : { ssaMedicarePayments: Object.fromEntries(Object.entries(draft.ssaMedicarePayments).map(([key, value]) => [key, freezePayment(value)])) }),
-    ...(draft.d2SettlementReceipts === undefined ? {} : { d2SettlementReceipts: indexedRecord(new PersistentStringIndex(
-      Object.entries(draft.d2SettlementReceipts).map(([key, value]) => [key, freezePayment(value)] as const)), false, d2ReceiptWrite, freezePayment).record }),
-    ...(draft.d2PostedTransactions === undefined ? {} : { d2PostedTransactions: cloneD2PostingRecord(draft.d2PostedTransactions) }),
-    ...(draft.retirementDistributionAllocations === undefined ? {} : { retirementDistributionAllocations: cloneRetirementRecord(draft.retirementDistributionAllocations) }),
-  };
+  const state = copyAuthoritativeState(draft);
   // Receipt identities must already exist on import; reconciliation must not
   // manufacture missing posting authority for caller-supplied history.
   validateSsaMedicarePayments(state);
@@ -1319,6 +1321,16 @@ export const createAuthoritativeState = (draft: AuthoritativeStateDraft = {}): A
   reconcileClaimIdentityHistory(state);
   validateAuthoritativeState(state);
   return state;
+};
+
+/** Materialize a live execution root for a caller that separately observes
+ * its sources at release. Cold imports always use createAuthoritativeState. */
+export const materializeExecutionState = (state: AuthoritativeState): AuthoritativeState => {
+  if (!executionStateIndexes.has(state)) return createAuthoritativeState(state);
+  validateAuthoritativeState(state);
+  const materialized = copyAuthoritativeState(state);
+  reconcileClaimIdentityHistory(materialized);
+  return materialized;
 };
 
 export const cloneAuthoritativeState = (state: AuthoritativeState): AuthoritativeState => {
@@ -2089,7 +2101,9 @@ const qualifyNativePosting = (tx: AccountingTransaction, a: NativeHouseholdPosti
   }
   if (tx.legs.some(l => !(l.amount instanceof Money) || l.amount.isNegative() || !l.amount.amount.fitsScale(l.amount.currency.minorUnitScale)))
     d2Invalid("Native household journal requires exact money");
-  qualifyHouseholdOriginals(tx, c, a.originals, nativeSource);
+  // The v3 payment validator qualifies both issuer originals through their
+  // shared A1/C2 authority. The attachment still checks BANK independently.
+  if (!sourceQualifiedSsa) qualifyHouseholdOriginals(tx, c, a.originals, nativeSource);
 };
 const qualifyNativeRegistration = (tx: AccountingTransaction, r: D2PostingRegistration, context?: D2SettlementSourceContext,
   sourceQualifiedSsa = false): void => {
@@ -2302,7 +2316,6 @@ const validateD2Posting = (state: AuthoritativeState, key: string, proof: D2Post
     if (!fullyAllocatedWage && (cashLegs.length !== 1 || cashLegs[0]!.accountId !== r.bankAccountId ||
         cashLegs[0]!.posting !== (c.direction === "credit" ? "debit" : "credit") || !cashLegs[0]!.amount.isPositive()))
       d2Invalid("Household route does not match actual BANK direction");
-    qualifyHouseholdPosting(tx, r.evidence);
     expected = tx.legs.map(({ traceRefs: _trace, ...leg }) => leg) as AccountingTransaction["legs"];
   } else if (r.kind === "ssa_medicare_payment") {
     const payment = state.ssaMedicarePayments?.[r.paymentKey];
@@ -2311,6 +2324,7 @@ const validateD2Posting = (state: AuthoritativeState, key: string, proof: D2Post
         paymentValue(payment.nativeHousehold) !== paymentValue(r.nativeHousehold) ||
         paymentValue(payment.transaction) !== paymentValue(tx) || tx.type !== "ssa_medicare_same_event")
       d2Invalid("Native SSA posting must bind its actual payment");
+    if (isNativeSsaMedicareOriginalInput(payment!.sourceInputs)) validatePaymentSources(payment!);
     expected = tx.legs.map(({ traceRefs: _trace, ...leg }) => leg) as AccountingTransaction["legs"];
   } else if (r.kind === "fsa_paid_reimbursement") expected = r.role === "original"
     ? [createAccountingLeg({ type: "expense", posting: "debit", amount }), cash("credit")]
@@ -2368,8 +2382,8 @@ export const validateD2PostedTransactions = (state: AuthoritativeState): void =>
     // A cold archive has no trusted structural ancestry. Re-read independently
     // before accepting its first roots; warm appends use the writer's final
     // source check instead of scanning previously committed events.
-    if (previous === undefined || nativeCheckpointImports.has(state)) {
-      if (proof.registration.kind === "household_domain") qualifyHouseholdPosting(proof.transaction, proof.registration.evidence);
+    const cold = previous === undefined || nativeCheckpointImports.has(state);
+    if (cold) {
       // The SSA proof just requalified both original owners above.
       if (proof.registration.nativeHousehold && !(proof.registration.kind === "ssa_medicare_payment" &&
           isNativeSsaMedicareOriginalInput(state.ssaMedicarePayments?.[proof.registration.paymentKey]?.sourceInputs))) {
@@ -2416,8 +2430,10 @@ export const validateD2PostedTransactions = (state: AuthoritativeState): void =>
       : r.kind === "ssa_medicare_payment" ? [JSON.stringify([r.kind, r.paymentKey])]
       : [JSON.stringify([r.kind, "wage", r.deduction.source.incomeId, r.deduction.source.occurrenceId]),
         JSON.stringify([r.kind, "claim", r.deduction.source.claimId])];
-    const healthSource = r.kind === "household_domain"
-      ? householdPayrollHealthPostingEvidence(proof, r.evidence.context)?.deduction.source : undefined;
+    // Cold roots authenticate the whole posting. Live composite payroll also
+    // needs the qualified health claim for the cross-posting identity index.
+    const healthSource = r.kind === "household_domain" && (cold || isCompositePayrollPosting(proof))
+      ? qualifyHouseholdPosting(proof.transaction, r.evidence)?.deduction.source : undefined;
     if (healthSource) sourceKeys.push(JSON.stringify(["payroll_health_deduction", "claim", healthSource.claimId]));
     for (const sourceKey of sourceKeys) {
       const prior = sources.get(sourceKey);
@@ -2693,10 +2709,13 @@ export const validateD2SettlementReceipts = (state: AuthoritativeState): void =>
     if (change.before !== undefined) continue;
     const r = state.d2SettlementReceipts?.[change.key] ?? d2Invalid("Missing receipt");
     validateD2Receipt(state, change.key, r);
-    if ((previous === undefined || nativeCheckpointImports.has(state)) && r.nativeHousehold && qualifyD2Receipt(r, r.nativeHousehold.settlement.context).status !== "qualified")
+    const coldContext = previous === undefined || nativeCheckpointImports.has(state) ? r.nativeHousehold?.settlement.context : undefined;
+    if (coldContext && qualifyD2Receipt(r, coldContext).status !== "qualified")
       d2Invalid("Native receipt original source unavailable on cold import");
     if (!matchD2PostedTransaction(state, r, "original") || !matchD2PostedTransaction(state, r, "settlement"))
       d2Invalid("Committed receipt lacks actual archived canonical postings");
+    if (coldContext && qualifyD2Receipt(r, coldContext).status !== "qualified")
+      d2Invalid("Native receipt original source unavailable after cold posting validation");
     admitD2EventOrder(eventOrder, r);
     for (const id of d2ConsumptionKeys(r)) {
       if (consumed.has(id)) d2Invalid("Historical receipt/source/authorization/claim/transaction reused");
@@ -3175,7 +3194,7 @@ export const applySsaMedicarePaymentAtomically = (state: AuthoritativeState, inp
   if (!executionStateIndexes.has(candidate)) reconcileClaimIdentityHistory(candidate);
   validateAuthoritativeState(candidate);
   if (input.nativeHousehold) {
-    if (!sourceQualifiedSsa) validatePaymentSources(input);
+    validatePaymentSources(input);
     qualifyNativePosting(transaction, input.nativeHousehold, "ssa", input.payable.householdId, input.payable.recipientId, input.bankAccountId,
       "credit", false, undefined, undefined, sourceQualifiedSsa);
   }

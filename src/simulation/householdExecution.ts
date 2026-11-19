@@ -33,6 +33,7 @@ import {
   cloneAuthoritativeState,
   createIndexedExecutionState,
   createAuthoritativeState,
+  materializeExecutionState,
   registerAuthoritativeIdentity,
   validateAuthoritativeState,
   authoritativeStateChangesSince,
@@ -1175,7 +1176,7 @@ const runCompiledHouseholdProjectionInternal = (
         requestedHorizon,
         stoppedAt: period.start,
         ...(reachedThrough === undefined ? {} : { reachedThrough }),
-        state: createAuthoritativeState(state),
+        state: materializeExecutionState(state),
         primitiveState: materializePrimitiveRuntimeStateStore(primitiveState),
         periods: Object.freeze(committed),
         diagnostics: Object.freeze(diagnostics),
@@ -1188,7 +1189,7 @@ const runCompiledHouseholdProjectionInternal = (
     runMetadata,
     requestedHorizon,
     reachedThrough: reachedThrough ?? requestedHorizon.end,
-    state: createAuthoritativeState(state),
+    state: materializeExecutionState(state),
     primitiveState: materializePrimitiveRuntimeStateStore(primitiveState),
     periods: Object.freeze(committed),
     diagnostics: Object.freeze(diagnostics),
@@ -1287,7 +1288,7 @@ export const householdReplayCheckpointSelection = (
 export const exportHouseholdReplayCheckpoints = (forecast: Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods">): readonly HouseholdReplayCheckpoint[] =>
 {
   const checkpoints = Object.freeze((forecastCheckpoints.get(forecast) ?? []).map(checkpoint => Object.freeze({ ...checkpoint,
-    state: createAuthoritativeState(checkpoint.state),
+    state: materializeExecutionState(checkpoint.state),
     primitiveState: materializePrimitiveRuntimeStateStore(checkpoint.primitiveState),
   })));
   observeHouseholdForecastSources(forecast);
@@ -1516,8 +1517,8 @@ export const replayHouseholdForecastWindow = (
   let replayedRoot: AuthoritativeState | undefined;
   try {
     const admission = restoredReplayAdmission.get(forecast.replay);
-    if (admission?.history === undefined) admission?.observe();
-    else admission.history.admitModel?.();
+    if (phase !== undefined) observeForecastSourceRoot(forecast);
+    else admission?.history?.admitModel?.();
     const checkpoint = (forecastCheckpoints.get(forecast) ?? []).filter(value => value.at <= selectedWindow.start).at(-1);
     report("replay_started");
     const replay = runCompiledHouseholdProjectionInternal({
@@ -1534,6 +1535,12 @@ export const replayHouseholdForecastWindow = (
     report("summary_materialized");
     const summariesMatch = equalHouseholdReplaySummaries(summaries, selected, report);
     if (canonicalSerialize(replay.runMetadata) !== canonicalSerialize(forecast.runMetadata) || !summariesMatch) {
+      // A replay can stop short after an original is withdrawn, including a
+      // lender occurrence that had no funded posting in the archived state.
+      // Reobserve the archived basis before classifying an economic mismatch.
+      observeForecastSourceRoot(forecast);
+      const sourceDenial = replay.diagnostics.find(issue => issue.code === "FIXED_LOAN_ORIGINAL_NOT_ADMITTED");
+      if (sourceDenial !== undefined) throw new ValidationError(sourceDenial);
       report("replay_mismatched");
       throw new ValidationError({ severity: "error", code: "HOUSEHOLD_REPLAY_BASIS_MISMATCH",
         message: "Immutable forecast artifacts did not reproduce the displayed forecast exactly.", entityType: "household_projection" });

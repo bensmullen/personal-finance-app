@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { accountingTransactionId } from "../../../../../src/accounting/index.js";
-import { domainId } from "../../../../../src/identity/index.js";
+import { domainId, idempotencyKey } from "../../../../../src/identity/index.js";
 import { createAuthoritativeState, type AuthoritativeState, type HouseholdBankEventContext } from "../../../../../src/state/index.js";
 import { civilDate, instant, utcMonthlyPeriods } from "../../../../../src/time/index.js";
 import { Money, money } from "../../../../../src/values/index.js";
@@ -369,9 +369,12 @@ function expectCommittedOriginals(state: AuthoritativeState, count: number): voi
 describe("combined independent FSA/card/SSA/HELOC/fixed loan original history", () => {
   it("posts 1/12/24 distinct installments with proportional non-HELOC publisher reads and bytes", () => {
     const measuredLinearFamilies = families.filter(family => family !== "helocIssuer");
+    const sourceMeasurements: { count: number; phase: string; work: Partial<Record<Family, SourceWork>> }[] = [];
+    const indexMeasurements: { count: number; phase: string; counters: Record<string, number> }[] = [];
     const baseline = new Map<string, SourceWork>();
     const structuralAt12 = new Map<string, number>();
     const limitReads = (phase: string, count: number, work: ReadonlyMap<Family, SourceWork> = reads) => {
+      sourceMeasurements.push({ count, phase, work: Object.fromEntries([...work].map(([family, stats]) => [family, { ...stats }])) });
       for (const family of measuredLinearFamilies) {
         const stats = work.get(family);
         expect(stats?.count, `${phase} ${family}`).toBeGreaterThanOrEqual(count);
@@ -449,6 +452,7 @@ describe("combined independent FSA/card/SSA/HELOC/fixed loan original history", 
           if (count === 12) structuralAt12.set(key, value);
           if (count === 24) expect(value, key).toBeLessThanOrEqual(3 * structuralAt12.get(key)!);
         }
+        indexMeasurements.push({ count, phase: tier, counters: Object.fromEntries(structural) });
         expect(beforeRelease).toBeDefined();
         limitReads(`${tier} execution`, count, beforeRelease);
         const release = new Map<Family, SourceWork>();
@@ -484,6 +488,13 @@ describe("combined independent FSA/card/SSA/HELOC/fixed loan original history", 
       expect(cold?.cache).toBe("cold");
       expect(cold?.checkpointFullStateMaterializations ?? 0).toBe(0);
       expect(exported?.materializedCheckpointStates).toBe(0);
+      indexMeasurements.push({ count, phase: "portable checkpoints", counters: {
+        serializedBytes: wire.length, helocIssuerRows: intrinsicRows, helocIssuerBytes: intrinsicBytes,
+        exportIndexNodesVisited: exported?.checkpointIndexNodesVisited ?? 0,
+        exportRecordChanges: exported?.checkpointRecordChanges ?? 0,
+        restoreIndexNodesVisited: cold?.checkpointIndexNodesVisited ?? 0,
+        restoreRecordChanges: cold?.checkpointRecordChanges ?? 0,
+      } });
       if (count === 12) nodesAt12 = (exported?.checkpointIndexNodesVisited ?? 0) + (cold?.checkpointIndexNodesVisited ?? 0);
       if (count === 24) expect((exported?.checkpointIndexNodesVisited ?? 0) + (cold?.checkpointIndexNodesVisited ?? 0))
         .toBeLessThanOrEqual(3 * nodesAt12);
@@ -502,6 +513,7 @@ describe("combined independent FSA/card/SSA/HELOC/fixed loan original history", 
       expect(replayHouseholdForecastWindow(restored, terminal)).toEqual(latest);
     }
     console.info("Synthetic combined source history timings", JSON.stringify(measurements));
+    console.info("Synthetic combined source and index measurements", JSON.stringify({ sourceMeasurements, indexMeasurements }));
   }, 60_000);
 
   it("refuses a committed SSA original withdrawn by a replay-phase callback", () => {
@@ -548,8 +560,16 @@ describe("combined independent FSA/card/SSA/HELOC/fixed loan original history", 
       return record.value as [string, Value][];
     };
     const field = (record: Value, name: string) => rows(record).find(([key]) => key === name)![1];
-    const terminal = field(field(wire, "terminalDelta"), "records");
+    const terminalDelta = field(wire, "terminalDelta");
+    const terminal = field(terminalDelta, "records");
+    const identities = field(terminalDelta, "identities");
     const cash = canonicalSerialize(field(terminal, "accounts"));
+    const restore = () => {
+      const encoded = JSON.stringify(wire);
+      return restorePortableHouseholdReplayArtifact({ ...artifact, encoded,
+        integrity: createInputFingerprint({ runContext: context, openingState: encoded }) });
+    };
+    expect(restore().periods).toEqual(summary.periods);
     const remove = (name: string, id: string) => {
       const ledger = field(field(terminal, name), "set");
       if (ledger === null || typeof ledger !== "object") throw new Error("Missing encoded terminal ledger");
@@ -557,16 +577,53 @@ describe("combined independent FSA/card/SSA/HELOC/fixed loan original history", 
       expect(entries.some(([key]) => key === id)).toBe(true);
       ledger.value = entries.filter(([key]) => key !== id);
     };
-    const [receipt] = Object.values(summary.state.ssaMedicarePayments!);
-    remove("ssaMedicarePayments", receipt!.id);
-    remove("d2PostedTransactions", events[0]!.eventId);
+    const receipt = Object.values(summary.state.ssaMedicarePayments!)[0]!;
+    const eventId = accountingTransactionId(events[0]!.eventId);
+    const proof = summary.state.d2PostedTransactions![eventId]!;
+    expect(proof.registration).toMatchObject({ kind: "ssa_medicare_payment", paymentKey: receipt.id, operationId: eventId });
+    expect(proof.transaction.id).toBe(receipt.transaction.id);
+    const added = (kind: string) => {
+      const list = field(field(identities, kind), "add");
+      if (list === null || typeof list !== "object" || list.kind !== "array")
+        throw new Error("Expected encoded terminal identities");
+      return list as { kind: "array"; value: string[] };
+    };
+    const commitmentPrefix = idempotencyKey("d2-shared:posted-proof", "sentinel").slice(0, -"8:sentinel".length);
+    const commitments = added("externalIdempotencyKeys").value.filter(key =>
+      key.startsWith(commitmentPrefix) && key.endsWith(`"transactionId":"${eventId}","writer":"${proof.writer}"}`));
+    expect(commitments).toHaveLength(1);
+    remove("ssaMedicarePayments", receipt.id);
+    remove("d2PostedTransactions", eventId);
     expect(canonicalSerialize(field(terminal, "accounts"))).toBe(cash);
-    const encoded = JSON.stringify(wire);
-    expect(() => restorePortableHouseholdReplayArtifact({ ...artifact, encoded,
-      integrity: createInputFingerprint({ runContext: context, openingState: encoded }) }))
-      .toThrow(expect.objectContaining({ cause: expect.objectContaining({
-        message: "HOUSEHOLD_REPLAY_BASIS_MISMATCH: fixed loan committed history differs from independent execution",
-      }) }));
+    expect(restore).toThrow(expect.objectContaining({
+      message: "HOUSEHOLD_REPLAY_BASIS_MISMATCH: portable checkpoint evidence is invalid or unavailable",
+      cause: expect.objectContaining({ message: "Posting commitment exists without its archive",
+        issues: [expect.objectContaining({ code: "D2_SETTLEMENT_RECEIPT_INVALID" })] }),
+    }));
+
+    const removeIds = (kind: string, keys: readonly string[]) => {
+      const list = added(kind);
+      for (const key of keys) expect(list.value).toContain(key);
+      list.value = list.value.filter(key => !keys.includes(key));
+    };
+    const claims = [receipt.right, ...receipt.requests.map(request => request.claim)];
+    for (const claim of claims) remove("obligations", claim.id);
+    removeIds("postedTransactionIds", [eventId]);
+    removeIds("recognitionIds", claims.map(claim => claim.originatingRecognitionId));
+    removeIds("settlementIds", [receipt.rightSettlementId, ...receipt.requests.map(request => request.draft.id)]);
+    const consumptionKeys = added("externalIdempotencyKeys").value.filter(key =>
+      /^idempotency:v1:\d+:ssa-medicare:/.test(key));
+    expect(consumptionKeys).toContain(idempotencyKey("ssa-medicare:payment", receipt.payable.paymentId));
+    expect(consumptionKeys).toHaveLength(2 + 4 * receipt.requests.length);
+    removeIds("externalIdempotencyKeys", [...commitments, ...consumptionKeys]);
+    expect(canonicalSerialize(field(terminal, "accounts"))).toBe(cash);
+    expect(restore).toThrow(expect.objectContaining({
+      message: "HOUSEHOLD_REPLAY_BASIS_MISMATCH: portable checkpoint evidence is invalid or unavailable",
+      cause: expect.objectContaining({
+        message: "Due native SSA installment is missing its exact receipt and dual-original proof",
+        issues: [expect.objectContaining({ code: "SSA_CHANGED_PAYMENT" })],
+      }),
+    }));
   }, 20_000);
 
   it("refuses a previously posted Person BANK original before the later settlement exists", () => {

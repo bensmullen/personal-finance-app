@@ -441,16 +441,13 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
     (admittedExecutable.participants?.some(participant => ownsFsaCashParticipant(participant) || ownsCardBankParticipant(participant) ||
       ownsHelocServicingParticipant(participant) || participant.portableCodec === "d2-retirement-cash/v3") ?? false);
   const regenerate = usesFixedLoanOriginals(admittedExecutable) || verifyFullInventory;
-  const recheckFixedLoans = observer?.phase !== undefined || regenerate
-    ? measure("sourceRequalificationMs", () => {
-        if (observer?.phase !== undefined) {
-          validateReplaySsaOccurrences(forecast, sourceHistoryState, checkpoints);
-          requalifyD2SettlementReceiptHistory(sourceHistoryState, restored.runContext);
-          requalifyRetirementDistributionHistory(sourceHistoryState, restored.runContext, true);
-        }
-        else if (regenerate) requalifyRetirementDistributionHistory(sourceHistoryState, restored.runContext, true);
-        return admitConfiguredReplayHistory(forecast, sourceHistoryState, checkpoints, verifyFullInventory);
-      }) : undefined;
+  const recheckFixedLoans = measure("sourceRequalificationMs", () => {
+    validateReplaySsaOccurrences(forecast, sourceHistoryState, checkpoints);
+    if (observer?.phase !== undefined) requalifyD2SettlementReceiptHistory(sourceHistoryState, restored.runContext);
+    if (observer?.phase !== undefined || regenerate)
+      requalifyRetirementDistributionHistory(sourceHistoryState, restored.runContext, true);
+    return admitConfiguredReplayHistory(forecast, sourceHistoryState, checkpoints, verifyFullInventory);
+  });
   try { observer?.phase?.("source_requalified"); } catch { /* Observation is optional. */ }
   if (supplied.version === "household-replay/v3") {
     measure("checkpointRestoreValidationMs", () => registerHouseholdReplayCheckpoints(forecast, checkpoints, counts => {

@@ -44,7 +44,12 @@ it("reobserves published sources after qualification and cached replay callbacks
   expect(() => replayMonth(phase => { if (phase === "replay_cached") control.lenderAvailable = false; })).toThrow();
 });
 
-it.each(["monthly_evidence", "mortgage_evidence"] as const)("rejects observed source loss at the %s worker release", operation => {
+it.each([
+  ["monthly_evidence", "issuer"],
+  ["monthly_evidence", "bank"],
+  ["mortgage_evidence", "issuer"],
+  ["mortgage_evidence", "bank"],
+] as const)("rejects %s worker release after %s withdrawal", (operation, publisher) => {
   const { basis, fingerprint, point, selection } = evidence();
   const request = { ...selection, operation, requestId: 1, fingerprint, points: [point],
     source: { basis, model: createSyntheticPersonalDraft() } };
@@ -63,15 +68,20 @@ it.each(["monthly_evidence", "mortgage_evidence"] as const)("rejects observed so
   expect(control.lenderReads).toBeGreaterThan(projectedReads!.lender);
   expect(control.bankReads).toBeGreaterThan(projectedReads!.bank);
 
+  const withdraw = () => {
+    if (publisher === "issuer") control.lenderAvailable = false;
+    else control.permission = "revoked";
+  };
   const withdrawnInProgress = executeForecastWorkerRequest(request, { now: () => 0 }, progress => {
-    if (progress.outcome === "progress" && progress.phase === "projected") control.lenderAvailable = false;
+    if (progress.outcome === "progress" && progress.phase === "projected") withdraw();
   });
   expect(withdrawnInProgress).toMatchObject({ outcome: "error", sourceIdentityMatched: false });
 
   control.lenderAvailable = true;
+  control.permission = "debit";
   let projected = false;
   const withdrawnInFinalClock = executeForecastWorkerRequest(request,
-    { now: () => { if (projected) control.lenderAvailable = false; return 0; } }, progress => {
+    { now: () => { if (projected) withdraw(); return 0; } }, progress => {
       if (progress.outcome === "progress" && progress.phase === "projected") projected = true;
     });
   expect(projected).toBe(true);
