@@ -261,6 +261,74 @@ def actionable_preflight_failure(root, state):
     return None
 
 
+
+def observe_preflight_response(response, state, tool_use_id=None):
+    """Only the host-provided Bash result may become a protected test receipt."""
+    used = state.get("PREFLIGHT") or {}
+    fallback = {"status": "INCOMPLETE", "patch": used.get("patch"),
+                "attempt": used.get("count"), "reason": "No verifiable host result; no local retry"}
+    if used.get("tool_use_id") and str(tool_use_id) != used["tool_use_id"]:
+        return fallback
+
+    texts = []
+    def collect(value, depth=0):
+        if depth > 5 or len(texts) >= 32:
+            return
+        if isinstance(value, str):
+            texts.append(value[:131072])
+            if value.lstrip().startswith("{"):
+                try:
+                    collect(json.loads(value), depth + 1)
+                except (ValueError, TypeError):
+                    pass
+        elif isinstance(value, dict):
+            for key in ("output", "stdout", "content", "text", "result", "message"):
+                if key in value:
+                    collect(value[key], depth + 1)
+        elif isinstance(value, list):
+            for item in value[:12]:
+                collect(item, depth + 1)
+    collect(response)
+    observed_exit = None
+    if isinstance(response, dict):
+        for key in ("exit_code", "exitCode"):
+            if type(response.get(key)) is int:
+                observed_exit = response[key]
+                break
+    if observed_exit is None:
+        code = re.search(r"Process exited with code (\\d+)", "\\n".join(texts))
+        if code:
+            observed_exit = int(code.group(1))
+
+    prefix = f".pfm-preflight/preflight-{state['AUTHORIZATION_ID']}-{used.get('count')}/"
+    for output in texts:
+        for line in output.splitlines():
+            if "PFM_PREFLIGHT_RESULT " not in line:
+                continue
+            try:
+                report = json.loads(line.split("PFM_PREFLIGHT_RESULT ", 1)[1].strip())
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(report, dict):
+                continue
+            status = report.get("status")
+            if (report.get("schema") != 1 or status not in ("PASS", "FAIL", "SKIP", "TIMEOUT") or
+                report.get("authorization") != state.get("AUTHORIZATION_ID") or
+                report.get("attempt") != used.get("count") or
+                report.get("patch") != used.get("patch") or
+                report.get("nonce") != used.get("nonce") or
+                report.get("test") != used.get("test") or
+                report.get("log") != prefix + "runner.log" or
+                report.get("progress") != prefix + "progress.jsonl"):
+                continue
+            if observed_exit is not None and ((status == "FAIL") != (observed_exit != 0)):
+                continue
+            return {"status": status, "patch": used["patch"], "attempt": used["count"],
+                    "reason": str(report.get("reason") or "")[:200],
+                    "log": report["log"], "progress": report["progress"]}
+    return fallback
+
+
 def task_identity(prompt, metadata):
     issue = (metadata or {}).get("issue")
     if issue:
@@ -1554,6 +1622,15 @@ def post_tool(payload, root):
         else:
             emit({})
         return
+
+    command = str((payload.get("tool_input") or {}).get("command") or "")
+    used = state.get("PREFLIGHT") or {}
+    if (state.get("ACTIVE") and payload.get("tool_name") == "Bash" and
+            re.fullmatch(r"node tools/codex/limited-local-verification\\.mjs(?: test/[A-Za-z0-9_/-]+\\.test\\.ts)?", command) and
+            used.get("result", {}).get("status") == "INCOMPLETE"):
+        used["result"] = observe_preflight_response(payload.get("tool_response"), state,
+                                                     payload.get("tool_use_id"))
+        save_state(root, payload, state)
 
     attachment_error = attachment_integrity_error(state)
     if attachment_error:
