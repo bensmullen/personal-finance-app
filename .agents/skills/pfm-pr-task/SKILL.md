@@ -122,7 +122,11 @@ conditions when useful. Their exact headings are not parser requirements.
   acceptance.
 - All other local tests, builds, validators, E2E, benchmarks, dev servers and
   performance captures remain prohibited. Do not run the helper during its own framework implementation turn; the hook
-  requires both helper and reporter to match their merged origin/main versions.
+  requires both helper and reporter to match their single trusted origin/main
+  branch-ancestor versions, not the moving tip. A feature-only edited tool is
+  denied. If the branch predates the sandbox-safe verifier, require a reviewed
+  operator-owned main synchronization before a fresh task; ordinary `resume`
+  does not merge main.
 - GitHub CI owns ordinary verification.
 - Resolve implementation questions from repository authority: canonical financial
   specification, executable financial semantics, capability/slice specifications,
