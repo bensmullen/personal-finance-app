@@ -1198,6 +1198,79 @@ process.exit(${failure === 'unit' || failure.startsWith('unit-') ? 1 : 0});`);
   assert(result.status === 0 && result.stdout.includes('SKIP') && result.stdout.includes('no tests executed'),
     'unwritable sandbox diagnostic directory must skip without running a test');
 }
+// Codex may start with a non-login PATH that cannot see any Node executable.
+// A separately installed Node 22 under a supported user manager must still run
+// BOTH bounded compiler phases and the selected unit with no extra command.
+{
+  const directory = path.join(temp, 'bounded-launcher-sparse-path');
+  const nodeHome = path.join(temp, 'preflight-node-home');
+  const sparsePath = path.join(temp, 'preflight-sparse-path');
+  const nodeBin = path.join(nodeHome, '.nvm/versions/node/v22.0.0/bin');
+  for (const dest of [
+    path.join(directory, '.codex/runtime'),
+    path.join(directory, 'node_modules/typescript/bin'),
+    path.join(directory, 'node_modules/vitest'),
+    sparsePath, nodeBin,
+  ]) fs.mkdirSync(dest, { recursive: true });
+  fs.symlinkSync(process.execPath, path.join(nodeBin, 'node'));
+  fs.writeFileSync(path.join(nodeBin, 'npm'), '#!/bin/sh\necho 10.9.9\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(directory, '.codex/logs'), 'protected sandbox path');
+  fs.writeFileSync(path.join(directory, 'package.json'), JSON.stringify({ scripts: {
+    typecheck: 'tsc --noEmit && tsc -p tsconfig.next.json',
+  } }));
+  fs.writeFileSync(path.join(directory, 'node_modules/typescript/bin/tsc'),
+    "console.log('tsc ' + process.argv.slice(2).join(' '));");
+  fs.writeFileSync(path.join(directory, 'node_modules/vitest/vitest.mjs'),
+    "console.log('unit ' + process.argv.slice(2).join(' '));");
+  const data = JSON.stringify({ ACTIVE: true, WORKTREE: directory,
+    AUTHORIZATION_ID: 'sparse-path', PREFLIGHT: {
+      count: 1, test: 'test/affected.test.ts', patch: 'a'.repeat(64), nonce: 'b'.repeat(32),
+    } });
+  fs.writeFileSync(path.join(directory, '.codex/runtime/owner.json'), data);
+  fs.writeFileSync(path.join(directory, '.codex/runtime/latest-task.json'), JSON.stringify({
+    path: 'owner.json', sha256: createHash('sha256').update(data).digest('hex'),
+  }));
+  const python = mustRun('python3', ['-c', 'import sys; print(sys.executable)']).stdout.trim();
+  const environment = { HOME: nodeHome, PATH: sparsePath };
+  assert(run('/bin/bash', ['-c', 'command -v node'], { cwd: directory, env: environment }).status !== 0,
+    'launcher fixture must reproduce Node absent from Codex shell PATH');
+  const invoked = run(python, [path.join(root, 'tools/codex/limited-local-verification-launcher.py'),
+    'test/affected.test.ts'], { cwd: directory, env: environment });
+  assert(invoked.status === 0 && invoked.stdout.includes('PFM_PREFLIGHT_RESULT '),
+    'trusted launcher must find previously installed Node without installing packages');
+  const report = JSON.parse(invoked.stdout.split('PFM_PREFLIGHT_RESULT ')[1].trim());
+  assert(report.status === 'PASS', 'existing Node22 runs both typecheck phases and selected unit');
+  const log = fs.readFileSync(path.join(directory, report.log), 'utf8');
+  assert(log.includes('tsc --noEmit') && log.includes('tsc -p tsconfig.next.json') &&
+    log.includes('unit run test/affected.test.ts'), 'bounded checks execute exactly once');
+  assert(fs.readFileSync(path.join(directory, '.codex/logs'), 'utf8') === 'protected sandbox path',
+    'PATH recovery does not require writing to protected receipts or logs');
+  const second = run(python, [path.join(root, 'tools/codex/limited-local-verification-launcher.py'),
+    'test/affected.test.ts'], { cwd: directory, env: environment });
+  assert(second.status === 0 && second.stdout.includes('"status":"SKIP"'),
+    'a consumed reservation cannot rerun tests even through the launcher');
+}
+// A sparse PATH cannot prevent the hook from reserving the trusted launcher,
+// but the direct Node command should fail clearly before any reservation.
+{
+  const { f, command, launchCommand, preflight, state } = preparePreflightHookFixture();
+  assert(JSON.stringify(f.claim()) === '{}', 'existing task may claim scope before preflight');
+  f.dirty();
+  const sparse = { PATH: '/usr/bin:/bin' };
+  const direct = f.invoke('PreToolUse', { tool_name: 'Bash',
+    tool_input: { command } }, sparse);
+  if (direct.hookSpecificOutput?.permissionDecision === 'deny') {
+    assert(direct.hookSpecificOutput.permissionDecisionReason.includes('launcher'),
+      'when Node is hidden, the hook guides Codex to its trusted launcher');
+    assert(!state().PREFLIGHT, 'a rejected direct Node command must not consume an attempt');
+  }
+  const granted = f.invoke('PreToolUse', { tool_name: 'Bash',
+    tool_input: { command: launchCommand } }, sparse);
+  assert(JSON.stringify(granted) === '{}', 'trusted launcher accepted regardless of hook Node PATH');
+  assert(state().PREFLIGHT.count === 1, 'one real protected preflight reservation');
+  assert(preflight(launchCommand).hookSpecificOutput?.permissionDecision === 'deny',
+    'preflight already reserved; no repeat attempts through the launcher');
+}
 // Per-test progress is append-only diagnostic evidence, not an acceptance gate.
 // Simulate a killed run: one completed case survives, the next stays incomplete.
 {
