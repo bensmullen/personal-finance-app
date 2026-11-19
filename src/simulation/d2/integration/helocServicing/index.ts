@@ -2,7 +2,7 @@ import { accountingTransactionId, type AccountingTransaction } from "../../../..
 import { ValidationError } from "../../../../diagnostics/index.js";
 import { idempotencyKey } from "../../../../identity/index.js";
 import { applyD2HelocOriginalAtomically, applyD2SettlementAtomically, d2SettlementPostingRegistration,
-  requalifyD2SettlementReceiptHistory, type AuthoritativeState, type D2HelocSettlementReceipt, type D2SettlementSourceContext } from "../../../../state/index.js";
+  requalifyD2SettlementReceiptHistory, registerHouseholdCallbackOwner, type AuthoritativeState, type D2HelocSettlementReceipt, type D2SettlementSourceContext } from "../../../../state/index.js";
 import { applyHouseholdExecutionOverlay, householdPreparationAttempt, type CompiledHouseholdKernel, type HouseholdKernelParticipant } from "../../../householdExecution.js";
 import type { HouseholdWorkDescriptor } from "../../../intraperiodScheduler.js";
 import { immutableConfiguration } from "../../../r3/compiledHousehold.js";
@@ -17,7 +17,8 @@ export type { HelocServiceDocument, HelocBankDebit, HelocSourceWitness, HelocSer
 
 export interface HelocServicingInput { readonly sourceIds: readonly string[] }
 const participantId = "d2_heloc_servicing", codec = "d2-heloc-servicing/v1";
-const ownedParticipants = new WeakSet<HouseholdKernelParticipant>();
+const ownedParticipants = new WeakSet<object>();
+registerHouseholdCallbackOwner("heloc_servicing", participant => ownedParticipants.has(participant));
 export const ownsHelocServicingParticipant = (participant: HouseholdKernelParticipant): boolean => ownedParticipants.has(participant);
 function fail(message: string, code = "HELOC_SERVICING_S7_INCOMPLETE"): never {
   throw new ValidationError({ severity: "error", code, message: `S7 incomplete: ${message}`, entityType: "heloc_servicing" });

@@ -1,4 +1,5 @@
 import { ValidationError } from "../../../../diagnostics/index.js";
+import { registerHouseholdCallbackOwner } from "../../../../state/index.js";
 import { createFundingPolicy, fundingPolicyId } from "../../../../funding/index.js";
 import { domainId } from "../../../../identity/index.js";
 import { calculationTraceId, calculationTraceRef } from "../../../../lineage/index.js";
@@ -47,6 +48,8 @@ const text = (s: string) => typeof s === "string" && s.trim().length > 0;
 const prefix = "d2:medicare-bank-key:";
 const bindingPrefix = "d2:medicare-bank-binding:";
 const participantPrefix = "d2_medicare_bank:";
+const ownedParticipants = new WeakSet<object>();
+registerHouseholdCallbackOwner("medicare_bank", participant => ownedParticipants.has(participant));
 const exact = (m: Money) => m instanceof Money && m.currency.equals(USD) && m.amount.fitsScale(2) && !m.isNegative();
 function fail(code: string, message: string): never {
   throw new ValidationError({ severity: "error", code, message, entityType: "medicare_bank" });
@@ -159,7 +162,7 @@ function sourceGuard(configuration: SourceBinding): HouseholdKernelParticipant {
       if (!isPart) fail("HOUSEHOLD_CONTENTION_UNRESOLVED", "Medicare and unrelated same-instant BANK work need proven source ordering");
     }
   };
-  return Object.freeze({ id, version: "medicare-bank/v1", portableCodec: "d2-medicare-bank/v1", economicInputs: binding,
+  const participant = Object.freeze({ id, version: "medicare-bank/v1", portableCodec: "d2-medicare-bank/v1", economicInputs: binding,
     prepare: (context, period, opening, work = []) => {
       if (!rows.some(o => at(o.period.start) < period.end && at(o.period.endExclusive) > period.start)) return { id, operations: [] };
       qualify(binding);
@@ -192,6 +195,8 @@ function sourceGuard(configuration: SourceBinding): HouseholdKernelParticipant {
       return runtime;
     },
   } satisfies HouseholdKernelParticipant);
+  ownedParticipants.add(participant);
+  return participant;
 }
 registerHouseholdParticipantCodec({ codec: "d2-medicare-bank/v1", restore: value => sourceGuard(value as SourceBinding) });
 

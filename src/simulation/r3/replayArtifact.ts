@@ -326,7 +326,7 @@ function requalifyReplaySources(forecast: Pick<HouseholdForecastSummaryResult, "
   validateSsaMedicareReplayHistory(kernel.executable.participants, kernel.executable.reconciledOpeningState,
     runContext, checkpoints, { state, at: forecast.periods.at(-1)?.period.end ?? runContext.simulationStart }, kernel.executable.cashFlowInput);
   requalifyD2SettlementReceiptHistory(state, runContext);
-  requalifyRetirementDistributionHistory(state, runContext);
+  requalifyRetirementDistributionHistory(state, runContext, true);
 }
 
 function admitConfiguredReplayHistory(forecast: Pick<HouseholdForecastSummaryResult, "replay" | "periods" | "runMetadata">,

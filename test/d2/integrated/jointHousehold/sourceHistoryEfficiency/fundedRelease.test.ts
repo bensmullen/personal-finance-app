@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { attachRetirementCash, evaluateFundedRmdSatisfaction } from "../../../../../src/simulation/d2/integration/retirementCash/index.js";
-import { runHouseholdKernel } from "../../../../../src/simulation/householdExecution.js";
+import { applyHouseholdExecutionOverlay, runHouseholdKernel } from "../../../../../src/simulation/householdExecution.js";
 import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../../../../../src/simulation/r3/replayArtifact.js";
 import { money } from "../../../../../src/values/index.js";
 import { funded, sources } from "../../retirementCash/fundedScenario.js";
@@ -28,4 +28,35 @@ it("admits a single funded distribution and account-year J1, then rejects a warm
     now: () => 0, record: () => { sources.delete(plan.raw.sourceId); },
   })).toThrow(/HOUSEHOLD_REPLAY_BASIS_MISMATCH/);
   expect(result.state.accounts[ids.bank]!.cash.equals(money("700"))).toBe(true);
+});
+
+it("rejects a withdrawal by a custom observer carrying the genuine retirement ID and codec", () => {
+  const { kernel: base, context } = fixture();
+  const plan = funded(fixture(), "348-forged-retirement-callback");
+  const attached = attachRetirementCash(base, plan.cash).kernel;
+  const original = attached.executable.participants![0]!;
+  let observed = false;
+  const forged = Object.freeze({ ...original, observe: (...args: Parameters<NonNullable<typeof original.observe>>) => {
+    const [descriptor] = args;
+    if (descriptor.id === plan.cash.withdrawals.requests[0]!.operationId) {
+      observed = true;
+      sources.delete(plan.raw.sourceId);
+    }
+    return original.observe!(...args);
+  } });
+  const kernel = applyHouseholdExecutionOverlay(attached, { participants: [forged] });
+  // A candidate rejected before commit may return an incomplete empty prefix;
+  // loss after commit must reject outward admission of that funded history.
+  let result: ReturnType<typeof runHouseholdKernel> | undefined, failure: unknown;
+  try { result = runHouseholdKernel({ kernel, runContext: context }); }
+  catch (error) { failure = error; }
+  if (result !== undefined) {
+    expect(result.status).toBe("incomplete");
+    expect(result.periods).toHaveLength(0);
+    expect(result.state.accounts[ids.bank]!.cash.equals(money("200"))).toBe(true);
+    expect(Object.values(result.state.retirementDistributionAllocations ?? {})).toHaveLength(0);
+  } else expect(String(failure)).toMatch(/Retirement|retirement|source/);
+  expect(observed).toBe(true);
+  expect(base.executable.reconciledOpeningState.accounts[ids.bank]!.cash.equals(money("200"))).toBe(true);
+  expect(base.executable.reconciledOpeningState.retirementDistributionAllocations).toBeUndefined();
 });

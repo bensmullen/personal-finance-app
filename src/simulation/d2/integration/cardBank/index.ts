@@ -5,7 +5,7 @@ import { calculationTraceId, calculationTraceRef } from "../../../../lineage/ind
 import { claimId, recognitionId, settlementId } from "../../../../semantics/identity.js";
 import { applyAccountingTransactionAtomically, applyD2SettlementAtomically, d2SettlementPostingRegistration,
   d2SettlementSourceFingerprint, hasConflictingCardReceipt, registerD2SettlementSourceAuthority, requalifyD2SettlementReceiptHistory,
-  registerAuthoritativeIdentity,
+  registerAuthoritativeIdentity, registerHouseholdCallbackOwner,
   applyNativeHouseholdOriginalAtomically, registerHouseholdEconomicOriginalAuthority,
   type AuthoritativeState, type D2CardSettlementReceipt, type D2PostingRegistration,
   type D2SettlementSourceContext, type NativeHouseholdPostingAttachment } from "../../../../state/index.js";
@@ -286,7 +286,8 @@ const warning = (reason: string) => ({
 
 /** Configuration contains lookup IDs only. Prepare and execute independently
  * requalify the publisher; canonical state is the only balance/journal writer. */
-const ownedParticipants = new WeakSet<HouseholdKernelParticipant>();
+const ownedParticipants = new WeakSet<object>();
+registerHouseholdCallbackOwner("card", participant => ownedParticipants.has(participant));
 export const ownsCardBankParticipant = (participant: HouseholdKernelParticipant): boolean => ownedParticipants.has(participant);
 export function createCardBankParticipant(configuration: CardBankInput): HouseholdKernelParticipant {
   const input = immutableConfiguration({ sourceIds: [...configuration.sourceIds].sort() });

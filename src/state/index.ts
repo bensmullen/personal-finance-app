@@ -502,6 +502,20 @@ export const registerSsaMedicareSourceAuthority = (qualify: NonNullable<typeof s
   ownsSsaMedicareParticipant = ownsParticipant;
 };
 export const isSsaMedicareAuthorityParticipant = (participant: object): boolean => ownsSsaMedicareParticipant?.(participant) === true;
+/** Bounded composition-root ports. Factories install private identity
+ * predicates once, never a participant ID or codec declaration. */
+type HouseholdCallbackOwner = "fsa" | "card" | "heloc_servicing" | "medicare_bank" | "aftertax_premiums" | "retirement_cash" | "heloc_draws";
+const householdCallbackOwners = new Map<HouseholdCallbackOwner, (participant: object) => boolean>();
+const callbackOwnerNames: readonly HouseholdCallbackOwner[] = Object.freeze([
+  "fsa", "card", "heloc_servicing", "medicare_bank", "aftertax_premiums", "retirement_cash", "heloc_draws",
+]);
+export const registerHouseholdCallbackOwner = (owner: HouseholdCallbackOwner, owns: (participant: object) => boolean): void => {
+  if (!callbackOwnerNames.includes(owner) || householdCallbackOwners.has(owner))
+    throw new Error("HOUSEHOLD_CALLBACK_OWNER_DUPLICATE_OR_UNKNOWN");
+  householdCallbackOwners.set(owner, owns);
+};
+export const isOwnedHouseholdCallbackParticipant = (participant: object): boolean =>
+  isSsaMedicareAuthorityParticipant(participant) || [...householdCallbackOwners.values()].some(owns => owns(participant));
 const paymentKey = (p: SsaPayableEvidence): string => JSON.stringify([p.householdId, p.recipientId, p.paymentId]);
 // Exact structural equality also survives independent portable restoration.
 const paymentValue = (value: unknown): string => {
@@ -1791,10 +1805,12 @@ const qualifyRetirement = (d: RetirementDistributionRecord, context: D2Settlemen
 };
 /** Restored cash truth is portable even when its source owner is unavailable.
  * Neither structural restoration nor requalification grants J1 RMD credit. */
-export const requalifyRetirementDistributionHistory = (state: AuthoritativeState, context: D2SettlementSourceContext): void => {
+export const requalifyRetirementDistributionHistory = (state: AuthoritativeState, context: D2SettlementSourceContext,
+  requireObservedSource = false): void => {
   validateRetirementDistributions(state);
   for (const d of Object.values(state.retirementDistributionAllocations ?? {})) {
     const result = qualifyRetirement(d, context);
+    if (requireObservedSource && result.status === "incomplete") d2Invalid("Retirement original unavailable at outward observation");
     if (d.nativeHousehold) {
       if (result.status === "incomplete") d2Invalid("Native retirement original unavailable on replay");
       qualifyNativePosting(retirementTransaction(d), { ...d.nativeHousehold,
@@ -2861,7 +2877,7 @@ export const requalifyD2SettlementReceiptHistory = (state: AuthoritativeState, c
 export const observeAuthoritativeSourceHistory = (state: AuthoritativeState, context: D2SettlementSourceContext): void => {
   validateAuthoritativeState(state);
   requalifyD2SettlementReceiptHistory(state, context);
-  requalifyRetirementDistributionHistory(state, context);
+  requalifyRetirementDistributionHistory(state, context, true);
 };
 
 interface D2RemainingReimbursement {

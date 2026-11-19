@@ -9,9 +9,6 @@ import { firstDependencyOrder, indexReachability, indexSequencingInstants } from
 import { compareReachableStates, createReachableStateCounters } from "./r3/reachableStates.js";
 import { fixedLoanDebitDenial } from "./d2/integration/fixedLoanOriginalBridge/bank.js";
 import { withFixedLoanOriginalObservations } from "./d2/integration/fixedLoanOriginalBridge/observation.js";
-import { ownsFsaCashParticipant } from "./d2/integration/fsaCash/index.js";
-import { ownsCardBankParticipant } from "./d2/integration/cardBank/index.js";
-import { ownsHelocServicingParticipant } from "./d2/integration/helocServicing/index.js";
 import { createOutputCapabilityMerger } from "./r3/capabilities.js";
 import { createTaxDiagnosticKey, type TaxCapabilityDiagnostic, type TaxOutputCapabilities } from "./tax/contracts.js";
 import { fundingPoolConservationProof, guaranteedFundingIncomeProof } from "./r3/commutativity.js";
@@ -31,7 +28,7 @@ import {
   assertAuthoritativeStateCurrency,
   admitS4OpeningSources,
   observeAuthoritativeSourceHistory,
-  isSsaMedicareAuthorityParticipant,
+  isOwnedHouseholdCallbackParticipant,
   cloneAuthoritativeState,
   createIndexedExecutionState,
   createAuthoritativeState,
@@ -414,8 +411,7 @@ const runCompiledHouseholdProjectionInternal = (
     : applyHouseholdExecutionOverlay(reusable, source));
   const compiled = kernel.executable;
   const participants = [...(compiled.participants ?? []), ...(request.participants ?? [])].sort((a, b) => a.id.localeCompare(b.id));
-  const externalParticipants = new Set(participants.filter(participant => !ownsFsaCashParticipant(participant) &&
-    !ownsCardBankParticipant(participant) && !ownsHelocServicingParticipant(participant) && !isSsaMedicareAuthorityParticipant(participant)));
+  const externalParticipants = new Set(participants.filter(participant => !isOwnedHouseholdCallbackParticipant(participant)));
   const preparationAttempt = Object.freeze({ hasExternalParticipants: externalParticipants.size > 0 });
   if (String(runContext.scenarioId) !== compiled.scenarioIdentity)
     throw new ValidationError({

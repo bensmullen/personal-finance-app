@@ -1,5 +1,77 @@
 # Issue #348: outward-boundary WIP and reference scope gap
 
+## Current 27-path repair: implementation WIP and protected-test conflict
+
+This continuation implements factory-private WeakSet ownership for Medicare,
+aftertax premiums, all three retirement factories (including their v1 children),
+and HELOC draws. FSA/card/HELOC servicing register their existing ownership
+predicates through the bounded state composition ports. Household execution
+consumes that inward port instead of importing those three integration factories;
+the three reported reverse value-import edges are removed. Clones and matching
+IDs/codecs do not pass the actual installed predicates. Duplicate/unknown owner
+registration is rejected. These ports, like the existing source-authority ports,
+are composition-root registration, not a caller callback or publisher credential.
+
+FSA now constructs the branded household/person scope with `domainId` at its
+plan-history lookup, without an authority cast. Outward state observation and
+portable replay now require an independently qualified retirement original even
+for the supported person-owned funded distribution. Structural retirement
+validation retains its legacy default; outward observation explicitly requests
+the stronger check. No retirement evaluator, publisher protocol, tax law or
+HELOC issuer format changed. New ownership tests cover original versus cloned
+objects, direct/restored guards and retirement v1/v2/v3, and rejected predicate
+replacement. The funded release test also covers a forged callback withdrawing
+its original without mutating the committed opening state.
+
+Verification: the sole requested bounded verifier was rejected by the repository
+hook with `SKIP bounded preflight: node unavailable; no installation required`.
+There is no executed PASS or FAIL. A request to read the previously completed CI
+failure log was also denied by the publication-only GitHub CLI hook; no CI
+polling, installation or alternate verification was performed.
+
+### Confirmed contract conflict; do not waive source admission
+
+The strict supported-funded release requirement conflicts with protected existing
+acceptance expectations, not just a source-read counter. The exact same funded
+v1 distribution is expected both to fail on source withdrawal at an outward
+boundary (#348) and to remain exportable/restorable/replayable after withdrawal
+in existing tests. The 27-path grant permits none of these legacy migrations:
+
+| Exact path | Confirmed disposition |
+| --- | --- |
+| `test/d2/integrated/retirementCash/funded.test.ts` | Lines 241–261 require fresh-process success for absent/tampered publishers and export+restore+replay after `sources.delete`. This directly conflicts with final independent observation, including the one-funded/J1 witness; no recurring-retirement protocol is involved. Reviewer-approved bounded migration is required, or an explicit different archived-only release contract. |
+| `test/d2/integrated/retirementCash/portableWorker.ts` | Lines 23–44 intentionally remove/amend the publisher, then restore/replay without a supported rejection branch. Migrate together with its launcher; keep independent reconstruction and exact positive cash/J1 checks. |
+| `test/d2/integrated/jointHousehold/fundedReplay.test.ts` | Lines 108–115 require restored original cash on absent/tampered funded source. Same source-observation contradiction in the combined wage/FSA/card/fixed-loan route. |
+| `test/d2/integrated/jointHousehold/fundedPortableWorker.ts` | Lines 19–37 remove/amend the funded original but catch restore failure only for wage-source negatives. Migrate supported rejection alongside the launcher, without weakening the positive independently authored journal. |
+| `test/d2/integrated/retirementJournal/replay.test.ts` | Lines 91–101 require identical replay cash when a real journal exists but the source owner is unavailable in the child. Needs explicit legacy-structural disposition; a blanket exception in the shared outward observer would undermine #348. |
+| `test/d2/integrated/retirementJournal/portableWorker.ts` | Conditionally registers the authority only when `sources` is true, then restores/replays unconditionally. Reconcile with the structural test above. |
+
+### Reachable sibling closure for this conflict
+
+| Route | Disposition |
+| --- | --- |
+| `state/index.ts` accounting writer and structural validation | Authorized. Selected funding, journal/idempotency and source checks stay intact. Structural validation alone still does not claim observed publisher validity. |
+| Retirement `index.ts` v1/v2/v3 and child participants | Ownership changes only, within narrow authorization. Their original source and J1 calculations are unchanged. |
+| Retirement `source.ts`, `satisfaction.ts` | Read-only independent raw original and J1 qualification. Their existing missing/tampered outcomes already explain the protected worker expectations; no protocol change is needed to establish the conflict. |
+| `householdExecution.ts` summary/detail/custom callbacks/opening/resume/replay/checkpoints/final result | Authorized shared outward admission. Suppressing retirement qualification here would leak the very funded result that the new observer negative must reject. |
+| `r3/replayArtifact.ts` warm/cold/terminal/export | Authorized, shares the strict retirement observation at release. Missing publisher must not be promoted from a receipt or matching closing cash. No fresh-process runtime cause was measured locally. |
+| `retirementCash/compactReference.test.ts`, `jointHousehold/funded.test.ts` | Read-only. Their post-withdrawal assertions inspect already-returned immutable historical state and incomplete J1, rather than newly releasing a source-qualified replay. Preserve these assertions; no confirmed migration needed. |
+| `householdBankRetirementMedicare/settlement.test.ts` | Read-only native sibling explicitly requires child rejection without sources (225–231), consistent with strict release; retain read/time bounds and native ownership/BANK checks. |
+| FSA/card/SSA/HELOC and fixed-loan source/index/posting routes | Existing authorized/read-only split remains as recorded below. The retirement conflict supplies no exemption from their selected original/BANK or final history checks. |
+| Standalone production/reference VS4, household reference and `scenario.ts` | Authorized release owners; keep independent formulas and failed-period prefix qualification. No retirement-specific rewrite is justified. |
+| Application projection/comparison, evidence readers and `ui/forecast/execute.ts` | Authorized callers of the same history admission. They cannot safely turn a newly withdrawn original into success after sink, phase, progress or clock callbacks. |
+| Worker protocol/postMessage, manual CI tools, benchmarks and E2E | Read-only transport/consumers; no new source ownership or atomic delivery guarantee. No additional confirmed mutation path for this retirement conflict. |
+
+This is a static second-pass disposition, not a claim of zero future blockers.
+Remaining original acceptance work includes the independent combined five-family
+1/12/24 exact-cent/read/returned-and-validated-byte/history-work oracle, actual
+selected CI/type/build/architecture/unit results, true child-worker replay causes,
+and the complete application/callback negative matrix. The patch is WIP and must
+not be treated as acceptance complete. Reconcile all six protected legacy paths
+in the same issue (or explicitly define a distinct archived-only boundary) before
+another implementation grant; do not weaken source qualification to make the old
+success expectations green.
+
 ## November 18 continuation: callback ownership blocker
 
 Started at clean/upstream-synchronized head

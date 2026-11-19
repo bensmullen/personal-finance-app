@@ -2,7 +2,7 @@ import { accountingTransactionId, createAccountingLeg, createAccountingTransacti
 import { ValidationError } from "../../../../diagnostics/index.js";
 import { domainId, idempotencyKey } from "../../../../identity/index.js";
 import { calculationTraceId, calculationTraceRef } from "../../../../lineage/index.js";
-import { applyAccountingTransactionAtomically, applyRetirementDistributionAtomically, registerAuthoritativeIdentity, requalifyRetirementDistributionHistory } from "../../../../state/index.js";
+import { applyAccountingTransactionAtomically, applyRetirementDistributionAtomically, registerAuthoritativeIdentity, requalifyRetirementDistributionHistory, registerHouseholdCallbackOwner } from "../../../../state/index.js";
 import { civilDate, instant, type Period } from "../../../../time/index.js";
 import { Money, USD } from "../../../../values/index.js";
 import { applyHouseholdExecutionOverlay, type CompiledHouseholdKernel, type HouseholdKernelParticipant } from "../../../householdExecution.js";
@@ -114,6 +114,8 @@ export interface RetirementCashDiagnostic {
   readonly missingFacts: readonly string[];
 }
 const participantId = "d2_retirement_cash";
+const ownedParticipants = new WeakSet<object>();
+registerHouseholdCallbackOwner("retirement_cash", participant => ownedParticipants.has(participant));
 const same = (a: unknown, b: unknown): boolean => canonicalSerialize(a) === canonicalSerialize(b);
 const compareText = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
 const ordered = <T>(values: readonly T[]): readonly T[] => [...values].sort((a, b) => {
@@ -173,7 +175,7 @@ export function createRetirementCashParticipant(configuration: RetirementCashInp
 /** Historical v1/v2 readers only retain inline funded inputs and raw receipt keys. */
 function createInlineRetirementCashParticipant(configuration: RetirementCashInput, compact = false): HouseholdKernelParticipant {
   const input = snapshot(configuration);
-  return Object.freeze({ id: participantId, version: input.fundedRmd ? "funded-account-rmd/v1" : "cash-zero-withholding/v1", portableCodec: "d2-retirement-cash/v1", economicInputs: input,
+  const participant = Object.freeze({ id: participantId, version: input.fundedRmd ? "funded-account-rmd/v1" : "cash-zero-withholding/v1", portableCodec: "d2-retirement-cash/v1", economicInputs: input,
     prepare: (context, period, opening, work = [], tier = "detail") => {
       const raw = input.withdrawals;
       const reference = input.fundedRmd;
@@ -361,6 +363,8 @@ function createInlineRetirementCashParticipant(configuration: RetirementCashInpu
       return runtime;
     },
   } satisfies HouseholdKernelParticipant);
+  ownedParticipants.add(participant);
+  return participant;
 }
 registerHouseholdParticipantCodec({ codec: "d2-retirement-cash/v1", restore: value => createInlineRetirementCashParticipant(value as RetirementCashInput) });
 
@@ -377,7 +381,7 @@ function createInlineFundedRetirementCashSchedule(configuration: FundedRetiremen
     || !unique(input.plans.flatMap(p => p.withdrawals.requests.map(r => r.operationId))))
     fail("RETIREMENT_IDENTITY_INVALID", "Distinct source-qualified dated plans and a common full horizon are required");
   const participants = input.plans.map(p => createInlineRetirementCashParticipant(p));
-  return Object.freeze({ id: participantId, version: "funded-account-rmd/v2", portableCodec: "d2-retirement-cash/v2", economicInputs: input,
+  const participant = Object.freeze({ id: participantId, version: "funded-account-rmd/v2", portableCodec: "d2-retirement-cash/v2", economicInputs: input,
     prepare: (context, period, opening, work, tier) => {
       const operations = participants.flatMap(p => p.prepare(context, period, opening, work, tier).operations)
         .filter(o => !o.descriptor.id.startsWith("d2:retirement-rmd:"));
@@ -398,6 +402,8 @@ function createInlineFundedRetirementCashSchedule(configuration: FundedRetiremen
     },
     observe: (descriptor, facts, runtime) => participants.reduce((next, p) => p.observe!(descriptor, facts, next), runtime),
   } satisfies HouseholdKernelParticipant);
+  ownedParticipants.add(participant);
+  return participant;
 }
 registerHouseholdParticipantCodec({ codec: "d2-retirement-cash/v2", restore: value => createInlineFundedRetirementCashSchedule(value as FundedRetirementCashSchedule) });
 
@@ -464,7 +470,7 @@ export function createReferencedRetirementCashParticipant(configuration: FundedR
     || input.plans.some(p => !p.events.length || p.events.some(e => e.sequencingInstant < input.horizon.start || e.sequencingInstant >= input.horizon.end))
     || !same(input.plans, [...input.plans].sort((a, b) => compareText(a.events[0]!.sequencingInstant, b.events[0]!.sequencingInstant) || compareText(a.sourceId, b.sourceId))))
     fail("RETIREMENT_IDENTITY_INVALID", "Distinct dated events, full horizon and versioned complete-original pins required");
-  return Object.freeze({ id: participantId, version: "funded-account-rmd/v3", portableCodec: "d2-retirement-cash/v3", economicInputs: input,
+  const participant = Object.freeze({ id: participantId, version: "funded-account-rmd/v3", portableCodec: "d2-retirement-cash/v3", economicInputs: input,
     prepare: (context, period, opening, work = [], tier = "detail") => {
       if (period.start < input.horizon.start || period.end > input.horizon.end)
         fail("RETIREMENT_HORIZON_INVALID", "Period must lie inside the full bound horizon");
@@ -513,6 +519,8 @@ export function createReferencedRetirementCashParticipant(configuration: FundedR
       return runtime;
     },
   } satisfies HouseholdKernelParticipant);
+  ownedParticipants.add(participant);
+  return participant;
 }
 registerHouseholdParticipantCodec({ codec: "d2-retirement-cash/v3", restore: value => createReferencedRetirementCashParticipant(value as FundedRetirementCashReferences) });
 

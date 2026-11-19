@@ -1,7 +1,8 @@
 import { applyAccountingTransactionAtomically, applyD2SettlementAtomically, applyNativeHouseholdOriginalAtomically,
-  authoritativeFsaPlanReceipts, requalifyD2SettlementReceiptHistory,
+  authoritativeFsaPlanReceipts, requalifyD2SettlementReceiptHistory, registerHouseholdCallbackOwner,
   type AuthoritativeState } from "../../../../state/index.js";
 import type { AccountingTransaction } from "../../../../accounting/index.js";
+import { domainId } from "../../../../identity/index.js";
 import { applyHouseholdExecutionOverlay, householdPreparationAttempt, type CompiledHouseholdKernel, type HouseholdKernelParticipant } from "../../../householdExecution.js";
 import { immutableConfiguration } from "../../../r3/compiledHousehold.js";
 import { registerHouseholdParticipantCodec } from "../../../r3/participantCodec.js";
@@ -17,7 +18,8 @@ export type { FsaCashSource, FsaCashSourceProvider, FsaCashReference, FsaCashOri
 export interface FsaCashInput { readonly sources: readonly FsaCashReference[]; readonly forecastEnd?: string }
 const participantId = "d2_fsa_cash";
 const codec = "d2-fsa-cash/v2";
-const ownedParticipants = new WeakSet<HouseholdKernelParticipant>();
+const ownedParticipants = new WeakSet<object>();
+registerHouseholdCallbackOwner("fsa", participant => ownedParticipants.has(participant));
 export const ownsFsaCashParticipant = (participant: HouseholdKernelParticipant): boolean => ownedParticipants.has(participant);
 function incomplete(detail: string): never { throw new FsaCashIncomplete("source_not_qualified", detail); }
 
@@ -36,7 +38,9 @@ function checkArchive(state: AuthoritativeState, s: FsaCashSource, required: boo
 const medicalKey = (planId: string, proofId: string, receiptId: string) => JSON.stringify([planId, proofId, receiptId]);
 function checkHistory(state: AuthoritativeState, s: FsaCashSource, receipts: ReadonlyMap<string, FsaCashSource>): void {
   const result = evaluateFsa(s.request);
-  const history = authoritativeFsaPlanReceipts(state, s.original).filter(r => r.effectiveAt <= s.deposit.settledAt);
+  const history = authoritativeFsaPlanReceipts(state, { ...s.original,
+    householdId: domainId("household", s.original.householdId), personId: domainId("person", s.original.personId),
+  }).filter(r => r.effectiveAt <= s.deposit.settledAt);
   for (const r of s.request.receipts) {
     const h = r.reimbursement;
     if (r.proofId === s.original.proofId || h?.status !== "settled") continue;
