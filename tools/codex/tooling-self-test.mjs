@@ -1319,7 +1319,12 @@ const preparePreflightHookFixture = () => {
   f.dirty();
   assert(JSON.stringify(preflight(command)) === '{}', 'one changed-patch FAIL correction retry allowed');
   post('TIMEOUT');
-  assert(state().PREFLIGHT.result.status === 'TIMEOUT', 'timeout is distinct from PASS or assertion FAIL');
+  assert(state().PREFLIGHT.result.status === 'TIMEOUT' && state().PREFLIGHT.prior_failure === true,
+    'timeout does not erase an independently observed prior FAIL');
+  assert(f.invoke('PreToolUse', { tool_name: 'Bash',
+    tool_input: { command: 'git push origin codex/policy-self-test' } })
+    .hookSpecificOutput?.permissionDecisionReason.includes('LOCAL_PREFLIGHT_FAILED'),
+    'incomplete correction cannot bypass prior failure when ordinary publication is attempted');
   f.dirty();
   assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny',
     'timed out local test may never trigger another local retry');
