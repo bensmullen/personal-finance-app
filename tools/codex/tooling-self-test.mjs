@@ -1198,25 +1198,6 @@ process.exit(${failure === 'unit' || failure.startsWith('unit-') ? 1 : 0});`);
   assert(result.status === 0 && result.stdout.includes('SKIP') && result.stdout.includes('no tests executed'),
     'unwritable sandbox diagnostic directory must skip without running a test');
 }
-// A no-log startup SKIP is still a protected SKIP, not an invented PASS.
-{
-  const { f, command, preflight, state } = preparePreflightHookFixture();
-  f.claim(); f.dirty();
-  assert(JSON.stringify(preflight(command)) === '{}', 'preflight can reserve an attempt');
-  const used = state().PREFLIGHT;
-  const report = {
-    schema: 1, authorization: state().AUTHORIZATION_ID, attempt: used.count,
-    patch: used.patch, nonce: used.nonce, test: used.test, status: 'SKIP',
-    reason: 'sandbox diagnostic directory unavailable (EPERM); no tests executed',
-    timeoutObserved: false,
-  };
-  f.invoke('PostToolUse', { tool_name: 'Bash', tool_input: { command },
-    tool_response: { exit_code: 0, stdout: 'PFM_PREFLIGHT_RESULT ' + JSON.stringify(report) } });
-  assert(state().PREFLIGHT.result.status === 'SKIP', 'missing diagnostic directory produces truthful SKIP');
-  f.dirty();
-  assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny',
-    'startup SKIP cannot automatically rerun local tests');
-}
 // Per-test progress is append-only diagnostic evidence, not an acceptance gate.
 // Simulate a killed run: one completed case survives, the next stays incomplete.
 {
@@ -1305,6 +1286,25 @@ const preparePreflightHookFixture = () => {
   };
   return { f, helper, reporter, command, preflight, state, post };
 };
+// A no-log startup SKIP is still a protected SKIP, not an invented PASS.
+{
+  const { f, command, preflight, state } = preparePreflightHookFixture();
+  f.claim(); f.dirty();
+  assert(JSON.stringify(preflight(command)) === '{}', 'preflight can reserve an attempt');
+  const used = state().PREFLIGHT;
+  const report = {
+    schema: 1, authorization: state().AUTHORIZATION_ID, attempt: used.count,
+    patch: used.patch, nonce: used.nonce, test: used.test, status: 'SKIP',
+    reason: 'sandbox diagnostic directory unavailable (EPERM); no tests executed',
+    timeoutObserved: false,
+  };
+  f.invoke('PostToolUse', { tool_name: 'Bash', tool_input: { command },
+    tool_response: { exit_code: 0, stdout: 'PFM_PREFLIGHT_RESULT ' + JSON.stringify(report) } });
+  assert(state().PREFLIGHT.result.status === 'SKIP', 'missing diagnostic directory produces truthful SKIP');
+  f.dirty();
+  assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny',
+    'startup SKIP cannot automatically rerun local tests');
+}
 {
   const { f, helper, reporter, command, preflight, state } = preparePreflightHookFixture();
   assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'prepared task cannot reserve preflight');
