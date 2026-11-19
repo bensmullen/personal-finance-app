@@ -226,6 +226,7 @@ def limited_preflight(command, root, state, tool_use_id=None):
         "count": count, "patch": fingerprint, "test": test,
         "nonce": secrets.token_hex(16),
         "tool_use_id": str(tool_use_id) if tool_use_id else None,
+        "prior_failure": bool(used and previous.get("status") == "FAIL"),
         "result": {"status": "INCOMPLETE", "patch": fingerprint, "attempt": count,
                    "reason": "No verified host result; no local retry"},
     }
@@ -250,9 +251,11 @@ def actionable_preflight_failure(root, state):
                 f"preflight-{state['AUTHORIZATION_ID']}.json").read_text())
         except (OSError, ValueError):
             return None
-    if (receipt.get("status") == "FAIL" and
-            receipt.get("attempt") == used.get("count") and
-            receipt.get("patch") == used.get("patch")):
+    status = receipt.get("status")
+    if (receipt.get("attempt") == used.get("count") and
+            receipt.get("patch") == used.get("patch") and
+            (status == "FAIL" or (used.get("prior_failure") and
+                status in ("TIMEOUT", "INCOMPLETE")))):
         return ("LOCAL_PREFLIGHT_FAILED: bounded verification executed and failed; "
                 "correct the authorized patch and use the permitted bounded retry. "
                 "Do not silently skip a known failure. If the failure is outside "
