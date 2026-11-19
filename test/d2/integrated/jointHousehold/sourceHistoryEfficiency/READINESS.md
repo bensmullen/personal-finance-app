@@ -1,5 +1,74 @@
 # Issue #348: outward-boundary WIP and reference scope gap
 
+## November 18 continuation: callback ownership blocker
+
+Started at clean/upstream-synchronized head
+`1c8f2d1c2a14d1c718cd6dbe3dd22b4c5e9a3996` under the live 23-path
+grant. This is static evidence, not implementation acceptance. All six current
+issue failure classes remain unresolved; no local verification was run.
+
+### Confirmed multiplying path
+
+`householdExecution.ts:417` recognizes only FSA, card, HELOC servicing and SSA
+factory ownership. Every other participant enters `externalParticipants`.
+Before its prepare (508), operation execute (528), and every observe (678),
+the kernel reads the complete committed source history. Line 678 is inside
+both the operation loop and the loop over all observing participants, including
+participants with no active operations. Arbitrary custom callbacks can withdraw
+publishers, so their payload admissions cannot simply be removed or cached.
+
+`householdBankRetirementMedicare/settlement.test.ts:263` attaches one Medicare
+guard per month and requires at most `months * 32` expense publisher reads for
+1/12/24 actual months. At 24 months all 24 guards receive every observation,
+each preceded by a growing historical admission. This establishes an avoidable
+multiplying path consistent with the reported 7,404-read CI failure; no new
+runtime count was measured here.
+
+The private `medicareBank/sourceGuard` factory creates its callbacks at line
+162 without any object-identity ownership predicate. Codec registration only
+stores restore factories; immutable configuration only freezes data. Neither
+authenticates directly created callbacks. IDs, versions, codec strings and
+economic inputs are reproducible by custom participants. Replacing caller
+callbacks with reconstructed ones would change the public participant contract.
+
+### Second-pass path disposition
+
+| Path / route | Disposition and evidence |
+| --- | --- |
+| `src/simulation/d2/integration/medicareBank/index.ts` | **Additional scope required:** private `sourceGuard` prepare/execute/observe at 162 and codec restore at 196 need genuine factory ownership registration. Direct `attachMedicareBank` and restored objects must agree. Preserve premium/BANK source checks, overlap and legacy direct-person behavior. |
+| `src/simulation/d2/integration/aftertaxPremiums/index.ts` | **Additional scope required:** private `premiumGuard` at 167 has prepare/observe; codec restore at 216 shares it. Joint-household and householdBankCardAftertax scenarios attach it. Empty-operation prepare still leaves an observer receiving canonical payroll proofs/context. Preserve premium/payroll overlap and no-election branches. |
+| `src/simulation/d2/integration/retirementCash/index.ts` | **Additional narrow scope required:** inline v1, schedule v2 and referenced v3 factories create prepare/execute/observe without ownership predicates. Direct attach and all three codec restores must register actual objects. Factory ownership only; recurring original protocol/scalability remains #350. |
+| `src/simulation/d2/integration/helocDraws/index.ts` | **Additional narrow scope required:** `createHelocDrawParticipant` at 96 and codec restore at 218 lack ownership registration. `jointHousehold/helocS8/scenario.ts:83` installs it in the known replay sibling. Preserve draw economics/source semantics; a codec string is not callback ownership. |
+| `src/state/index.ts` | Authorized inward registration/attempt seam and structural indexes. Callback ownership grants no publisher authority; retain final independent reads and canonical journal validation. |
+| `src/simulation/householdExecution.ts` | Authorized summary/detail, speculation/rollback, resume, external callback payloads and final release. Consume genuine ownership; keep custom callbacks external. Remove reported value-import cycles via an inward seam. |
+| FSA/card/SSA/HELOC servicing `index.ts` | Authorized. Existing WeakSets/SSA predicate establish genuine ownership for these families. Keep current selected issuer/BANK checks, standalone admission and HELOC historical continuity. FSA's raw identity argument remains a branded-binding defect; no authority cast is justified. |
+| `src/simulation/r3/participantCodec.ts`, `compiledHousehold.ts` | Read-only. Inspected registry and snapshot construction; neither authenticates directly created callbacks. No edit needed here if factories register through state. |
+| `src/simulation/r3/replayArtifact.ts` | Authorized cold/warm/checkpoint/terminal/export admission and callbacks. Factory ownership must cover restored objects. The v3 wrapper retains `cause`, but this static audit has **not** established the child-worker inner exception. No source-auth exception is justified. |
+| Production/reference VS4, reference household, `scenario.ts` | Authorized complete/incomplete and comparison exits. Preserve independent formulas, required/extra funding, opening-source and failed-prefix checks. Do not claim frozen-reference extension-participant parity. |
+| Fixed-loan bridge `source.ts` | Authorized lender reconstruction; BANK/posting/observation ports stay read-only. No additional missing context producer was confirmed in this delta audit. |
+| `householdProjection.ts`, `interactiveForecast.ts` | Authorized read-model/artifact creation, buffered sink, comparison, clock and worker baseline release. No additional application owner was established. |
+| `mortgageChartData.ts`, `monthlyMoney.ts`, `ui/forecast/execute.ts` | Authorized cached replay/qualification, projected progress, final clock and evidence release. Internal ownership optimization must retain these outward admissions. |
+| `ui/forecast/household.worker.ts`, `protocol.ts` | Read-only transport; no jointly atomic physical-delivery guarantee. |
+| Retirement `source.ts`/`satisfaction.ts`; HELOC servicing `source.ts`/B1 `phaseServicing.ts` | Read-only. Original protocols/formulas are not the ownership fix. Keep single funded/J1 evidence, incomplete tax and intrinsic HELOC 66/276 historical rows separate from avoidable rereads. |
+| Existing portable workers and combined/funded/retirement replay tests | Read-only independent source and 13/25-month witnesses. `combinedScenario.ts` also has a genuinely custom structural J1 participant; it must remain external. |
+| `sourceHistoryEfficiency/**`, five individually authorized legacy tests | Authorized evidence. Five-family 1/12/24 oracle and full source/callback negatives remain missing. Legacy migration stays within the existing narrow limits. |
+| `tools/ci/`, benchmarks, E2E | Read-only. Targeted constructor searches found no additional direct ownership-producing calls here. No probes, benchmark, build, test, validator or CI polling was run. |
+
+### Reviewer handoff
+
+Reconcile the four confirmed factory paths together in the SAME issue #348
+before reauthorization. This proposes a Level-1 implementation path amendment,
+not permission to edit those files now. Preserve PR #357, branch, receipts,
+all source/financial/replay requirements and read/time bounds. No framework,
+manifest, milestone or financial-specification change is requested.
+
+Residual unknowns include the actual child-worker replay cause. Remaining
+known work includes funded/J1 post-observer withdrawal rejection, all CI failure
+classes, the combined five-family oracle and full callback/source negatives.
+Legacy portable cash when a retirement publisher is absent must be reconciled
+with the supported funded-source release branch, without blanket exceptions.
+This scope proposal alone does not prove full acceptance closure.
+
 ## Current repair checkpoint
 
 This checkpoint adds final original-source observation to standalone and
