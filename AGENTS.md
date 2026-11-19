@@ -234,6 +234,8 @@ verification is required to publish. The sandboxed helper writes only ignored
 `.pfm-preflight/` diagnostic logs and per-case progress; the PostToolUse hook
 records the actual result in protected hash-bound task state. Partial progress
 is retained as diagnostic evidence but never upgrades an incomplete file to PASS.
+If a corrected FAIL attempt times out or lacks a host result, the earlier
+observed failure remains actionable; no additional local retry is permitted.
 A real observed FAIL from executed typecheck/unit tests blocks ordinary
 push/COMPLETE until a corrected patch has a permitted PASS or genuine environment
 SKIP; never deliberately circumvent a known test failure. Unfixable/out-of-scope
