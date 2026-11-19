@@ -29,20 +29,20 @@ if (!state.ACTIVE || state.WORKTREE !== resolve(root) || !attempt ||
 let logPath;
 let progressPath;
 let fd;
-const output = (status, reason) => {
+const output = (status, reason, timeoutObserved = false) => {
   // Only this exact command's host-returned output may be promoted by
   // PostToolUse into the protected receipt. Disposable files never grant PASS.
   const report = {
     schema: 1, authorization: state.AUTHORIZATION_ID,
     attempt: attempt.count, patch: attempt.patch, nonce: attempt.nonce,
-    test: args[0] ?? null, status, reason,
+    test: args[0] ?? null, status, reason, timeoutObserved,
     ...(logPath ? { log: relative(root, logPath) } : {}),
     ...(progressPath ? { progress: relative(root, progressPath) } : {}),
   };
   console.log('PFM_PREFLIGHT_RESULT ' + JSON.stringify(report));
   process.exitCode = status === 'FAIL' ? 1 : 0;
 };
-const finish = (status, reason) => {
+const finish = (status, reason, timeoutObserved = false) => {
   if (fd !== undefined) {
     try { closeSync(fd); } catch { /* diagnostic output only */ }
     fd = undefined;
@@ -65,7 +65,7 @@ const finish = (status, reason) => {
       }) + '\n', { flag: 'wx', mode: 0o600 });
     } catch { /* missing/corrupt diagnostics do not change execution truth */ }
   }
-  output(status, reason);
+  output(status, reason, timeoutObserved);
 };
 
 try {
@@ -143,17 +143,33 @@ if (fd !== undefined) {
       const second = first === 'PASS' && remaining > 0
         ? await run(process.execPath, ['node_modules/typescript/bin/tsc', '-p', 'tsconfig.next.json'], remaining)
         : first === 'PASS' ? 'TIMEOUT' : first;
-      const third = second === 'PASS' && args[0]
+      let third = second === 'PASS' && args[0]
         ? await run(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', args[0],
-          '--maxWorkers=1', '--no-file-parallelism',
+          '--maxWorkers=1', '--no-file-parallelism', '--retry=0',
           '--reporter=default', '--reporter=./tools/codex/local-preflight-progress-reporter.mjs'], 30_000,
           { PFM_PREFLIGHT_PROGRESS: progressPath })
         : second;
+      let timeoutObserved = third === 'TIMEOUT';
+      if (third === 'FAIL' && second === 'PASS' && args[0]) {
+        try {
+          const events = readFileSync(progressPath, 'utf8').trim().split('\\n')
+            .filter(Boolean).map(line => JSON.parse(line));
+          timeoutObserved = events.some(event => event.phase === 'end' && event.status === 'timed_out');
+          // If only Vitest timeout cases failed, they are incomplete rather
+          // than ordinary assertion FAILs. Mixed timeout + assertion failure
+          // remains FAIL but must not authorize another local attempt.
+          if (timeoutObserved && !events.some(event => event.phase === 'end' && event.status === 'failed')) {
+            third = 'TIMEOUT';
+          }
+        } catch { /* absence of case evidence never fabricates PASS */ }
+      }
       finish(third, third === 'PASS'
         ? args[0] ? 'typecheck and selected unit passed' : 'typecheck passed'
         : third === 'TIMEOUT' ? 'bounded execution timed out; incomplete, no local retry'
           : third === 'SKIP' ? 'bounded verifier unavailable or interrupted; unverified, no local retry'
-            : first === 'FAIL' || second === 'FAIL' ? 'typecheck executed and failed' : 'selected unit executed and failed');
+            : first === 'FAIL' || second === 'FAIL' ? 'typecheck executed and failed' :
+              timeoutObserved ? 'selected unit failed with case timeout; no local retry' :
+                'selected unit executed and failed', timeoutObserved);
     }
   }
 }
