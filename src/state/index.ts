@@ -1838,7 +1838,15 @@ export const requalifyRetirementDistributionHistory = (state: AuthoritativeState
   requireObservedSource = false): void => {
   if (state.retirementDistributionAllocations === undefined) return;
   validateRetirementDistributions(state);
-  for (const d of Object.values(state.retirementDistributionAllocations ?? {})) {
+  observeRetirementDistributionSources(state, context, requireObservedSource);
+};
+const observeRetirementDistributionSources = (state: AuthoritativeState, context: D2SettlementSourceContext,
+  requireObservedSource: boolean): void => {
+  if (state.retirementDistributionAllocations === undefined) return;
+  // Use the structural index validated by the caller. Publisher responses are
+  // still fresh at every observation, including when the index did not change.
+  for (const [, row] of retirementHistories.get(state)!.index.entries()) {
+    const d = row as RetirementDistributionRecord;
     const result = qualifyRetirement(d, context);
     if (requireObservedSource && result.status === "incomplete") d2Invalid("Retirement original unavailable at outward observation");
     if (d.nativeHousehold) {
@@ -2861,8 +2869,6 @@ export const admitS4OpeningSources = (state: AuthoritativeState, current: D2Sett
 const observeD2SettlementReceiptHistory = (state: AuthoritativeState, context: D2SettlementSourceContext,
   retirementObservedSeparately: boolean): void => {
   if (state.d2PostedTransactions === undefined && state.d2SettlementReceipts === undefined) return;
-  validateD2PostedTransactions(state);
-  validateD2SettlementReceipts(state);
   const receipts = Object.values(state.d2SettlementReceipts ?? {});
   const nativePostingsObservedByReceipt = new Set<string>();
   for (const receipt of receipts) {
@@ -2930,8 +2936,12 @@ const observeD2SettlementReceiptHistory = (state: AuthoritativeState, context: D
       throw new Error("D2_SETTLEMENT_SOURCE_INCOMPLETE: posted_journal_unavailable");
   }
 };
-export const requalifyD2SettlementReceiptHistory = (state: AuthoritativeState, context: D2SettlementSourceContext): void =>
+export const requalifyD2SettlementReceiptHistory = (state: AuthoritativeState, context: D2SettlementSourceContext): void => {
+  if (state.d2PostedTransactions === undefined && state.d2SettlementReceipts === undefined) return;
+  validateD2PostedTransactions(state);
+  validateD2SettlementReceipts(state);
   observeD2SettlementReceiptHistory(state, context, false);
+};
 
 /** Observe independent publishers at an outward boundary. An indexed root or
  * archived receipt establishes structure, never publisher authority. */
@@ -2942,7 +2952,7 @@ export const observeAuthoritativeSourceHistory = (state: AuthoritativeState, con
   // The retirement journal has been matched to the actual posting above.
   // Its own observation checks the distribution source and native BANK route.
   observeD2SettlementReceiptHistory(state, context, true);
-  requalifyRetirementDistributionHistory(state, context, true);
+  observeRetirementDistributionSources(state, context, true);
 };
 
 /** Compare the exact inputs to outward source admission. Callers independently

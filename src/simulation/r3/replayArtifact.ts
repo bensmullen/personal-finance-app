@@ -1,9 +1,9 @@
 import { Currency, DecimalAmount, Money, Percentage, Quantity, Rate, Ratio, RoundingPolicy, Unit, type RateConvention, type RoundingMode } from "../../values/index.js";
 import { observeHouseholdForecastSources, assertHouseholdReplayRegenerates, exportHouseholdReplayCheckpointRoots, registerHouseholdReplayCheckpoints, registerRestoredReplayAdmission, householdReplayCheckpointSelection, householdReplayTerminalRoot, type HouseholdReplayCheckpoint, type HouseholdForecastSummaryResult, type ExecutableHouseholdProjection } from "../householdExecution.js";
 import { assertD2PostedTransactionHistoryPreserved, assertD2SettlementReceiptHistoryPreserved, createAuthoritativeState, observeAuthoritativeSourceHistory,
-  authoritativeCheckpointDelta, restoreAuthoritativeCheckpointDelta, requalifyD2SettlementReceiptHistory,
+  authoritativeCheckpointDelta, restoreAuthoritativeCheckpointDelta,
   assertSsaMedicarePaymentHistoryPreserved,
-  assertRetirementDistributionHistoryPreserved, requalifyRetirementDistributionHistory,
+  assertRetirementDistributionHistoryPreserved,
   type AuthoritativeCheckpointDelta, type AuthoritativeState } from "../../state/index.js";
 import { canonicalSerialize, createInputFingerprint } from "../run.js";
 import { TaxEconomicLedger } from "../tax/economics.js";
@@ -434,10 +434,7 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
       ownsHelocServicingParticipant(participant) || participant.portableCodec === "d2-retirement-cash/v3") ?? false);
   const recheckFixedLoans = measure("sourceRequalificationMs", () => {
     validateReplaySsaOccurrences(forecast, sourceHistoryState, checkpoints);
-    if (observer?.phase !== undefined) {
-      requalifyD2SettlementReceiptHistory(sourceHistoryState, restored.runContext);
-      requalifyRetirementDistributionHistory(sourceHistoryState, restored.runContext, true);
-    }
+    if (observer?.phase !== undefined) observeAuthoritativeSourceHistory(sourceHistoryState, restored.runContext);
     return admitConfiguredReplayHistory(forecast, sourceHistoryState, checkpoints, verifyFullInventory);
   });
   try { observer?.phase?.("source_requalified"); } catch { /* Observation is optional. */ }

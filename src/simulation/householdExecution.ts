@@ -397,6 +397,7 @@ const runCompiledHouseholdProjectionInternal = (
     readonly acceptSummary?: (period: HouseholdForecastSummaryPeriod) => void;
   },
   retainClosingState?: (state: AuthoritativeState) => void,
+  privateComparison = false,
 ): CompiledHouseholdProjectionRunResult => {
   const { runContext } = request;
   const tier = periodRetention?.acceptSummary === undefined ? "detail" : "summary";
@@ -449,6 +450,7 @@ const runCompiledHouseholdProjectionInternal = (
   }
   let state = createIndexedExecutionState(cloneAuthoritativeState(compiled.reconciledOpeningState), counts => performance.counters(counts));
   const materializeClosingState = (): AuthoritativeState => {
+    if (privateComparison) return state;
     if (retainClosingState === undefined) return materializeExecutionState(state);
     const closing = cloneAuthoritativeState(state);
     retainClosingState(closing);
@@ -1185,7 +1187,7 @@ const runCompiledHouseholdProjectionInternal = (
         stoppedAt: period.start,
         ...(reachedThrough === undefined ? {} : { reachedThrough }),
         state: materializeClosingState(),
-        primitiveState: materializePrimitiveRuntimeStateStore(primitiveState),
+        primitiveState: privateComparison ? primitiveState : materializePrimitiveRuntimeStateStore(primitiveState),
         periods: Object.freeze(committed),
         diagnostics: Object.freeze(diagnostics),
         displayInputs: display(runContext),
@@ -1198,7 +1200,7 @@ const runCompiledHouseholdProjectionInternal = (
     requestedHorizon,
     reachedThrough: reachedThrough ?? requestedHorizon.end,
     state: materializeClosingState(),
-    primitiveState: materializePrimitiveRuntimeStateStore(primitiveState),
+    primitiveState: privateComparison ? primitiveState : materializePrimitiveRuntimeStateStore(primitiveState),
     periods: Object.freeze(committed),
     diagnostics: Object.freeze(diagnostics),
     displayInputs: display(runContext),
@@ -1382,6 +1384,7 @@ export const registerHouseholdReplayCheckpoints = (
 const collectHouseholdForecastSummary = (
   request: { readonly kernel: CompiledHouseholdKernel; readonly overlay?: HouseholdExecutionOverlay; readonly runContext: RunContext; readonly participants?: readonly HouseholdKernelParticipant[] },
   observer?: PerformanceObserver,
+  privateComparison = false,
 ): HouseholdForecastSummaryResult => {
   const baseKernel = request.overlay === undefined ? request.kernel : applyHouseholdExecutionOverlay(request.kernel, request.overlay);
   const kernel = request.participants === undefined ? baseKernel : applyHouseholdExecutionOverlay(baseKernel, {
@@ -1409,7 +1412,7 @@ const collectHouseholdForecastSummary = (
           runtime: operationRuntime(state),
           state: cloneAuthoritativeState(state), primitiveState: createPrimitiveRuntimeStateStore(primitiveState) }));
       },
-    });
+    }, undefined, privateComparison);
     forecast = Object.freeze({ ...result, resultTier: "summary", periods: Object.freeze(summaries),
       replay: Object.freeze({ kernel, runContext }) });
     forecastCheckpoints.set(forecast, Object.freeze(checkpoints));
@@ -1440,28 +1443,38 @@ export const assertHouseholdReplayRegenerates = (
   includesFixedLoans: boolean,
 ): void => {
   const { kernel, runContext } = forecast.replay;
-  const expected = collectHouseholdForecastSummary({ kernel, runContext });
-  const mismatch = (): never => {
-    throw new Error(`HOUSEHOLD_REPLAY_BASIS_MISMATCH: ${includesFixedLoans ? "fixed loan " : ""}committed history differs from independent execution`);
+  const expected = collectHouseholdForecastSummary({ kernel, runContext }, undefined, true);
+  const mismatch = (boundary: string): never => {
+    // Regeneration may stop on a missing original. Observe the actual
+    // archived postings before classifying the result as a replay mismatch.
+    observeAuthoritativeSourceHistory(terminal, runContext);
+    throw new Error(`HOUSEHOLD_REPLAY_BASIS_MISMATCH: ${includesFixedLoans ? "fixed loan " : ""}committed history differs from independent execution (${boundary})`);
   };
-  if (canonicalSerialize(expected.runMetadata) !== canonicalSerialize(forecast.runMetadata) ||
-      !equalHouseholdReplaySummaries(expected.periods, forecast.periods)) mismatch();
-  const expectedAt = new Map(exportHouseholdReplayCheckpointRoots(expected).map(checkpoint => [checkpoint.at, checkpoint]));
+  if (canonicalSerialize(expected.runMetadata) !== canonicalSerialize(forecast.runMetadata)) mismatch("run metadata");
+  if (!equalHouseholdReplaySummaries(expected.periods, forecast.periods)) mismatch("period summaries");
+  const expectedAt = new Map((forecastCheckpoints.get(expected) ?? []).map(checkpoint => [checkpoint.at, checkpoint]));
+  if (checkpoints.length !== expectedAt.size) mismatch("checkpoint count");
   const equal = (left: unknown, right: unknown) => canonicalSerialize(left) === canonicalSerialize(right);
   let archivedBefore = kernel.executable.reconciledOpeningState, expectedBefore = archivedBefore;
-  const compare = (archived: AuthoritativeState, reconstructed: AuthoritativeState) => {
-    if (!equal(authoritativeCheckpointDelta(archived, archivedBefore, equal),
-      authoritativeCheckpointDelta(reconstructed, expectedBefore, equal))) mismatch();
+  const compare = (archived: AuthoritativeState, reconstructed: AuthoritativeState, boundary: string) => {
+    const actual = authoritativeCheckpointDelta(archived, archivedBefore, equal);
+    const regenerated = authoritativeCheckpointDelta(reconstructed, expectedBefore, equal);
+    for (const key of Object.keys(regenerated.records)) {
+      if (!equal(actual.records[key], regenerated.records[key])) mismatch(`${boundary} records: ${key}`);
+    }
+    for (const key of Object.keys(regenerated.identities)) {
+      if (!equal(actual.identities[key], regenerated.identities[key])) mismatch(`${boundary} identities: ${key}`);
+    }
     archivedBefore = archived;
     expectedBefore = reconstructed;
   };
   for (const checkpoint of checkpoints) {
-    const reconstructed = expectedAt.get(checkpoint.at) ?? mismatch();
+    const reconstructed = expectedAt.get(checkpoint.at) ?? mismatch("checkpoint frontier");
     if (!equal(checkpoint.primitiveState, reconstructed.primitiveState) ||
-        !equal(checkpoint.runtime, reconstructed.runtime)) mismatch();
-    compare(checkpoint.state, reconstructed.state);
+        !equal(checkpoint.runtime, reconstructed.runtime)) mismatch("checkpoint runtime");
+    compare(checkpoint.state, reconstructed.state, "checkpoint");
   }
-  compare(terminal, householdReplayTerminalRoot(expected));
+  compare(terminal, forecastTerminalRoots.get(expected.replay)!, "terminal");
 };
 
 export type HouseholdReplayPhase = "replay_started" | "replay_executed" | "verification_started"
