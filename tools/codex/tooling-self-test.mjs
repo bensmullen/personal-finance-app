@@ -1286,6 +1286,61 @@ const preparePreflightHookFixture = () => {
   };
   return { f, helper, reporter, command, preflight, state, post };
 };
+// A task branch may remain on a *merged historical main* while origin/main
+// advances with a newer trusted helper or reporter. The pinned ancestor must
+// still authorize the unchanged branch versions, without allowing feature-only
+// framework changes to be executed.
+{
+  const { f, command, preflight, state } = preparePreflightHookFixture();
+  const earlierMain = f.git('rev-parse', 'refs/remotes/origin/main');
+  const advance = path.join(temp, 'pfm-main-advanced-verifier');
+  mustRun('git', ['worktree', 'add', '--detach', advance, earlierMain], { cwd: f.repository });
+  for (const helper of ['tools/codex/limited-local-verification.mjs',
+                         'tools/codex/local-preflight-progress-reporter.mjs']) {
+    fs.appendFileSync(path.join(advance, helper), '// subsequent merged main framework update\n');
+  }
+  mustRun('git', ['add', 'tools/codex/limited-local-verification.mjs',
+                 'tools/codex/local-preflight-progress-reporter.mjs'], { cwd: advance });
+  mustRun('git', ['commit', '-m', 'synthetic newer merged main verifier'], { cwd: advance });
+  const newerMain = mustRun('git', ['rev-parse', 'HEAD'], { cwd: advance }).stdout.trim();
+  f.git('update-ref', 'refs/remotes/origin/main', newerMain);
+  assert(f.git('merge-base', '--all', 'HEAD', 'origin/main') === earlierMain,
+    'branch trust baseline must remain the earlier merged main');
+  assert(f.git('show', 'origin/main:tools/codex/limited-local-verification.mjs') !==
+    fs.readFileSync(path.join(f.repository, 'tools/codex/limited-local-verification.mjs'), 'utf8'),
+    'fixture must reproduce a real current-origin/main mismatch');
+  assert(JSON.stringify(f.claim()) === '{}', 'old-base task admits a writer independently of current main');
+  f.dirty();
+  assert(JSON.stringify(preflight(command)) === '{}',
+    'unmodified trusted historical main helper and reporter are permitted in older worktrees');
+  assert(state().PREFLIGHT.count === 1, 'one bounded reservation, without executing test or retry');
+}
+{
+  const { f, helper, command, preflight } = preparePreflightHookFixture();
+  assert(JSON.stringify(f.claim()) === '{}', 'feature-only framework tamper fixture admits writer');
+  f.dirty();
+  fs.appendFileSync(path.join(f.repository, helper), '// unmerged feature-only verifier edit\n');
+  assert(preflight(command).hookSpecificOutput?.permissionDecisionReason.includes('trusted origin/main'),
+    'uncommitted feature-only verifier changes are rejected even when origin/main has not advanced');
+}
+{
+  const { f, reporter, command, preflight } = preparePreflightHookFixture();
+  assert(JSON.stringify(f.claim()) === '{}', 'feature commit tamper fixture admits writer');
+  fs.appendFileSync(path.join(f.repository, reporter), '// unmerged feature-only reporter edit\n');
+  f.git('add', reporter);
+  f.git('commit', '-m', 'synthetic unmerged reporter version');
+  f.dirty();
+  assert(preflight(command).hookSpecificOutput?.permissionDecisionReason.includes('trusted origin/main'),
+    'committed unmerged feature-only reporter changes are rejected, regardless of live origin/main');
+}
+{
+  const { f, command, preflight } = preparePreflightHookFixture();
+  assert(JSON.stringify(f.claim()) === '{}', 'missing main ancestry fixture admits writer');
+  f.git('update-ref', '-d', 'refs/remotes/origin/main');
+  f.dirty();
+  assert(preflight(command).hookSpecificOutput?.permissionDecisionReason.includes('one trusted origin/main ancestor'),
+    'missing or unverifiable local main history fails closed, never trusts arbitrary helper');
+}
 // A no-log startup SKIP is still a protected SKIP, not an invented PASS.
 {
   const { f, command, preflight, state } = preparePreflightHookFixture();
