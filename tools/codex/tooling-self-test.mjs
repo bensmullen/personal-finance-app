@@ -1211,11 +1211,16 @@ process.exit(${failure === 'unit' || failure.startsWith('unit-') ? 1 : 0});`);
   reporter.onTestCaseReady(passed);
   reporter.onTestCaseResult(passed);
   reporter.onTestCaseReady(pending);
+  const timedOut = { id: 'case-three', result: () => ({ state: 'failed',
+    errors: [{ name: 'Error', message: 'Test timed out in 5000ms.' }] }) };
+  reporter.onTestCaseReady(timedOut);
+  reporter.onTestCaseResult(timedOut);
   const events = fs.readFileSync(progress, 'utf8').trim().split('\n').map(JSON.parse);
-  assert(events.length === 3 && events[0].phase === 'start' &&
+  assert(events.length === 5 && events[0].phase === 'start' &&
     events[1].phase === 'end' && events[1].status === 'passed' &&
-    events[2].phase === 'start' && !events.some(e => e.id === events[2].id && e.phase === 'end'),
-    'a killed unit run preserves completed cases but cannot mark an interrupted case complete');
+    events[2].phase === 'start' && events[4].status === 'timed_out' &&
+    !events.some(e => e.id === events[2].id && e.phase === 'end'),
+    'completed tests survive interruption, while test-case timeouts remain incomplete');
 }
 
 // A foreign active session is never assumed interrupted, even with clean Git.
@@ -1344,6 +1349,18 @@ const preparePreflightHookFixture = () => {
   f.dirty();
   assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny',
     'timed out local test may never trigger another local retry');
+}
+{
+  const { f, command, preflight, state, post } = preparePreflightHookFixture();
+  f.claim(); f.dirty();
+  assert(JSON.stringify(preflight(command)) === '{}', 'test-timeout attempt admitted');
+  post('FAIL', { timeoutObserved: true });
+  assert(state().PREFLIGHT.result.status === 'FAIL' &&
+    state().PREFLIGHT.result.timeout_observed === true,
+    'mixed timeout/assertion FAIL retains both facts');
+  f.dirty();
+  assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny',
+    'individual test timeout forbids even a changed-patch local correction retry');
 }
 {
   const { f, command, preflight, state, post } = preparePreflightHookFixture();
