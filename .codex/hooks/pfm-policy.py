@@ -346,7 +346,7 @@ def observe_preflight_response(response, state, tool_use_id=None):
             return {"status": status, "patch": used["patch"], "attempt": used["count"],
                     "timeout_observed": timeout_observed,
                     "reason": str(report.get("reason") or "")[:200],
-                    "log": report["log"], "progress": report["progress"]}
+                    "log": report.get("log"), "progress": report.get("progress")}
     return fallback
 
 
