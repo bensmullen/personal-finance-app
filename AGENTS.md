@@ -221,9 +221,9 @@ Subagents are disabled by default.
 
 ## Optional bounded local verification (no execution prerequisite)
 
-Codex implementation/repair turns may invoke only the audited optional helper
-`node tools/codex/limited-local-verification.mjs [test/affected.test.ts]`
-on a directly affected tracked test. It runs complete typecheck (60 seconds
+Codex implementation/repair turns may invoke the audited optional launcher
+`python3 tools/codex/limited-local-verification-launcher.py [test/affected.test.ts]`
+on a directly affected tracked test. The original exact `node tools/codex/limited-local-verification.mjs [test/affected.test.ts]` command remains allowed only when Node is already visible on Codex's `PATH`. The launcher finds an already installed Node 22 in supported host locations without running installers or changing the repository. It runs complete typecheck (60 seconds
 maximum) and at most one selected unit file (30 seconds maximum), with at most
 one correction retry after a hook-observed FAIL on a changed patch.
 A process-level or individual Vitest-case TIMEOUT, SKIP, missing result or interrupted invocation may NEVER cause a
@@ -233,7 +233,7 @@ TIMEOUT/INCOMPLETE, not a PASS or a test assertion FAIL. No attempted local
 verification is required to publish. The sandboxed helper writes only ignored
 `.pfm-preflight/` diagnostic logs and per-case progress; the PostToolUse hook
 records the actual result in protected hash-bound task state. The hook authenticates
-both verifier and reporter as one complete merged tool version from the branch's
+launcher, verifier and reporter as one complete merged tool version from the branch's
 unique main ancestor **or** the current merged main tip; a feature-only edit or
 mixed version remains prohibited. Older worktrees lacking this mechanism need
 an operator-owned, reviewed framework-only update including the hook (or a safe
