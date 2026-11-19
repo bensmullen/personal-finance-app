@@ -225,14 +225,21 @@ Codex implementation/repair turns may invoke only the audited optional helper
 `node tools/codex/limited-local-verification.mjs [test/affected.test.ts]`
 on a directly affected tracked test. It runs complete typecheck (60 seconds
 maximum) and at most one selected unit file (30 seconds maximum), with at most
-one correction retry after a recorded FAIL on a changed patch. A failed launch
-without a result may receive one same-patch retry. Missing Node, dependencies,
-sandbox log permissions, execution errors and timeouts are SKIP, not FAIL.
-No attempted local verification is required to publish. A real, recorded FAIL
-from an executed typecheck/unit test must be corrected and followed by a
-permitted PASS or genuine SKIP before ordinary push/COMPLETE; do not
-deliberately circumvent a failed test. Unfixable/out-of-scope FAIL requires an
-explicit BLOCKED handoff and preserves WIP through the checkpoint path.
+one correction retry after a hook-observed FAIL on a changed patch.
+A process-level or individual Vitest-case TIMEOUT, SKIP, missing result or interrupted invocation may NEVER cause a
+local retry, even if some test cases already completed. Tests run only once per
+approved attempt. Node/dependencies unavailable is SKIP; bounded timeout is
+TIMEOUT/INCOMPLETE, not a PASS or a test assertion FAIL. No attempted local
+verification is required to publish. The sandboxed helper writes only ignored
+`.pfm-preflight/` diagnostic logs and per-case progress; the PostToolUse hook
+records the actual result in protected hash-bound task state. Partial progress
+is retained as diagnostic evidence but never upgrades an incomplete file to PASS.
+If a corrected FAIL attempt times out or lacks a host result, the earlier
+observed failure remains actionable; no additional local retry is permitted.
+A real observed FAIL from executed typecheck/unit tests blocks ordinary
+push/COMPLETE until a corrected patch has a permitted PASS or genuine environment
+SKIP; never deliberately circumvent a known test failure. Unfixable/out-of-scope
+FAIL requires BLOCKED and preserves WIP through the checkpoint path.
 
 All other local tests, builds, architecture/spec validators, Playwright,
 benchmarks, performance captures, stochastic convergence, onboarding dry runs,

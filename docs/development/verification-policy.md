@@ -14,21 +14,32 @@ It runs the complete package typecheck API (`tsc --noEmit` then
 `tsc -p tsconfig.next.json`) within 60 seconds total, then that unit file within
 30 seconds. It invokes local binaries directly, avoiding npm lifecycle hooks.
 One simple tool call per coherent patch; at most one correction retry after
-an explicit, persisted FAIL, requiring changed content and the same test.
-An interrupted/unrecorded invocation (including sandbox .codex/logs EPERM)
-may be retried once on the same patch. PASS or recorded SKIP does not authorize
-another attempt. Receipts stay compact in ignored `.codex/logs`. No flags,
-wrappers, shell chaining, arbitrary test selection, installers or alternate
-runners. The helper must match merged `origin/main`; it is prohibited in its
-own implementation turn.
+a hook-observed FAIL, requiring changed content and the same test. No local
+retry is permitted after process-level or individual Vitest-case TIMEOUT, SKIP, PASS, missing PostToolUse result or
+any interrupted/unrecorded execution. The hook reserves each attempt BEFORE
+the sandboxed command runs; an unobserved outcome is INCOMPLETE, not a license
+to retry. The sandboxed helper may write only ignored `.pfm-preflight/`
+diagnostic logs and case-level progress. The separate PostToolUse hook seals
+the host-returned outcome in protected, hash-bound `.codex/runtime/` state;
+local diagnostic files are never acceptance or authorization receipts. No
+flags, wrappers, shell chaining, arbitrary test selection, installers or
+alternate runners. Both helper and progress reporter must match merged
+`origin/main`, so neither may run in its own framework implementation turn.
 
 **Execution truth:** A nonzero exit from an executed bounded typecheck or
 selected unit test is FAIL, and a matching persisted FAIL blocks ordinary
 Codex push/COMPLETE until an authorized correction retry yields PASS or a
-genuine environment SKIP. Do not deliberately skip a known failure. A missing
-result, missing Node/npm/node_modules, unwritable .codex/logs, spawn error,
-helper/API incompatibility or bounded timeout is SKIP/unverified rather than an
-invented assertion failure, and cannot by itself prevent publication.
+genuine environment SKIP. Do not deliberately skip a known failure. Missing
+Node/npm/node_modules, unavailable writable diagnostics, spawn error or helper/API
+incompatibility is SKIP/unverified. Bounded execution timeout is explicitly
+TIMEOUT/INCOMPLETE; missing host evidence is INCOMPLETE. Neither constitutes
+an assertion PASS/FAIL or by itself prevents publication. Each started and
+completed Vitest case has an append-only diagnostic event; a process kill keeps
+already-written case outcomes but never satisfies full-file acceptance.
+Completed cases must not cause automatic local retries of an incomplete run.
+If a correction retry following a real FAIL times out or lacks a host result,
+the original observed failure continues to block ordinary push/COMPLETE; Codex
+must report BLOCKED with a preserved checkpoint, not rerun locally.
 A BLOCKED task may still checkpoint authorized WIP to the task branch with
 explicit disclosure; that is preservation, **not** a successful completion.
 This rule does not grant Codex permission to install tools or run unbounded
