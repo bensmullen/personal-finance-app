@@ -1129,8 +1129,8 @@ assert single(dict(hook_event_name='UserPromptSubmit', session_id='third', turn_
 }
 
 const taskSkill = fs.readFileSync(path.join(root, ".agents/skills/pfm-pr-task/SKILL.md"), "utf8");
-// Exercise the helper's process truth and complete typecheck API with local
-// test doubles; no real compiler/test suite or installations in these fixtures.
+// Exercise the sandbox-safe helper with synthetic process shims. No real
+// compiler/test suite or package installation is run by these fixtures.
 for (const failure of ['none', 'typecheck', 'unit']) {
   const directory = path.join(temp, `bounded-helper-${failure}`);
   for (const sub of ['.codex/runtime', 'node_modules/typescript/bin', 'node_modules/vitest']) {
@@ -1144,7 +1144,7 @@ for (const failure of ['none', 'typecheck', 'unit']) {
   fs.writeFileSync(path.join(directory, 'node_modules/vitest/vitest.mjs'),
     `console.log('unit', process.argv.slice(2).join(' ')); process.exit(${failure === 'unit' ? 1 : 0});`);
   const data = JSON.stringify({ ACTIVE: true, WORKTREE: directory, AUTHORIZATION_ID: 'helper-test',
-    PREFLIGHT: { count: 1, test: 'test/affected.test.ts', patch: 'fixture' } });
+    PREFLIGHT: { count: 1, test: 'test/affected.test.ts', patch: 'a'.repeat(64), nonce: 'b'.repeat(32) } });
   fs.writeFileSync(path.join(directory, '.codex/runtime/owner.json'), data);
   fs.writeFileSync(path.join(directory, '.codex/runtime/latest-task.json'), JSON.stringify({
     path: 'owner.json', sha256: createHash('sha256').update(data).digest('hex'),
@@ -1152,33 +1152,54 @@ for (const failure of ['none', 'typecheck', 'unit']) {
   const result = run(process.execPath, [path.join(root, 'tools/codex/limited-local-verification.mjs'),
     'test/affected.test.ts'], { cwd: directory });
   assert(result.status === (failure === 'none' ? 0 : 1), 'bounded helper preserves process failure');
-  const receipt = JSON.parse(fs.readFileSync(path.join(directory, '.codex/logs/preflight-helper-test.json')));
-  assert(receipt.status === (failure === 'none' ? 'PASS' : 'FAIL'), 'compact truthful receipt');
-  const log = fs.readFileSync(receipt.log, 'utf8');
+  const outcome = JSON.parse(result.stdout.split('PFM_PREFLIGHT_RESULT ')[1]?.trim() ?? 'null');
+  assert(outcome?.status === (failure === 'none' ? 'PASS' : 'FAIL'), 'compact truthful host result');
+  const log = fs.readFileSync(path.join(directory, outcome.log), 'utf8');
   assert(log.includes('tsc --noEmit'), 'first complete project typecheck');
   assert(log.includes('tsc -p tsconfig.next.json') === (failure !== 'typecheck'), 'second project checked after first passes');
   assert(log.includes('unit run test/affected.test.ts') === (failure !== 'typecheck'), 'unit only after full typecheck success');
-  assert(result.stdout.split('\n').filter(Boolean).length === 1, 'full logs stay out of model receipt');
+  assert(result.stdout.trim().startsWith('PFM_PREFLIGHT_RESULT ') && result.stdout.trim().split('\n').length === 1,
+    'all raw test output remains in ignored diagnostics, not model context');
+  assert(!fs.existsSync(path.join(directory, '.codex/logs')), 'sandboxed helper never writes protected .codex paths');
   const repeated = run(process.execPath, [path.join(root, 'tools/codex/limited-local-verification.mjs'),
     'test/affected.test.ts'], { cwd: directory });
-  assert(repeated.status !== 0, 'one reservation cannot execute twice');
+  assert(repeated.status === 0 && repeated.stdout.includes('SKIP') && repeated.stdout.includes('no tests executed'),
+    'the same reserved helper invocation cannot execute tests twice');
 }
-// Unwritable log-directory infrastructure is SKIP, not an executed test FAIL.
+// A malformed sandbox-writable directory is nonexecuting SKIP, not a test FAIL.
 {
   const directory = path.join(temp, 'bounded-helper-logging-unavailable');
   fs.mkdirSync(path.join(directory, '.codex/runtime'), { recursive: true });
-  fs.writeFileSync(path.join(directory, '.codex/logs'), 'a file, not a writable directory');
+  fs.writeFileSync(path.join(directory, '.pfm-preflight'), 'not a directory');
   const data = JSON.stringify({ ACTIVE: true, WORKTREE: directory, AUTHORIZATION_ID: 'log-unavailable',
-    PREFLIGHT: { count: 1, test: 'test/affected.test.ts', patch: 'fixture' } });
+    PREFLIGHT: { count: 1, test: 'test/affected.test.ts', patch: 'a'.repeat(64), nonce: 'b'.repeat(32) } });
   fs.writeFileSync(path.join(directory, '.codex/runtime/owner.json'), data);
   fs.writeFileSync(path.join(directory, '.codex/runtime/latest-task.json'), JSON.stringify({
     path: 'owner.json', sha256: createHash('sha256').update(data).digest('hex'),
   }));
   const result = run(process.execPath, [path.join(root, 'tools/codex/limited-local-verification.mjs'),
     'test/affected.test.ts'], { cwd: directory });
-  assert(result.status === 0 && result.stdout.includes('SKIP preflight:') &&
-    result.stdout.includes('no tests executed'),
-    'sandbox EPERM or invalid log path must skip without false fail or blocked publication');
+  assert(result.status === 0 && result.stdout.includes('SKIP') && result.stdout.includes('no tests executed'),
+    'unwritable sandbox diagnostic directory must skip without running a test');
+}
+// Per-test progress is append-only diagnostic evidence, not an acceptance gate.
+// Simulate a killed run: one completed case survives, the next stays incomplete.
+{
+  const progress = path.join(temp, 'partial-local-progress.jsonl');
+  process.env.PFM_PREFLIGHT_PROGRESS = progress;
+  const { default: Reporter } = await import('./local-preflight-progress-reporter.mjs?fixture=partial');
+  delete process.env.PFM_PREFLIGHT_PROGRESS;
+  const reporter = new Reporter();
+  const passed = { id: 'case-one', result: () => ({ state: 'passed' }) };
+  const pending = { id: 'case-two', result: () => ({ state: 'pending' }) };
+  reporter.onTestCaseReady(passed);
+  reporter.onTestCaseResult(passed);
+  reporter.onTestCaseReady(pending);
+  const events = fs.readFileSync(progress, 'utf8').trim().split('\n').map(JSON.parse);
+  assert(events.length === 3 && events[0].phase === 'start' &&
+    events[1].phase === 'end' && events[1].status === 'passed' &&
+    events[2].phase === 'start' && !events.some(e => e.id === events[2].id && e.phase === 'end'),
+    'a killed unit run preserves completed cases but cannot mark an interrupted case complete');
 }
 
 // A foreign active session is never assumed interrupted, even with clean Git.
