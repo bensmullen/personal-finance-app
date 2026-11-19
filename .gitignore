@@ -17,6 +17,7 @@ test-results/
 
 # Local Codex execution logs/runtime policy state
 .codex/logs/
+.pfm-preflight/
 .codex/runtime/
 
 # Local environment and secrets
