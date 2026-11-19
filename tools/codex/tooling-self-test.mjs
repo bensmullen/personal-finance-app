@@ -1251,10 +1251,12 @@ const preparePreflightHookFixture = ({ startTask = true } = {}) => {
   const f = recoveryFixture({ initial: "none" });
   const helper = 'tools/codex/limited-local-verification.mjs';
   const reporter = 'tools/codex/local-preflight-progress-reporter.mjs';
+  const launcher = 'tools/codex/limited-local-verification-launcher.py';
   const command = `node ${helper} test/affected.test.ts`;
+  const launchCommand = `python3 ${launcher} test/affected.test.ts`;
   fs.mkdirSync(path.join(f.repository, 'tools/codex'), { recursive: true });
   fs.mkdirSync(path.join(f.repository, 'test'));
-  for (const file of [helper, reporter]) {
+  for (const file of [helper, reporter, launcher]) {
     fs.copyFileSync(path.join(root, file), path.join(f.repository, file));
   }
   fs.writeFileSync(path.join(f.repository, 'test/affected.test.ts'),
@@ -1284,7 +1286,7 @@ const preparePreflightHookFixture = ({ startTask = true } = {}) => {
       tool_input: { command }, tool_response: { exit_code: exit,
         stdout: 'PFM_PREFLIGHT_RESULT ' + JSON.stringify(report) } });
   };
-  return { f, helper, reporter, command, preflight, state, post };
+  return { f, helper, reporter, launcher, command, launchCommand, preflight, state, post };
 };
 // Advance only the synthetic REMOTE main tip. The task branch retains a
 // historically merged helper/reporter version until explicitly synchronized.
