@@ -967,7 +967,7 @@ export const restoreAuthoritativeCheckpointDelta = (before: AuthoritativeState, 
   observe?: (visited: number, changed: number) => void): AuthoritativeState => {
   const invalid = (): never => { throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: invalid authoritative checkpoint delta"); };
   if (!input || !input.records || !input.identities) return invalid();
-  const state = forkIndexedExecutionState(before, undefined, true);
+  const state = forkIndexedExecutionState(before);
   const immutable = new Set<CheckpointRecordKey>(["ssaMedicarePayments", "d2SettlementReceipts", "d2PostedTransactions", "retirementDistributionAllocations"]);
   for (const key of checkpointRecordKeys) {
     const change = input.records[key];
@@ -1176,13 +1176,12 @@ const claimGroup = (category: string, balanceEntityId?: string): string => `${ca
 export const createIndexedExecutionState = (opening: AuthoritativeState, suppliedHistoryMeter?: SettlementHistoryMeter): AuthoritativeState =>
   forkIndexedExecutionState(opening, suppliedHistoryMeter);
 
-const forkIndexedExecutionState = (opening: AuthoritativeState, suppliedHistoryMeter?: SettlementHistoryMeter,
-  restoreDelta = false): AuthoritativeState => {
+const forkIndexedExecutionState = (opening: AuthoritativeState, suppliedHistoryMeter?: SettlementHistoryMeter): AuthoritativeState => {
   const existing = executionStateIndexes.get(opening);
-  // A successive delta starts from a private, immutable validated snapshot.
-  // Validate each new native receipt on insertion and re-read the full source
-  // history at replay admission. Historical SSA formats keep their old path.
-  const reuseCheckpoint = restoreDelta && checkpointSnapshots.has(opening) && existing?.validatedSsa?.nativeOriginalsOnly === true;
+  // A private immutable snapshot can share the native structural index.
+  // New receipts are validated on insertion, and replay reobserves their
+  // publishers independently. Historical SSA formats keep their own path.
+  const reuseCheckpoint = checkpointSnapshots.has(opening) && existing?.validatedSsa?.nativeOriginalsOnly === true;
   if (existing === undefined) validateAuthoritativeState(opening);
   // Check exposed history before normalization can reconstruct an identity
   // array from its private index and accidentally repair caller tampering.
@@ -1824,6 +1823,7 @@ const qualifyRetirement = (d: RetirementDistributionRecord, context: D2Settlemen
  * Neither structural restoration nor requalification grants J1 RMD credit. */
 export const requalifyRetirementDistributionHistory = (state: AuthoritativeState, context: D2SettlementSourceContext,
   requireObservedSource = false): void => {
+  if (state.retirementDistributionAllocations === undefined) return;
   validateRetirementDistributions(state);
   for (const d of Object.values(state.retirementDistributionAllocations ?? {})) {
     const result = qualifyRetirement(d, context);
@@ -2692,8 +2692,6 @@ export const validateD2SettlementReceipts = (state: AuthoritativeState): void =>
       d2Invalid("Committed receipt cannot be removed or rewritten");
     if (change.before !== undefined) continue;
     const r = state.d2SettlementReceipts?.[change.key] ?? d2Invalid("Missing receipt");
-    if ((previous === undefined || nativeCheckpointImports.has(state)) && r.nativeHousehold && qualifyD2Receipt(r, r.nativeHousehold.settlement.context).status !== "qualified")
-      d2Invalid("Native receipt original source unavailable on cold import");
     validateD2Receipt(state, change.key, r);
     if ((previous === undefined || nativeCheckpointImports.has(state)) && r.nativeHousehold && qualifyD2Receipt(r, r.nativeHousehold.settlement.context).status !== "qualified")
       d2Invalid("Native receipt original source unavailable on cold import");
@@ -2841,6 +2839,7 @@ export const admitS4OpeningSources = (state: AuthoritativeState, current: D2Sett
 /** Portable restore must call this separately from structural state validation.
  * The artifact's integrity fingerprint cannot replace source-owner admission. */
 export const requalifyD2SettlementReceiptHistory = (state: AuthoritativeState, context: D2SettlementSourceContext): void => {
+  if (state.d2PostedTransactions === undefined && state.d2SettlementReceipts === undefined) return;
   validateD2PostedTransactions(state);
   validateD2SettlementReceipts(state);
   const receipts = Object.values(state.d2SettlementReceipts ?? {});
@@ -2902,10 +2901,20 @@ export const requalifyD2SettlementReceiptHistory = (state: AuthoritativeState, c
 /** Observe independent publishers at an outward boundary. An indexed root or
  * archived receipt establishes structure, never publisher authority. */
 export const observeAuthoritativeSourceHistory = (state: AuthoritativeState, context: D2SettlementSourceContext): void => {
+  if (state.d2PostedTransactions === undefined && state.d2SettlementReceipts === undefined &&
+      state.retirementDistributionAllocations === undefined && state.ssaMedicarePayments === undefined) return;
   validateAuthoritativeState(state);
   requalifyD2SettlementReceiptHistory(state, context);
   requalifyRetirementDistributionHistory(state, context, true);
 };
+
+/** Compare the exact inputs to outward source admission. Callers independently
+ * validate each state's accounts, claims, proofs and identities before use. */
+export const equalAuthoritativeSourceHistory = (left: AuthoritativeState, right: AuthoritativeState): boolean =>
+  (["d2PostedTransactions", "d2SettlementReceipts", "retirementDistributionAllocations", "ssaMedicarePayments"] as const)
+    .every(key => checkpointIndex(left, key).changesSince(checkpointIndex(right, key)).changes
+      .every(change => change.before !== undefined && change.after !== undefined &&
+        paymentValue(change.before) === paymentValue(change.after)));
 
 interface D2RemainingReimbursement {
   readonly remainingReimbursement?: { readonly status: "incomplete";
@@ -3011,7 +3020,8 @@ const paymentRecognitions = (input: SsaMedicarePaymentInput): readonly Recogniti
 
 const validateSsaMedicarePayments = (state: AuthoritativeState): ExecutionStateIndex["validatedSsa"] => {
   const execution = executionStateIndexes.get(state);
-  const prior = checkpointSnapshots.has(state) ? undefined : execution?.validatedSsa;
+  const cached = execution?.validatedSsa;
+  const prior = checkpointSnapshots.has(state) && cached?.nativeOriginalsOnly !== true ? undefined : cached;
   const payments = checkpointIndex(state, "ssaMedicarePayments"), accounts = checkpointIndex(state, "accounts"), claims = checkpointIndex(state, "obligations");
   const priorIds = prior === undefined ? undefined : identityIndexes.get(prior.identities), ids = identityIndexes.get(state.identities);
   const tracked = ids !== undefined &&
@@ -3030,7 +3040,7 @@ const validateSsaMedicarePayments = (state: AuthoritativeState): ExecutionStateI
     accounts.changesSince(prior.accounts).changes.every(c => {
       const a = c.before as AccountState | undefined, b = c.after as AccountState | undefined;
       return a === undefined || b !== undefined && a.kind === b.kind && a.ownerId === b.ownerId && a.cash.currency.equals(b.cash.currency);
-    }) && claims.changesSince(prior.claims).changes.every(c => c.before === undefined) &&
+    }) && claims.changesSince(prior.claims).changes.every(c => !prior.claimIds.has(c.key)) &&
     identityKinds.every(kind => ids![kind].changesSince(priorIds[kind]).changes.every(c => c.after !== undefined));
   const consumed = appendOnly ? prior!.consumed.fork() : new PersistentStringIndex<string>();
   const transactions = appendOnly ? prior!.transactions.fork() : new PersistentStringIndex<string>();
@@ -3100,9 +3110,9 @@ const validateSsaMedicarePayments = (state: AuthoritativeState): ExecutionStateI
       consumed.set(id, key);
     }
   }
-  // Only a live indexed execution may carry qualification across unchanged
-  // receipt history. Untracked/mutable inputs and checkpoint restores cannot.
-  return execution !== undefined && !checkpointSnapshots.has(state) && tracked && immutable
+  // Reuse only exact validated ancestry. A native checkpoint can carry its
+  // immutable structural index, while outward admission reads its publishers.
+  return execution !== undefined && (!checkpointSnapshots.has(state) || nativeOriginalsOnly) && tracked && immutable
     ? { payments, accounts, claims, identities: indexedIdentityRegistry(state.identities), consumed, transactions, claimIds, settlementIds, nativeOriginalsOnly }
     : undefined;
 };

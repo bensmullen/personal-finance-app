@@ -48,7 +48,20 @@ it.each(["monthly_evidence", "mortgage_evidence"] as const)("rejects observed so
   const { basis, fingerprint, point, selection } = evidence();
   const request = { ...selection, operation, requestId: 1, fingerprint, points: [point],
     source: { basis, model: createSyntheticPersonalDraft() } };
-  expect(executeForecastWorkerRequest(request, { now: () => 0 }).outcome).toBe("result");
+  const before = { lender: control.lenderReads, bank: control.bankReads };
+  let projectedReads: typeof before | undefined;
+  const cpuAtStart = process.cpuUsage();
+  const succeeded = executeForecastWorkerRequest(request, { now: () => performance.now() }, progress => {
+    if (progress.outcome === "progress" && progress.phase === "projected")
+      projectedReads = { lender: control.lenderReads, bank: control.bankReads };
+  });
+  const cpu = process.cpuUsage(cpuAtStart);
+  expect(succeeded).toMatchObject({ outcome: "result", sourceIdentityMatched: true });
+  expect(cpu.user + cpu.system).toBeGreaterThan(0);
+  expect(projectedReads?.lender).toBeGreaterThan(before.lender);
+  expect(projectedReads?.bank).toBeGreaterThan(before.bank);
+  expect(control.lenderReads).toBeGreaterThan(projectedReads!.lender);
+  expect(control.bankReads).toBeGreaterThan(projectedReads!.bank);
 
   const withdrawnInProgress = executeForecastWorkerRequest(request, { now: () => 0 }, progress => {
     if (progress.outcome === "progress" && progress.phase === "projected") control.lenderAvailable = false;

@@ -28,12 +28,16 @@ const { artifact, selected } = JSON.parse(readFileSync(path, "utf8"));
 let restored: ReturnType<typeof restorePortableHouseholdReplayArtifact>;
 try { restored = restorePortableHouseholdReplayArtifact(artifact); }
 catch (error) {
-  if (mode === "available" || mode === "missing_retirement") throw error;
+  if (mode === "available") throw error;
   if (!(error instanceof Error) || !error.message.includes("HOUSEHOLD_REPLAY_BASIS_MISMATCH")) throw error;
-  process.stdout.write(JSON.stringify({ rejected: true }));
+  if (mode === "missing_retirement" &&
+      (!(error.cause instanceof Error) || error.cause.message !== "Retirement original unavailable at outward observation")) throw error;
+  process.stdout.write(JSON.stringify(mode === "missing_retirement"
+    ? { rejected: true, cause: error.cause instanceof Error ? error.cause.message : undefined }
+    : { rejected: true }));
   process.exit(0);
 }
-if (mode !== "available" && mode !== "missing_retirement") throw new Error("Unqualified combined artifact unexpectedly restored");
+if (mode !== "available") throw new Error("Unqualified combined artifact unexpectedly restored");
 const replay = replayHouseholdForecastWindow(restored, selected);
 process.stdout.write(JSON.stringify({ state: canonicalSerialize(replay.state), periods: canonicalSerialize(replay.periods),
   requalified: { fsa: sourceReads.fsa > 0, card: sourceReads.card > 0, retirement: sourceReads.retirement > 0,

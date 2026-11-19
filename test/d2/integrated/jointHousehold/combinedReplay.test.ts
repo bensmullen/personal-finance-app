@@ -128,11 +128,12 @@ describe("#149 S8-2 independently requalified combined portable v3 baseline", ()
       for (const mode of ["missing_fsa", "missing_card", "altered_fsa", "altered_card", "altered_retirement", "failing_fsa", "failing_card",
         "missing_employer", "changed_employer", "missing_wage_bank", "changed_wage_bank"])
         expect(child(selected, mode)).toEqual({ rejected: true });
-      // J1 structural history remains portable without its source owner. Cash
-      // is preserved and the journal never gains RMD or complete-tax authority.
+      // Already posted retirement cash still requires its original publisher
+      // at the outward replay boundary.
       const expected = replayHouseholdForecastWindow(summary, selected);
-      expect(child(selected, "missing_retirement")).toEqual({ state: canonicalSerialize(expected.state), periods: canonicalSerialize(expected.periods),
-        requalified: { fsa: true, card: true, retirement: false, employer: true, wageBank: true } });
+      expect(child(selected, "missing_retirement")).toEqual({
+        rejected: true, cause: "Retirement original unavailable at outward observation",
+      });
       expect(expected.state.retirementDistributionAllocations?.["s8-retirement-posted"]).toMatchObject({ rmdSatisfaction: "not_applied", tax: "incomplete" });
       expect(expected.state.accounts[ids.retirement]!.cash.amount.toString()).toBe("500");
     } finally { rmSync(directory, { recursive: true, force: true }); }

@@ -1,6 +1,6 @@
 import { Currency, DecimalAmount, Money, Percentage, Quantity, Rate, Ratio, RoundingPolicy, Unit, type RateConvention, type RoundingMode } from "../../values/index.js";
 import { observeHouseholdForecastSources, equalHouseholdReplaySummaries, exportHouseholdReplayCheckpointRoots, registerHouseholdReplayCheckpoints, registerRestoredReplayAdmission, householdReplayCheckpointSelection, householdReplayTerminalRoot, runHouseholdForecastSummary, type HouseholdReplayCheckpoint, type HouseholdForecastSummaryResult, type ExecutableHouseholdProjection } from "../householdExecution.js";
-import { assertD2PostedTransactionHistoryPreserved, assertD2SettlementReceiptHistoryPreserved, createAuthoritativeState,
+import { assertD2PostedTransactionHistoryPreserved, assertD2SettlementReceiptHistoryPreserved, createAuthoritativeState, observeAuthoritativeSourceHistory,
   authoritativeCheckpointDelta, restoreAuthoritativeCheckpointDelta, requalifyD2SettlementReceiptHistory,
   assertSsaMedicarePaymentHistoryPreserved,
   assertRetirementDistributionHistoryPreserved, requalifyRetirementDistributionHistory,
@@ -320,13 +320,11 @@ export const createPortableHouseholdReplayArtifact = (forecast: HouseholdForecas
   observeHouseholdForecastSources(forecast);
   return artifact;
 };
-function requalifyReplaySources(forecast: Pick<HouseholdForecastSummaryResult, "replay" | "periods">,
+function validateReplaySsaOccurrences(forecast: Pick<HouseholdForecastSummaryResult, "replay" | "periods">,
   state: AuthoritativeState, checkpoints: readonly HouseholdReplayCheckpoint[]): void {
   const { kernel, runContext } = forecast.replay;
   validateSsaMedicareReplayHistory(kernel.executable.participants, kernel.executable.reconciledOpeningState,
     runContext, checkpoints, { state, at: forecast.periods.at(-1)?.period.end ?? runContext.simulationStart }, kernel.executable.cashFlowInput);
-  requalifyD2SettlementReceiptHistory(state, runContext);
-  requalifyRetirementDistributionHistory(state, runContext, true);
 }
 
 function admitConfiguredReplayHistory(forecast: Pick<HouseholdForecastSummaryResult, "replay" | "periods" | "runMetadata">,
@@ -445,7 +443,11 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
   const regenerate = usesFixedLoanOriginals(admittedExecutable) || verifyFullInventory;
   const recheckFixedLoans = observer?.phase !== undefined || regenerate
     ? measure("sourceRequalificationMs", () => {
-        if (observer?.phase !== undefined) requalifyReplaySources(forecast, sourceHistoryState, checkpoints);
+        if (observer?.phase !== undefined) {
+          validateReplaySsaOccurrences(forecast, sourceHistoryState, checkpoints);
+          requalifyD2SettlementReceiptHistory(sourceHistoryState, restored.runContext);
+          requalifyRetirementDistributionHistory(sourceHistoryState, restored.runContext, true);
+        }
         else if (regenerate) requalifyRetirementDistributionHistory(sourceHistoryState, restored.runContext, true);
         return admitConfiguredReplayHistory(forecast, sourceHistoryState, checkpoints, verifyFullInventory);
       }) : undefined;
@@ -492,11 +494,11 @@ function bindReplayAdmission(forecast: Pick<HouseholdForecastSummaryResult, "rep
   sourceHistoryState: AuthoritativeState, checkpoints: readonly HouseholdReplayCheckpoint[], independentSource: unknown,
   recheckFixedLoans?: () => void): void {
   const { replay } = forecast;
+  const admitModel = () => { qualifyModelBasis(basis, replay.kernel.executable, replay.runContext, independentSource); };
   registerRestoredReplayAdmission(replay, () => {
-    qualifyModelBasis(basis, replay.kernel.executable, replay.runContext, independentSource);
-    requalifyReplaySources(forecast, sourceHistoryState, checkpoints);
+    validateReplaySsaOccurrences(forecast, sourceHistoryState, checkpoints);
     recheckFixedLoans?.();
-  });
+  }, { state: sourceHistoryState, ...(basis === undefined ? {} : { admitModel }) });
 }
 export const restorePortableHouseholdReplayArtifact = (artifact: unknown, observer?: ReplayRestoreObserver, independentSource?: unknown): Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods"> => {
   try { observer?.phase?.("restore_started"); } catch { /* Observation is optional. */ }
@@ -520,9 +522,11 @@ export const restorePortableHouseholdReplayArtifact = (artifact: unknown, observ
     if (cached && supplied?.version === cached.version && supplied.encoded === cached.encoded && supplied.integrity === cached.integrity) {
       try { observer?.phase?.("restore_warm"); } catch { /* Observation is optional. */ }
       report("warm", cached.forecast);
-      qualifyModelBasis(cached.modeledPayroll, cached.forecast.replay.kernel.executable, cached.forecast.replay.runContext, independentSource);
-      requalifyReplaySources(cached.forecast, cached.sourceHistoryState, cached.checkpoints);
+      const { kernel, runContext } = cached.forecast.replay;
+      qualifyModelBasis(cached.modeledPayroll, kernel.executable, runContext, independentSource);
+      validateReplaySsaOccurrences(cached.forecast, cached.sourceHistoryState, cached.checkpoints);
       cached.recheckFixedLoans?.();
+      observeAuthoritativeSourceHistory(cached.sourceHistoryState, runContext);
       bindReplayAdmission(cached.forecast, cached.modeledPayroll, cached.sourceHistoryState, cached.checkpoints, independentSource, cached.recheckFixedLoans);
       return cached.forecast;
     }

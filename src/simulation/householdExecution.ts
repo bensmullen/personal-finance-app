@@ -28,6 +28,7 @@ import {
   assertAuthoritativeStateCurrency,
   admitS4OpeningSources,
   observeAuthoritativeSourceHistory,
+  equalAuthoritativeSourceHistory,
   isOwnedHouseholdCallbackParticipant,
   cloneAuthoritativeState,
   createIndexedExecutionState,
@@ -1232,23 +1233,37 @@ export interface HouseholdReplayCheckpoint {
 // forecasts without these optional roots can still replay from the opening basis.
 const forecastCheckpoints = new WeakMap<object, readonly HouseholdReplayCheckpoint[]>();
 const forecastTerminalRoots = new WeakMap<object, AuthoritativeState>();
-const restoredReplayAdmission = new WeakMap<object, () => void>();
+interface RestoredSourceHistory {
+  readonly state: AuthoritativeState;
+  readonly admitModel?: () => void;
+}
+const restoredReplayAdmission = new WeakMap<object, { readonly observe: () => void; readonly history?: RestoredSourceHistory }>();
 
 /** Recheck independently supplied originals when a restored basis is actually used. */
-export const registerRestoredReplayAdmission = (replay: HouseholdForecastSummaryResult["replay"], admit: () => void): void => {
-  restoredReplayAdmission.set(replay, admit);
+export const registerRestoredReplayAdmission = (replay: HouseholdForecastSummaryResult["replay"],
+  observe: () => void, history?: RestoredSourceHistory): void => {
+  restoredReplayAdmission.set(replay, { observe, ...(history === undefined ? {} : { history }) });
 };
 
 /** Reobserve the exact admitted history without executing another forecast.
  * Restored bases retain their independently reconstructed terminal inventory. */
-export const observeHouseholdForecastSources = (forecast: Pick<HouseholdForecastSummaryResult, "replay">): void => {
+const observeForecastSourceRoot = (forecast: Pick<HouseholdForecastSummaryResult, "replay">): AuthoritativeState | undefined => {
   const admit = restoredReplayAdmission.get(forecast.replay);
-  if (admit !== undefined) admit();
-  else {
-    const state = forecastTerminalRoots.get(forecast.replay);
-    if (state === undefined) throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: missing source history root");
-    observeAuthoritativeSourceHistory(state, forecast.replay.runContext);
+  if (admit !== undefined) {
+    const history = admit.history;
+    history?.admitModel?.();
+    admit.observe();
+    if (history !== undefined) observeAuthoritativeSourceHistory(history.state, forecast.replay.runContext);
+    return history !== undefined && isAuthoritativeCheckpointSnapshot(history.state) ? history.state : undefined;
   }
+  const state = forecastTerminalRoots.get(forecast.replay);
+  if (state === undefined) throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: missing source history root");
+  observeAuthoritativeSourceHistory(state, forecast.replay.runContext);
+  return state;
+};
+
+export const observeHouseholdForecastSources = (forecast: Pick<HouseholdForecastSummaryResult, "replay">): void => {
+  observeForecastSourceRoot(forecast);
 };
 
 /** Private committed root for encoding a delta against the last checkpoint. */
@@ -1498,15 +1513,19 @@ export const replayHouseholdForecastWindow = (
       message: "Replay requires an aligned window of successfully committed forecast periods.", entityType: "household_projection" });
   const performance = createPerformanceSession(observer);
   let result: CompiledHouseholdProjectionRunResult | undefined;
+  let replayedRoot: AuthoritativeState | undefined;
   try {
-    restoredReplayAdmission.get(forecast.replay)?.();
+    const admission = restoredReplayAdmission.get(forecast.replay);
+    if (admission?.history === undefined) admission?.observe();
+    else admission.history.admitModel?.();
     const checkpoint = (forecastCheckpoints.get(forecast) ?? []).filter(value => value.at <= selectedWindow.start).at(-1);
     report("replay_started");
     const replay = runCompiledHouseholdProjectionInternal({
       compiled: { ...kernel.executable, executionKernel: kernel }, runContext,
     }, performance, { accept: () => {}, retain: period => period.start >= selectedWindow.start && period.end <= selectedWindow.end,
       ...(checkpoint === undefined ? {} : { resume: checkpoint }), stopAfter: selectedWindow.end,
-      retainDiagnostics: period => period.start >= selectedWindow.start });
+      retainDiagnostics: period => period.start >= selectedWindow.start,
+      checkpoint: (_period, state) => { replayedRoot = state; } });
     report("replay_executed");
     performance.counters({ replayCheckpointResumes: checkpoint === undefined ? 0 : 1,
       replayDetailPeriodsMaterialized: replay.periods.length });
@@ -1524,7 +1543,9 @@ export const replayHouseholdForecastWindow = (
   } finally {
     performance.finish();
   }
-  observeHouseholdForecastSources(forecast);
-  observeAuthoritativeSourceHistory(result.state, runContext);
+  const archivedRoot = observeForecastSourceRoot(forecast);
+  const selectedRoot = replayedRoot ?? result.state;
+  if (archivedRoot === undefined || !equalAuthoritativeSourceHistory(archivedRoot, selectedRoot))
+    observeAuthoritativeSourceHistory(selectedRoot, runContext);
   return result;
 };
