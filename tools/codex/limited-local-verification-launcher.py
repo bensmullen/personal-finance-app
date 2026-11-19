@@ -14,7 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-TEST_PATTERN = re.compile(r"test/[A-Za-z0-9_/-]+\\.test\\.ts\\Z")
+TEST_PATTERN = re.compile(r"test/[A-Za-z0-9_/-]+\.test\.ts\Z")
 
 
 def emit_unavailable(test):
@@ -28,7 +28,7 @@ def emit_unavailable(test):
             raise ValueError("unsafe receipt pointer")
         metadata = json.loads(pointer.read_text())
         name = metadata["path"]
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+\\.json", name):
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+\.json", name):
             raise ValueError("unsafe receipt filename")
         receipt = runtime / name
         if receipt.is_symlink():
