@@ -232,7 +232,11 @@ approved attempt. Node/dependencies unavailable is SKIP; bounded timeout is
 TIMEOUT/INCOMPLETE, not a PASS or a test assertion FAIL. No attempted local
 verification is required to publish. The sandboxed helper writes only ignored
 `.pfm-preflight/` diagnostic logs and per-case progress; the PostToolUse hook
-records the actual result in protected hash-bound task state. Partial progress
+records the actual result in protected hash-bound task state. The hook authenticates
+both verifier and reporter against the branch's unique merged-main ancestor,
+not the moving `origin/main` tip; unmerged tool edits remain prohibited. Older
+worktrees lacking this mechanism require operator-owned main synchronization.
+Partial progress
 is retained as diagnostic evidence but never upgrades an incomplete file to PASS.
 If a corrected FAIL attempt times out or lacks a host result, the earlier
 observed failure remains actionable; no additional local retry is permitted.
