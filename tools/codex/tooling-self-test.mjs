@@ -1129,56 +1129,98 @@ assert single(dict(hook_event_name='UserPromptSubmit', session_id='third', turn_
 }
 
 const taskSkill = fs.readFileSync(path.join(root, ".agents/skills/pfm-pr-task/SKILL.md"), "utf8");
-// Exercise the helper's process truth and complete typecheck API with local
-// test doubles; no real compiler/test suite or installations in these fixtures.
-for (const failure of ['none', 'typecheck', 'unit']) {
+// Exercise the sandbox-safe helper with synthetic process shims. No real
+// compiler/test suite or package installation is run by these fixtures.
+for (const failure of ['none', 'typecheck', 'unit', 'unit-timeout', 'unit-mixed']) {
   const directory = path.join(temp, `bounded-helper-${failure}`);
   for (const sub of ['.codex/runtime', 'node_modules/typescript/bin', 'node_modules/vitest']) {
     fs.mkdirSync(path.join(directory, sub), { recursive: true });
   }
+  // Mimic a sandbox-protected .codex/logs path. The trusted helper must never
+  // touch it, even when typecheck and the selected unit genuinely execute.
+  fs.writeFileSync(path.join(directory, '.codex/logs'), 'sandbox-protected');
   fs.writeFileSync(path.join(directory, 'package.json'), JSON.stringify({ scripts: {
     typecheck: 'tsc --noEmit && tsc -p tsconfig.next.json',
   } }));
   fs.writeFileSync(path.join(directory, 'node_modules/typescript/bin/tsc'),
     `console.log('tsc', process.argv.slice(2).join(' ')); process.exit(${failure === 'typecheck' ? 1 : 0});`);
+  const progressCases = failure === 'unit-timeout'
+    ? JSON.stringify({ phase: 'end', status: 'timed_out', id: 'one' }) + '\n'
+    : failure === 'unit-mixed' ? [
+      JSON.stringify({ phase: 'end', status: 'timed_out', id: 'one' }),
+      JSON.stringify({ phase: 'end', status: 'failed', id: 'two' }),
+    ].join('\n') + '\n' : '';
   fs.writeFileSync(path.join(directory, 'node_modules/vitest/vitest.mjs'),
-    `console.log('unit', process.argv.slice(2).join(' ')); process.exit(${failure === 'unit' ? 1 : 0});`);
+    `import { appendFileSync } from 'node:fs';
+console.log('unit', process.argv.slice(2).join(' '));
+if (process.env.PFM_PREFLIGHT_PROGRESS) appendFileSync(process.env.PFM_PREFLIGHT_PROGRESS, ${JSON.stringify(progressCases)});
+process.exit(${failure === 'unit' || failure.startsWith('unit-') ? 1 : 0});`);
   const data = JSON.stringify({ ACTIVE: true, WORKTREE: directory, AUTHORIZATION_ID: 'helper-test',
-    PREFLIGHT: { count: 1, test: 'test/affected.test.ts', patch: 'fixture' } });
+    PREFLIGHT: { count: 1, test: 'test/affected.test.ts', patch: 'a'.repeat(64), nonce: 'b'.repeat(32) } });
   fs.writeFileSync(path.join(directory, '.codex/runtime/owner.json'), data);
   fs.writeFileSync(path.join(directory, '.codex/runtime/latest-task.json'), JSON.stringify({
     path: 'owner.json', sha256: createHash('sha256').update(data).digest('hex'),
   }));
   const result = run(process.execPath, [path.join(root, 'tools/codex/limited-local-verification.mjs'),
     'test/affected.test.ts'], { cwd: directory });
-  assert(result.status === (failure === 'none' ? 0 : 1), 'bounded helper preserves process failure');
-  const receipt = JSON.parse(fs.readFileSync(path.join(directory, '.codex/logs/preflight-helper-test.json')));
-  assert(receipt.status === (failure === 'none' ? 'PASS' : 'FAIL'), 'compact truthful receipt');
-  const log = fs.readFileSync(receipt.log, 'utf8');
+  const expected = failure === 'none' ? 'PASS' : failure === 'unit-timeout' ? 'TIMEOUT' : 'FAIL';
+  assert(result.status === (expected === 'FAIL' ? 1 : 0), 'bounded helper preserves process failure and classifies case timeout');
+  const outcome = JSON.parse(result.stdout.split('PFM_PREFLIGHT_RESULT ')[1]?.trim() ?? 'null');
+  assert(outcome?.status === expected, 'compact truthful host result');
+  assert(outcome.timeoutObserved === failure.startsWith('unit-'),
+    'case timeout is explicit even when mixed with a separate assertion FAIL');
+  const log = fs.readFileSync(path.join(directory, outcome.log), 'utf8');
   assert(log.includes('tsc --noEmit'), 'first complete project typecheck');
   assert(log.includes('tsc -p tsconfig.next.json') === (failure !== 'typecheck'), 'second project checked after first passes');
   assert(log.includes('unit run test/affected.test.ts') === (failure !== 'typecheck'), 'unit only after full typecheck success');
-  assert(result.stdout.split('\n').filter(Boolean).length === 1, 'full logs stay out of model receipt');
+  assert(result.stdout.trim().startsWith('PFM_PREFLIGHT_RESULT ') && result.stdout.trim().split('\n').length === 1,
+    'all raw test output remains in ignored diagnostics, not model context');
+  assert(fs.readFileSync(path.join(directory, '.codex/logs'), 'utf8') === 'sandbox-protected',
+    'sandboxed helper never writes to protected .codex paths');
   const repeated = run(process.execPath, [path.join(root, 'tools/codex/limited-local-verification.mjs'),
     'test/affected.test.ts'], { cwd: directory });
-  assert(repeated.status !== 0, 'one reservation cannot execute twice');
+  assert(repeated.status === 0 && repeated.stdout.includes('SKIP') && repeated.stdout.includes('no tests executed'),
+    'the same reserved helper invocation cannot execute tests twice');
 }
-// Unwritable log-directory infrastructure is SKIP, not an executed test FAIL.
+// A malformed sandbox-writable directory is nonexecuting SKIP, not a test FAIL.
 {
   const directory = path.join(temp, 'bounded-helper-logging-unavailable');
   fs.mkdirSync(path.join(directory, '.codex/runtime'), { recursive: true });
-  fs.writeFileSync(path.join(directory, '.codex/logs'), 'a file, not a writable directory');
+  fs.writeFileSync(path.join(directory, '.pfm-preflight'), 'not a directory');
   const data = JSON.stringify({ ACTIVE: true, WORKTREE: directory, AUTHORIZATION_ID: 'log-unavailable',
-    PREFLIGHT: { count: 1, test: 'test/affected.test.ts', patch: 'fixture' } });
+    PREFLIGHT: { count: 1, test: 'test/affected.test.ts', patch: 'a'.repeat(64), nonce: 'b'.repeat(32) } });
   fs.writeFileSync(path.join(directory, '.codex/runtime/owner.json'), data);
   fs.writeFileSync(path.join(directory, '.codex/runtime/latest-task.json'), JSON.stringify({
     path: 'owner.json', sha256: createHash('sha256').update(data).digest('hex'),
   }));
   const result = run(process.execPath, [path.join(root, 'tools/codex/limited-local-verification.mjs'),
     'test/affected.test.ts'], { cwd: directory });
-  assert(result.status === 0 && result.stdout.includes('SKIP preflight:') &&
-    result.stdout.includes('no tests executed'),
-    'sandbox EPERM or invalid log path must skip without false fail or blocked publication');
+  assert(result.status === 0 && result.stdout.includes('SKIP') && result.stdout.includes('no tests executed'),
+    'unwritable sandbox diagnostic directory must skip without running a test');
+}
+// Per-test progress is append-only diagnostic evidence, not an acceptance gate.
+// Simulate a killed run: one completed case survives, the next stays incomplete.
+{
+  const progress = path.join(temp, 'partial-local-progress.jsonl');
+  process.env.PFM_PREFLIGHT_PROGRESS = progress;
+  const { default: Reporter } = await import('./local-preflight-progress-reporter.mjs?fixture=partial');
+  delete process.env.PFM_PREFLIGHT_PROGRESS;
+  const reporter = new Reporter();
+  const passed = { id: 'case-one', result: () => ({ state: 'passed' }) };
+  const pending = { id: 'case-two', result: () => ({ state: 'pending' }) };
+  reporter.onTestCaseReady(passed);
+  reporter.onTestCaseResult(passed);
+  reporter.onTestCaseReady(pending);
+  const timedOut = { id: 'case-three', result: () => ({ state: 'failed',
+    errors: [{ name: 'Error', message: 'Test timed out in 5000ms.' }] }) };
+  reporter.onTestCaseReady(timedOut);
+  reporter.onTestCaseResult(timedOut);
+  const events = fs.readFileSync(progress, 'utf8').trim().split('\n').map(JSON.parse);
+  assert(events.length === 5 && events[0].phase === 'start' &&
+    events[1].phase === 'end' && events[1].status === 'passed' &&
+    events[2].phase === 'start' && events[4].status === 'timed_out' &&
+    !events.some(e => e.id === events[2].id && e.phase === 'end'),
+    'completed tests survive interruption, while test-case timeouts remain incomplete');
 }
 
 // A foreign active session is never assumed interrupted, even with clean Git.
@@ -1205,53 +1247,252 @@ for (const dirty of [false, true]) {
   f.invoke('Stop', { last_assistant_message: 'TASK_STATUS: BLOCKED\nBLOCKER: owner done' });
   assert(fs.readFileSync(receipt, 'utf8') === before, 'idempotent old Stop cannot replace new owner');
 }
-{
+const preparePreflightHookFixture = ({ startTask = true } = {}) => {
   const f = recoveryFixture({ initial: "none" });
   const helper = 'tools/codex/limited-local-verification.mjs';
+  const reporter = 'tools/codex/local-preflight-progress-reporter.mjs';
   const command = `node ${helper} test/affected.test.ts`;
   fs.mkdirSync(path.join(f.repository, 'tools/codex'), { recursive: true });
   fs.mkdirSync(path.join(f.repository, 'test'));
-  fs.copyFileSync(path.join(root, helper), path.join(f.repository, helper));
-  // The bounded hook must accept an in-repository .js import and ignore an
-  // out-of-tree relative import even on Python 3.8 (no Path.is_relative_to).
+  for (const file of [helper, reporter]) {
+    fs.copyFileSync(path.join(root, file), path.join(f.repository, file));
+  }
   fs.writeFileSync(path.join(f.repository, 'test/affected.test.ts'),
     "import { value } from '../src/allowed.js';\nimport { outside } from '../../outside.js';\nit('affected', () => value);\n");
-  fs.appendFileSync(path.join(f.repository, '.gitignore'), '.codex/logs/\n');
+  fs.appendFileSync(path.join(f.repository, '.gitignore'), '.pfm-preflight/\n');
   f.git('add', '.'); f.git('commit', '-m', 'preflight fixture');
   f.git('update-ref', 'refs/remotes/origin/main', f.git('rev-parse', 'HEAD'));
   f.git('push', 'origin', 'codex/policy-self-test');
-  assert(f.start().hookSpecificOutput, 'preflight fixture prepares from shared head');
-  const preflight = text => f.invoke('PreToolUse', { tool_name: 'Bash', tool_input: { command: text } });
+  if (startTask) assert(f.start().hookSpecificOutput, 'preflight fixture prepares from shared head');
+  const preflight = value => f.invoke('PreToolUse', { tool_name: 'Bash', tool_input: { command: value } });
+  const state = () => {
+    const pointer = JSON.parse(fs.readFileSync(path.join(f.repository, '.codex/runtime/latest-task.json')));
+    return JSON.parse(fs.readFileSync(path.join(f.repository, '.codex/runtime', pointer.path)));
+  };
+  const post = (status, overrides = {}, exit = status === 'FAIL' ? 1 : 0) => {
+    const now = state();
+    const used = now.PREFLIGHT;
+    const prefix = `.pfm-preflight/preflight-${now.AUTHORIZATION_ID}-${used.count}/`;
+    const report = {
+      schema: 1, authorization: now.AUTHORIZATION_ID, attempt: used.count,
+      patch: used.patch, nonce: used.nonce, test: used.test,
+      status, reason: 'synthetic runner observation',
+      log: prefix + 'runner.log', progress: prefix + 'progress.jsonl',
+      ...overrides,
+    };
+    return f.invoke('PostToolUse', { tool_name: 'Bash',
+      tool_input: { command }, tool_response: { exit_code: exit,
+        stdout: 'PFM_PREFLIGHT_RESULT ' + JSON.stringify(report) } });
+  };
+  return { f, helper, reporter, command, preflight, state, post };
+};
+// Advance only the synthetic REMOTE main tip. The task branch retains a
+// historically merged helper/reporter version until explicitly synchronized.
+const advanceSyntheticVerifierMain = (f, id) => {
+  const earlierMain = f.git('rev-parse', 'refs/remotes/origin/main');
+  const advance = path.join(temp, 'pfm-trusted-main-' + id);
+  mustRun('git', ['worktree', 'add', '--detach', advance, earlierMain], { cwd: f.repository });
+  for (const helper of ['tools/codex/limited-local-verification.mjs',
+                        'tools/codex/local-preflight-progress-reporter.mjs']) {
+    fs.appendFileSync(path.join(advance, helper), '// subsequent merged main framework update\n');
+  }
+  mustRun('git', ['add', 'tools/codex/limited-local-verification.mjs',
+                 'tools/codex/local-preflight-progress-reporter.mjs'], { cwd: advance });
+  mustRun('git', ['commit', '-m', 'synthetic newer merged main verifier'], { cwd: advance });
+  const newerMain = mustRun('git', ['rev-parse', 'HEAD'], { cwd: advance }).stdout.trim();
+  f.git('update-ref', 'refs/remotes/origin/main', newerMain);
+  return { earlierMain, newerMain, advance };
+};
+// A task branch may retain a *merged historical main* as origin/main advances,
+// while neither invoking unmerged tools nor forcing an unrelated product merge.
+{
+  const { f, command, preflight, state } = preparePreflightHookFixture();
+  const { earlierMain } = advanceSyntheticVerifierMain(f, 'historical');
+  assert(f.git('merge-base', '--all', 'HEAD', 'origin/main') === earlierMain,
+    'branch trust baseline must remain the earlier merged main');
+  assert(f.git('show', 'origin/main:tools/codex/limited-local-verification.mjs') !==
+    fs.readFileSync(path.join(f.repository, 'tools/codex/limited-local-verification.mjs'), 'utf8'),
+    'fixture must reproduce a real current-origin/main mismatch');
+  assert(JSON.stringify(f.claim()) === '{}', 'old-base task admits a writer independently of current main');
+  f.dirty();
+  assert(JSON.stringify(preflight(command)) === '{}',
+    'unchanged older merged helper AND reporter are authorized after main advances');
+  assert(state().PREFLIGHT.count === 1, 'one bounded reservation, without execution or retry');
+}
+// An operator may synchronize ONLY the complete currently merged framework
+// tool pair without merging unrelated financial-engine changes. Pin to one
+// identical main snapshot, before task admission/authorization.
+{
+  const { f, helper, reporter, command, preflight, state } = preparePreflightHookFixture({ startTask: false });
+  const { earlierMain, advance } = advanceSyntheticVerifierMain(f, 'operator-pair');
+  for (const file of [helper, reporter]) {
+    fs.copyFileSync(path.join(advance, file), path.join(f.repository, file));
+  }
+  f.git('add', helper, reporter);
+  f.git('commit', '-m', 'operator-reviewed complete merged framework tooling');
+  f.git('push', 'origin', 'codex/policy-self-test');
+  assert(f.git('merge-base', '--all', 'HEAD', 'origin/main') === earlierMain,
+    'framework-only synchronization must not silently merge main history');
+  assert(f.start().hookSpecificOutput, 'new task authorization after operator sync');
+  assert(JSON.stringify(f.claim()) === '{}', 'task is a writer only after authorization');
+  f.dirty();
+  assert(JSON.stringify(preflight(command)) === '{}',
+    'complete current-main helper/reporter pair allowed without full main merge');
+  assert(state().PREFLIGHT.count === 1, 'synchronized task receives exactly one reservation');
+}
+// A mixture of versions from different trusted commits is not a trusted pair.
+{
+  const { f, helper, command, preflight } = preparePreflightHookFixture({ startTask: false });
+  const { advance } = advanceSyntheticVerifierMain(f, 'mixed-pair');
+  fs.copyFileSync(path.join(advance, helper), path.join(f.repository, helper));
+  f.git('add', helper);
+  f.git('commit', '-m', 'synthetic mixed merged and historical tool versions');
+  f.git('push', 'origin', 'codex/policy-self-test');
+  assert(f.start().hookSpecificOutput, 'mixed-pair fixture creates task after operator change');
+  assert(JSON.stringify(f.claim()) === '{}', 'fixture admits writer');
+  f.dirty();
+  assert(preflight(command).hookSpecificOutput?.permissionDecisionReason.includes('complete trusted'),
+    'mixed-version helper/reporter pair is denied even when both individually existed on main');
+}
+{
+  const { f, helper, command, preflight } = preparePreflightHookFixture();
+  assert(JSON.stringify(f.claim()) === '{}', 'feature-only framework tamper fixture admits writer');
+  f.dirty();
+  fs.appendFileSync(path.join(f.repository, helper), '// unmerged feature-only verifier edit\n');
+  assert(preflight(command).hookSpecificOutput?.permissionDecisionReason.includes('trusted origin/main'),
+    'uncommitted feature-only verifier changes are rejected even when origin/main has not advanced');
+}
+{
+  const { f, reporter, command, preflight } = preparePreflightHookFixture();
+  assert(JSON.stringify(f.claim()) === '{}', 'feature commit tamper fixture admits writer');
+  fs.appendFileSync(path.join(f.repository, reporter), '// unmerged feature-only reporter edit\n');
+  f.git('add', reporter);
+  f.git('commit', '-m', 'synthetic unmerged reporter version');
+  f.dirty();
+  assert(preflight(command).hookSpecificOutput?.permissionDecisionReason.includes('trusted origin/main'),
+    'committed unmerged feature-only reporter changes are rejected, regardless of live origin/main');
+}
+{
+  const { f, command, preflight } = preparePreflightHookFixture();
+  assert(JSON.stringify(f.claim()) === '{}', 'missing main ancestry fixture admits writer');
+  f.git('update-ref', '-d', 'refs/remotes/origin/main');
+  f.dirty();
+  assert(preflight(command).hookSpecificOutput?.permissionDecisionReason.includes('one trusted origin/main ancestor'),
+    'missing or unverifiable local main history fails closed, never trusts arbitrary helper');
+}
+// A no-log startup SKIP is still a protected SKIP, not an invented PASS.
+{
+  const { f, command, preflight, state } = preparePreflightHookFixture();
+  f.claim(); f.dirty();
+  assert(JSON.stringify(preflight(command)) === '{}', 'preflight can reserve an attempt');
+  const used = state().PREFLIGHT;
+  const report = {
+    schema: 1, authorization: state().AUTHORIZATION_ID, attempt: used.count,
+    patch: used.patch, nonce: used.nonce, test: used.test, status: 'SKIP',
+    reason: 'sandbox diagnostic directory unavailable (EPERM); no tests executed',
+    timeoutObserved: false,
+  };
+  f.invoke('PostToolUse', { tool_name: 'Bash', tool_input: { command },
+    tool_response: { exit_code: 0, stdout: 'PFM_PREFLIGHT_RESULT ' + JSON.stringify(report) } });
+  assert(state().PREFLIGHT.result.status === 'SKIP', 'missing diagnostic directory produces truthful SKIP');
+  f.dirty();
+  assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny',
+    'startup SKIP cannot automatically rerun local tests');
+}
+{
+  const { f, helper, reporter, command, preflight, state } = preparePreflightHookFixture();
   assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'prepared task cannot reserve preflight');
   assert(JSON.stringify(f.claim()) === '{}', 'first edit admits writer before preflight');
   assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'unaffected named file rejected');
   f.dirty();
   for (const unsafe of [`bash -c '${command}'`, `${command}; echo bypass`, `${command} && true`,
-    `${command}\ntrue`, `${command} --passWithNoTests`, `npx ${helper}`, `node ${helper} test/../outside.test.ts`,
-    `NODE_OPTIONS=--import=bad ${command}`, `node ${helper} test/not-found.test.ts`,
-    'npm test', 'npm run codex:verify', 'npm run build:web', 'npx playwright test', 'npm ci']) {
+    `${command}\ntrue`, `${command} --passWithNoTests`, `npx ${helper}`,
+    `node ${helper} test/../outside.test.ts`, `NODE_OPTIONS=--import=bad ${command}`,
+    `node ${helper} test/not-found.test.ts`, 'npm test', 'npm run codex:verify',
+    'npm run build:web', 'npx playwright test', 'npm ci']) {
     assert(preflight(unsafe).hookSpecificOutput?.permissionDecision === 'deny', `unsafe preflight denied: ${unsafe}`);
   }
   for (const unsafe of ['gh run watch 123', 'gh pr checks 123 --watch', 'gh run view 123',
-    'node tools/ci/forecast-feasibility.mjs', 'node tools/codex/verify.mjs', 'npm run codex:tooling-test',
-    "bash -c 'npm test'", "sh -c 'npx tsc'"]) {
-    assert(preflight(unsafe).hookSpecificOutput?.permissionDecision === 'deny', `unbounded verification denied: ${unsafe}`);
+    'node tools/ci/forecast-feasibility.mjs', 'node tools/codex/verify.mjs',
+    'npm run codex:tooling-test', "bash -c 'npm test'", "sh -c 'npx tsc'"]) {
+    assert(preflight(unsafe).hookSpecificOutput?.permissionDecision === 'deny', `unbounded check denied: ${unsafe}`);
   }
-  assert(JSON.stringify(preflight(command)) === '{}', 'exact directly affected helper allowed');
+  assert(JSON.stringify(preflight(command)) === '{}', 'exact helper and direct test allowed');
   const skipped = mustRun(process.execPath, [path.join(f.repository, helper), 'test/affected.test.ts'], { cwd: f.repository });
-  assert(skipped.stdout.startsWith('SKIP preflight:'), 'missing environment skips clearly without installs');
-  const latest = JSON.parse(fs.readFileSync(path.join(f.repository, '.codex/runtime/latest-task.json')));
-  const state = JSON.parse(fs.readFileSync(path.join(f.repository, '.codex/runtime', latest.path)));
-  const receipt = path.join(f.repository, `.codex/logs/preflight-${state.AUTHORIZATION_ID}.json`);
-  assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'SKIP cannot authorize retry');
-  fs.writeFileSync(receipt, JSON.stringify({ status: 'FAIL', patch: state.PREFLIGHT.patch }));
-  assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'FAIL without correction cannot retry');
+  assert(skipped.stdout.includes('PFM_PREFLIGHT_RESULT ') &&
+    JSON.parse(skipped.stdout.split('PFM_PREFLIGHT_RESULT ')[1]).status === 'SKIP',
+    'missing dependencies skip without test execution');
+  f.invoke('PostToolUse', { tool_name: 'Bash', tool_input: { command },
+    tool_response: { exit_code: 0, stdout: skipped.stdout } });
+  assert(state().PREFLIGHT.result.status === 'SKIP', 'host-observed SKIP sealed in hook-owned receipt');
+  assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'SKIP cannot retry');
   f.dirty();
-  assert(JSON.stringify(preflight(command)) === '{}', 'one corrected FAIL retry allowed');
+  assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'changed patch cannot retry SKIP');
+  fs.appendFileSync(path.join(f.repository, reporter), '// unmerged edit\n');
+  assert(preflight(command).hookSpecificOutput?.permissionDecisionReason.includes('trusted origin/main'),
+    'an edited reporter must be denied just like an edited helper');
+}
+{
+  const { f, command, preflight, state, post } = preparePreflightHookFixture();
+  f.claim(); f.dirty();
+  assert(JSON.stringify(preflight(command)) === '{}', 'new local attempt admitted');
+  post('FAIL');
+  assert(state().PREFLIGHT.result.status === 'FAIL', 'observed FAIL protected by hook');
+  const push = f.invoke('PreToolUse', { tool_name: 'Bash',
+    tool_input: { command: 'git push origin codex/policy-self-test' } });
+  assert(push.hookSpecificOutput?.permissionDecisionReason.includes('LOCAL_PREFLIGHT_FAILED'),
+    'actual local failure must block ordinary push');
+  const used = state().PREFLIGHT;
+  const dirname = path.join(f.repository, '.pfm-preflight', `preflight-${state().AUTHORIZATION_ID}-${used.count}`);
+  fs.mkdirSync(dirname, { recursive: true });
+  fs.writeFileSync(path.join(dirname, 'runner.log.summary.json'), JSON.stringify({ status: 'PASS' }));
+  assert(f.invoke('PreToolUse', { tool_name: 'Bash',
+    tool_input: { command: 'git push origin codex/policy-self-test' } })
+    .hookSpecificOutput?.permissionDecisionReason.includes('LOCAL_PREFLIGHT_FAILED'),
+    'sandbox-writable diagnostic file cannot forge a protected PASS');
   f.dirty();
-  assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'third invocation denied');
-  fs.appendFileSync(path.join(f.repository, helper), '// unmerged edit\n');
-  assert(preflight(command).hookSpecificOutput?.permissionDecisionReason.includes('merged origin/main'), 'unmerged helper refused');
+  assert(JSON.stringify(preflight(command)) === '{}', 'one changed-patch FAIL correction retry allowed');
+  post('TIMEOUT');
+  assert(state().PREFLIGHT.result.status === 'TIMEOUT' && state().PREFLIGHT.prior_failure === true,
+    'timeout does not erase an independently observed prior FAIL');
+  assert(f.invoke('PreToolUse', { tool_name: 'Bash',
+    tool_input: { command: 'git push origin codex/policy-self-test' } })
+    .hookSpecificOutput?.permissionDecisionReason.includes('LOCAL_PREFLIGHT_FAILED'),
+    'incomplete correction cannot bypass prior failure when ordinary publication is attempted');
+  f.dirty();
+  assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny',
+    'timed out local test may never trigger another local retry');
+}
+{
+  const { f, command, preflight, state, post } = preparePreflightHookFixture();
+  f.claim(); f.dirty();
+  assert(JSON.stringify(preflight(command)) === '{}', 'test-timeout attempt admitted');
+  post('FAIL', { timeoutObserved: true });
+  assert(state().PREFLIGHT.result.status === 'FAIL' &&
+    state().PREFLIGHT.result.timeout_observed === true,
+    'mixed timeout/assertion FAIL retains both facts');
+  f.dirty();
+  assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny',
+    'individual test timeout forbids even a changed-patch local correction retry');
+}
+{
+  const { f, command, preflight, state, post } = preparePreflightHookFixture();
+  f.claim(); f.dirty();
+  assert(JSON.stringify(preflight(command)) === '{}', 'new attempt reserved');
+  post('PASS', { nonce: 'f'.repeat(32) });
+  assert(state().PREFLIGHT.result.status === 'INCOMPLETE', 'wrong nonce cannot forge a PASS');
+  f.dirty();
+  assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny',
+    'unobserved/invalid response never causes a local rerun');
+}
+{
+  const { f, command, preflight, state } = preparePreflightHookFixture();
+  f.claim(); f.dirty();
+  assert(JSON.stringify(preflight(command)) === '{}', 'new attempt reserved');
+  f.dirty();
+  assert(state().PREFLIGHT.result.status === 'INCOMPLETE' &&
+    preflight(command).hookSpecificOutput?.permissionDecision === 'deny',
+    'PostToolUse missing/interrupted still forbids local reruns');
 }
 {
   // Ordinary publication denies explicit local FAIL, never missing or SKIP results.
