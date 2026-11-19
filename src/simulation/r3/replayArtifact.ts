@@ -442,9 +442,11 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
   const verifyFullInventory = supplied.version === "household-replay/v3" &&
     (admittedExecutable.participants?.some(participant => ownsFsaCashParticipant(participant) || ownsCardBankParticipant(participant) ||
       ownsHelocServicingParticipant(participant) || participant.portableCodec === "d2-retirement-cash/v3") ?? false);
-  const recheckFixedLoans = observer?.phase !== undefined || usesFixedLoanOriginals(admittedExecutable) || verifyFullInventory
+  const regenerate = usesFixedLoanOriginals(admittedExecutable) || verifyFullInventory;
+  const recheckFixedLoans = observer?.phase !== undefined || regenerate
     ? measure("sourceRequalificationMs", () => {
         if (observer?.phase !== undefined) requalifyReplaySources(forecast, sourceHistoryState, checkpoints);
+        else if (regenerate) requalifyRetirementDistributionHistory(sourceHistoryState, restored.runContext, true);
         return admitConfiguredReplayHistory(forecast, sourceHistoryState, checkpoints, verifyFullInventory);
       }) : undefined;
   try { observer?.phase?.("source_requalified"); } catch { /* Observation is optional. */ }

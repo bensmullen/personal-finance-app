@@ -5,7 +5,7 @@ import { calculationTraceId, calculationTraceRef } from "../../../../lineage/ind
 import { claimId, recognitionId, settlementId } from "../../../../semantics/identity.js";
 import { applyAccountingTransactionAtomically, applyD2SettlementAtomically, d2SettlementPostingRegistration,
   d2SettlementSourceFingerprint, hasConflictingCardReceipt, registerD2SettlementSourceAuthority, requalifyD2SettlementReceiptHistory,
-  registerAuthoritativeIdentity, registerHouseholdCallbackOwner,
+  registerAuthoritativeIdentity, registerHouseholdCallbackOwner, registerPersonBankOriginalAuthority,
   applyNativeHouseholdOriginalAtomically, registerHouseholdEconomicOriginalAuthority,
   type AuthoritativeState, type D2CardSettlementReceipt, type D2PostingRegistration,
   type D2SettlementSourceContext, type NativeHouseholdPostingAttachment } from "../../../../state/index.js";
@@ -264,6 +264,17 @@ function assertResources(state: AuthoritativeState, r: D2CardSettlementReceipt):
 function registration(r: D2CardSettlementReceipt): D2PostingRegistration {
   return { ...d2SettlementPostingRegistration(r, "original"), operationId: r.originalTransaction.id };
 }
+registerPersonBankOriginalAuthority("card_interest_payment", (proof, context) => {
+  const locators = (proof.transaction.traceRefs ?? []).filter(ref => ref.traceId.startsWith('["card-bank-source",'));
+  if (locators.length !== 1) return false;
+  let sourceId: unknown;
+  try { [, sourceId] = JSON.parse(locators[0]!.traceId); }
+  catch { return false; }
+  if (typeof sourceId !== "string") return false;
+  const current = qualifyCardBankSource(sourceId, context);
+  return current.status === "qualified" && same(proof.transaction, current.receipt.originalTransaction) &&
+    same(proof.registration, registration(current.receipt));
+});
 function hasOriginal(state: AuthoritativeState, r: D2CardSettlementReceipt): boolean {
   const archive = state.d2PostedTransactions?.[r.originalTransaction.id];
   const posted = state.identities.postedTransactionIds.includes(r.originalTransaction.id);
@@ -392,7 +403,12 @@ export function createCardBankParticipant(configuration: CardBankInput): Househo
             if (!candidate.state.liabilities[r.liabilityId]!.balance.equals(r.liabilityBefore)) fail("Issuer opening liability differs from canonical state");
             if (candidate.state.identities.recognitionIds.includes(r.recognitionId)) fail("Recognition identity already consumed without the canonical charge journal");
             if (r.nativeHousehold) applyNativeHouseholdOriginalAtomically(candidate.state, tx, registration(r), context);
-            else applyAccountingTransactionAtomically(candidate.state, tx, registration(r));
+            else {
+              applyAccountingTransactionAtomically(candidate.state, tx, registration(r));
+              const late = qualifyCardBankSource(r.source.sourceId, context);
+              if (late.status !== "qualified" || !same(late.document, current.document))
+                fail("Issuer source changed during original posting");
+            }
             registerAuthoritativeIdentity(candidate.state.identities, "recognitionIds", r.recognitionId);
             return { ...candidate, facts: journalFacts(tx, tier, context.baseCurrency) };
           }

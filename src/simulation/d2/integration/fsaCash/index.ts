@@ -1,5 +1,5 @@
 import { applyAccountingTransactionAtomically, applyD2SettlementAtomically, applyNativeHouseholdOriginalAtomically,
-  authoritativeFsaPlanReceipts, requalifyD2SettlementReceiptHistory, registerHouseholdCallbackOwner,
+  authoritativeFsaPlanReceipts, requalifyD2SettlementReceiptHistory, registerHouseholdCallbackOwner, registerPersonBankOriginalAuthority,
   type AuthoritativeState } from "../../../../state/index.js";
 import type { AccountingTransaction } from "../../../../accounting/index.js";
 import { domainId } from "../../../../identity/index.js";
@@ -22,6 +22,19 @@ const ownedParticipants = new WeakSet<object>();
 registerHouseholdCallbackOwner("fsa", participant => ownedParticipants.has(participant));
 export const ownsFsaCashParticipant = (participant: HouseholdKernelParticipant): boolean => ownedParticipants.has(participant);
 function incomplete(detail: string): never { throw new FsaCashIncomplete("source_not_qualified", detail); }
+
+registerPersonBankOriginalAuthority("fsa_paid_reimbursement", (proof, context) => {
+  const locator = /^fsa-cash:(.+):original$/.exec(proof.transaction.id)?.[1];
+  if (locator === undefined) return false;
+  try {
+    const original = readFsaCashSource(decodeURIComponent(locator), undefined, "v2", context);
+    qualifyFsaCashOriginal(original, context);
+    return same(proof.transaction, originalTransaction(original)) && same(proof.registration, originalRegistration(original));
+  } catch (error) {
+    if (error instanceof FsaCashIncomplete || error instanceof URIError) return false;
+    throw error;
+  }
+});
 
 function checkArchive(state: AuthoritativeState, s: FsaCashSource, required: boolean): boolean {
   const tx = originalTransaction(s), proof = state.d2PostedTransactions?.[tx.id];

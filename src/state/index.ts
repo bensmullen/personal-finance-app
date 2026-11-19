@@ -468,6 +468,23 @@ export const registerD2SettlementSourceAuthority = (kind: D2SettlementReceipt["k
   d2SourceAuthorities.set(kind, Object.freeze({ ...authority }));
 };
 
+type PersonBankOriginalKind = "fsa_paid_reimbursement" | "card_interest_payment";
+const personBankOriginalAuthorities = new Map<PersonBankOriginalKind,
+  (proof: D2PostedTransactionProof, context: D2SettlementSourceContext) => boolean>();
+/** Independently observe a Person BANK original which has no paid receipt yet. */
+export const registerPersonBankOriginalAuthority = (kind: PersonBankOriginalKind,
+  qualify: (proof: D2PostedTransactionProof, context: D2SettlementSourceContext) => boolean): void => {
+  if (personBankOriginalAuthorities.has(kind)) throw new Error("D2_PERSON_BANK_ORIGINAL_AUTHORITY_DUPLICATE");
+  personBankOriginalAuthorities.set(kind, qualify);
+};
+const personBankOriginalKind = (proof: D2PostedTransactionProof): PersonBankOriginalKind | undefined => {
+  const r = proof.registration;
+  if (r.nativeHousehold || r.role !== "original") return undefined;
+  if (r.kind === "fsa_paid_reimbursement" && proof.transaction.type === "fsa_medical_expense_payment") return r.kind;
+  if (r.kind === "card_interest_payment" && proof.transaction.type === "issuer_card_charge") return r.kind;
+  return undefined;
+};
+
 /** Source-specific same-event journal evidence, not a second cash ledger.
  * Domain admission re-evaluates sourceInputs through A1/C2. Portable integrity
  * detects changes; neither this record nor an artifact authenticates publishers.
@@ -2365,7 +2382,7 @@ export const validateD2PostedTransactions = (state: AuthoritativeState): void =>
           d2Invalid("Native retirement source unavailable on cold import");
       }
     }
-    if (proof.registration.nativeHousehold || proof.registration.kind === "heloc_phase_service" || proof.registration.kind === "payroll_health_deduction" || proof.registration.kind === "household_domain" || proof.registration.kind === "fixed_loan_original")
+    if (proof.registration.nativeHousehold || proof.registration.kind === "heloc_phase_service" || proof.registration.kind === "payroll_health_deduction" || proof.registration.kind === "household_domain" || proof.registration.kind === "fixed_loan_original" || personBankOriginalKind(proof) !== undefined)
       sourceProofs.set(proof.transaction.id, proof);
     if (isS4Posting(proof)) s4Proofs.set(proof.transaction.id, proof);
     inventory.set(d2PostingKey(proof), proof.transaction.id);
@@ -2826,7 +2843,17 @@ export const admitS4OpeningSources = (state: AuthoritativeState, current: D2Sett
 export const requalifyD2SettlementReceiptHistory = (state: AuthoritativeState, context: D2SettlementSourceContext): void => {
   validateD2PostedTransactions(state);
   validateD2SettlementReceipts(state);
+  const receipts = Object.values(state.d2SettlementReceipts ?? {});
+  let settledOriginals: ReadonlySet<string> | undefined;
   for (const [, proof] of d2PostingHistories.get(state)!.sourceProofs.entries()) {
+    const personOriginal = personBankOriginalKind(proof);
+    if (personOriginal !== undefined) {
+      settledOriginals ??= new Set(receipts.map(receipt => receipt.originalTransaction.id));
+      if (!settledOriginals.has(proof.transaction.id) &&
+          !personBankOriginalAuthorities.get(personOriginal)?.(proof, context))
+        d2Invalid("Person BANK original unavailable at outward observation");
+      continue;
+    }
     if (proof.registration.kind === "fixed_loan_original") {
       const e = proof.registration.evidence;
       if (e.context.asOf !== context.asOf || e.context.dataCutoff !== context.dataCutoff)
@@ -2865,7 +2892,7 @@ export const requalifyD2SettlementReceiptHistory = (state: AuthoritativeState, c
       if (result.status === "incomplete") throw new Error(`D2_SETTLEMENT_SOURCE_INCOMPLETE: ${result.reason}`);
     }
   }
-  for (const receipt of Object.values(state.d2SettlementReceipts ?? {})) {
+  for (const receipt of receipts) {
     const result = qualifyD2Receipt(receipt, context);
     if (result.status === "incomplete") throw new Error(`D2_SETTLEMENT_SOURCE_INCOMPLETE: ${result.reason}`);
     if (!matchD2PostedTransaction(state, receipt, "original") || !matchD2PostedTransaction(state, receipt, "settlement"))

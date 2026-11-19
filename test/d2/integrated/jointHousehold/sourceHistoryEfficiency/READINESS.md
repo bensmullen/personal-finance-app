@@ -1,5 +1,46 @@
 # Issue #348: outward-boundary WIP and reference scope gap
 
+## November 19 continuation
+
+The six approved legacy test and worker files now require explicit restore
+rejection when an independent funded retirement original is missing or
+tampered. The workers report the retirement-specific validation failure and
+continue to check publisher status and denial of new posting. Structural J1
+with no source-backed posting still exercises restore and replay without a
+publisher. Source-present worker parity, cash, J1 and the forged archive
+assertions remain.
+
+Cold restore observes archived funded retirement originals before regenerating
+configured occurrence history. Outward observation also checks an actual
+Person BANK medical debit or issuer interest charge that has no settlement
+receipt yet. The existing plan and issuer publishers reconstruct the journal
+from its source locator. Settled originals are checked through their receipts.
+
+The combined regression constructs native FSA, card and SSA/Medicare
+installments, HELOC servicing and lender originals in a common household,
+with one funded distribution. It specifies exact cash and liability balances,
+read and serialization bounds for summary, detail, export, cold and warm
+restore, and terminal replay. It measures the 66 and 276 intrinsic HELOC
+history rows separately. The test also specifies withdrawal after a replay
+callback and rejection of unsettled Person BANK originals at release.
+
+At prior head `3057545f6b574a6d92f78a4ec938802e2250102e`, GitHub Actions
+run [44460954051](https://github.com/bensmullen/personal-finance-app/actions/runs/44460954051)
+showed failures in all three unit shards. Build, typecheck, architecture,
+forecast feasibility and the four E2E shards passed. The public view withheld
+job logs behind sign-in, and the PFM hook rejected the log CLI path. The
+bounded verifier skipped because its local log directory was unavailable
+(`EPERM`). There is no executed verification of this patch.
+
+Still open for acceptance: identify and reconcile any remaining prior-head
+unit failures, verify the new combined fixture on the pushed head, and complete
+the measurement of bytes validated by the native SSA/Medicare and BANK ports,
+history/index work, CPU, and application/worker release costs. The combined
+test's published-byte counters include the underlying SSA award and IRMAA
+inventories. The outer native SSA and Medicare reads are counted separately.
+Standalone and frozen-reference and application/worker negatives are covered
+by separate fixtures, with combined route-wide cost evidence still pending.
+
 ## Current 27-path repair: implementation WIP and protected-test conflict
 
 This continuation implements factory-private WeakSet ownership for Medicare,
