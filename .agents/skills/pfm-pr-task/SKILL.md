@@ -100,10 +100,15 @@ conditions when useful. Their exact headings are not parser requirements.
   allowed for a new subtree.
 - Do not edit framework-control files from a product/repair task.
 - Do not install packages or switch package managers.
-- Optional, after #218 is merged: invoke exactly
-  `node tools/codex/limited-local-verification.mjs` or append one directly
-  affected tracked `test/name.test.ts`. Use one simple shell tool call. The
-  audited helper runs the complete typecheck (60s total), then the named unit
+- Optional bounded local verification: invoke exactly
+  `python3 tools/codex/limited-local-verification-launcher.py` or append one
+  directly affected tracked `test/name.test.ts`. This audited launcher finds
+  existing Node 22 (including `/usr/local/bin/node` and common macOS managers)
+  without installing it, and runs the same bounded helper. The original direct
+  `node tools/codex/limited-local-verification.mjs` command is still supported
+  only when Node is already visible in Codex's PATH. Never work around the
+  hook's exact-command guard using shell aliases, PATH wrappers or chaining.
+  Use one simple tool call. The audited helper runs the complete typecheck (60s total), then the named unit
   (30s); no flags, chaining, wrappers, installs or prerequisites. A missing
   environment yields SKIP. The sandboxed helper writes bounded logs and
   per-case progress only to ignored `.pfm-preflight/`; protected hook state
