@@ -1250,27 +1250,6 @@ process.exit(${failure === 'unit' || failure.startsWith('unit-') ? 1 : 0});`);
   assert(second.status === 0 && second.stdout.includes('"status":"SKIP"'),
     'a consumed reservation cannot rerun tests even through the launcher');
 }
-// A sparse PATH cannot prevent the hook from reserving the trusted launcher,
-// but the direct Node command should fail clearly before any reservation.
-{
-  const { f, command, launchCommand, preflight, state } = preparePreflightHookFixture();
-  assert(JSON.stringify(f.claim()) === '{}', 'existing task may claim scope before preflight');
-  f.dirty();
-  const sparse = { PATH: '/usr/bin:/bin' };
-  const direct = f.invoke('PreToolUse', { tool_name: 'Bash',
-    tool_input: { command } }, sparse);
-  if (direct.hookSpecificOutput?.permissionDecision === 'deny') {
-    assert(direct.hookSpecificOutput.permissionDecisionReason.includes('launcher'),
-      'when Node is hidden, the hook guides Codex to its trusted launcher');
-    assert(!state().PREFLIGHT, 'a rejected direct Node command must not consume an attempt');
-  }
-  const granted = f.invoke('PreToolUse', { tool_name: 'Bash',
-    tool_input: { command: launchCommand } }, sparse);
-  assert(JSON.stringify(granted) === '{}', 'trusted launcher accepted regardless of hook Node PATH');
-  assert(state().PREFLIGHT.count === 1, 'one real protected preflight reservation');
-  assert(preflight(launchCommand).hookSpecificOutput?.permissionDecision === 'deny',
-    'preflight already reserved; no repeat attempts through the launcher');
-}
 // Per-test progress is append-only diagnostic evidence, not an acceptance gate.
 // Simulate a killed run: one completed case survives, the next stays incomplete.
 {
@@ -1361,6 +1340,27 @@ const preparePreflightHookFixture = ({ startTask = true } = {}) => {
   };
   return { f, helper, reporter, launcher, command, launchCommand, preflight, state, post };
 };
+// A sparse PATH cannot prevent the hook from reserving the trusted launcher,
+// but the direct Node command should fail clearly before any reservation.
+{
+  const { f, command, launchCommand, preflight, state } = preparePreflightHookFixture();
+  assert(JSON.stringify(f.claim()) === '{}', 'existing task may claim scope before preflight');
+  f.dirty();
+  const sparse = { PATH: '/usr/bin:/bin' };
+  const direct = f.invoke('PreToolUse', { tool_name: 'Bash',
+    tool_input: { command } }, sparse);
+  if (direct.hookSpecificOutput?.permissionDecision === 'deny') {
+    assert(direct.hookSpecificOutput.permissionDecisionReason.includes('launcher'),
+      'when Node is hidden, the hook guides Codex to its trusted launcher');
+    assert(!state().PREFLIGHT, 'a rejected direct Node command must not consume an attempt');
+  }
+  const granted = f.invoke('PreToolUse', { tool_name: 'Bash',
+    tool_input: { command: launchCommand } }, sparse);
+  assert(JSON.stringify(granted) === '{}', 'trusted launcher accepted regardless of hook Node PATH');
+  assert(state().PREFLIGHT.count === 1, 'one real protected preflight reservation');
+  assert(preflight(launchCommand).hookSpecificOutput?.permissionDecision === 'deny',
+    'preflight already reserved; no repeat attempts through the launcher');
+}
 // Advance only the synthetic REMOTE main tip. The task branch retains a
 // historically merged helper/reporter version until explicitly synchronized.
 const advanceSyntheticVerifierMain = (f, id) => {
