@@ -32,7 +32,7 @@ export default class LocalPreflightProgressReporter {
     // only in-process; never serialize assertion content into progress logs.
     const timedOut = state === 'failed' && (result?.errors ?? []).some(error =>
       /timeout/i.test(String(error?.name ?? '')) ||
-      /\\b(?:test|hook) timed out\\b/i.test(String(error?.message ?? '')));
+      /\b(?:test|hook) timed out\b/i.test(String(error?.message ?? '')));
     record('end', testCase, timedOut ? 'timed_out' :
       ['passed', 'failed', 'skipped', 'todo'].includes(state) ? state : 'incomplete');
   }
