@@ -176,12 +176,26 @@ def limited_preflight(command, root, state, tool_use_id=None):
         return "Only the exact bounded preflight command is permitted"
     if not shutil.which('node'):
         return "SKIP bounded preflight: node unavailable; no installation required"
-    # Both executable and reporter must be pristine merged framework sources.
+    # A task branch can legitimately retain a verifier from an older main.
+    # Pin trust to the *unique common ancestor* of this branch and origin/main,
+    # rather than the moving tip of origin/main. A feature-only modification
+    # (committed or uncommitted) must still fail closed. This is not a fallback
+    # that allows arbitrary local tools or unmerged framework patches.
+    baseline = run_git(["merge-base", "--all", "HEAD", "refs/remotes/origin/main"], root)
+    ancestors = baseline.stdout.splitlines() if baseline.returncode == 0 else []
+    if len(ancestors) != 1 or not re.fullmatch(r"[0-9a-f]{40}", ancestors[0]):
+        return ("Bounded verifier cannot establish one trusted origin/main "
+                "ancestor; operator bootstrap/fetch and branch diagnosis required")
+    trusted_commit = ancestors[0]
     for helper in ("tools/codex/limited-local-verification.mjs",
                    "tools/codex/local-preflight-progress-reporter.mjs"):
-        trusted = run_git(["show", f"origin/main:{helper}"], root)
-        if trusted.returncode or not (root / helper).is_file() or (root / helper).read_text() != trusted.stdout:
-            return "Bounded helper/reporters must equal merged origin/main"
+        trusted = run_git(["show", f"{trusted_commit}:{helper}"], root)
+        local = root / helper
+        if (trusted.returncode or not local.is_file() or local.is_symlink() or
+                local.read_text() != trusted.stdout):
+            return ("Bounded helper/reporters differ from trusted origin/main "
+                    "branch ancestry; integrate the merged framework through "
+                    "an operator-owned branch update, never bypass hooks")
     test = match.group(1)
     if test:
         path = root / test
