@@ -1365,6 +1365,38 @@ const preparePreflightHookFixture = ({ startTask = true } = {}) => {
   assert(preflight(launchCommand).hookSpecificOutput?.permissionDecision === 'deny',
     'preflight already reserved; no repeat attempts through the launcher');
 }
+// Even if no Node 22 exists anywhere, the trusted launcher leaves a genuine
+// authenticated SKIP rather than running tests or issuing a retry token.
+{
+  const { f, launcher, launchCommand, preflight, state } = preparePreflightHookFixture();
+  assert(JSON.stringify(f.claim()) === '{}', 'unavailable Node fixture owns its writer receipt');
+  f.dirty();
+  assert(JSON.stringify(preflight(launchCommand)) === '{}', 'launcher reserves only one attempt');
+  const python = mustRun('python3', ['-c', 'import sys; print(sys.executable)']).stdout.trim();
+  const modulePath = path.join(root, launcher);
+  const code = [
+    'import importlib.util,sys',
+    'spec=importlib.util.spec_from_file_location("preflight_launcher", ' + JSON.stringify(modulePath) + ')',
+    'module=importlib.util.module_from_spec(spec)',
+    'spec.loader.exec_module(module)',
+    'module.candidate_nodes=lambda: []',
+    'sys.argv=["launcher","test/affected.test.ts"]',
+    'raise SystemExit(module.main())',
+  ].join('; ');
+  const result = run(python, ['-c', code], { cwd: f.repository });
+  assert(result.status === 0 && result.stdout.includes('PFM_PREFLIGHT_RESULT '),
+    'launcher reports authenticated SKIP if Node is truly unavailable');
+  const reported = JSON.parse(result.stdout.split('PFM_PREFLIGHT_RESULT ')[1].trim());
+  assert(reported.status === 'SKIP' && reported.reason.includes('no tests executed') &&
+    reported.log === undefined && reported.progress === undefined,
+    'missing Node must not fabricate diagnostic paths or a PASS');
+  f.invoke('PostToolUse', { tool_name: 'Bash', tool_input: { command: launchCommand },
+    tool_response: { exit_code: 0, stdout: result.stdout } });
+  assert(state().PREFLIGHT.result.status === 'SKIP', 'host seals honest Node-unavailable result');
+  f.dirty();
+  assert(preflight(launchCommand).hookSpecificOutput?.permissionDecision === 'deny',
+    'Node-unavailable SKIP never authorizes a local rerun');
+}
 // Advance only the synthetic REMOTE main tip. The task branch retains a
 // historically merged helper/reporter version until explicitly synchronized.
 const advanceSyntheticVerifierMain = (f, id) => {
