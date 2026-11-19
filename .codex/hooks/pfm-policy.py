@@ -170,12 +170,21 @@ def preflight_patch(root, state):
 
 
 def limited_preflight(command, root, state, tool_use_id=None):
-    # Match literal text, not shell tokens: no wrappers, substitutions or flags.
-    match = re.fullmatch(r"node tools/codex/limited-local-verification\.mjs(?: (test/[A-Za-z0-9_/-]+\.test\.ts))?", command)
+    # Exact one-command transport: direct Node for normal PATHs, or an
+    # audited Python launcher when Codex's non-login shell hides installed Node.
+    # Neither path permits shell chaining, arbitrary flags or installations.
+    match = re.fullmatch(
+        r"(?:node tools/codex/limited-local-verification\.mjs|"
+        r"python3 tools/codex/limited-local-verification-launcher\.py)"
+        r"(?: (test/[A-Za-z0-9_/-]+\.test\.ts))?", command)
     if not match:
-        return "Only the exact bounded preflight command is permitted"
-    if not shutil.which('node'):
-        return "SKIP bounded preflight: node unavailable; no installation required"
+        return ("Only the exact bounded preflight command is permitted: "
+                "python3 tools/codex/limited-local-verification-launcher.py "
+                "[directly affected test/name.test.ts]")
+    if command.startswith("node ") and not shutil.which("node"):
+        return ("Codex PATH does not expose node; use the audited "
+                "python3 tools/codex/limited-local-verification-launcher.py "
+                "command instead (no test attempt reserved)")
     # A task branch may legitimately retain its already-merged verifier after
     # main advances, or receive an operator-reviewed framework-only update.
     # Trust ONLY one complete helper/reporter pair from either the unique
@@ -190,7 +199,8 @@ def limited_preflight(command, root, state, tool_use_id=None):
         return ("Bounded verifier cannot establish one trusted origin/main "
                 "ancestor/tip; operator bootstrap/fetch and branch diagnosis required")
     helper_paths = ("tools/codex/limited-local-verification.mjs",
-                    "tools/codex/local-preflight-progress-reporter.mjs")
+                    "tools/codex/local-preflight-progress-reporter.mjs",
+                    "tools/codex/limited-local-verification-launcher.py")
     local_tools = []
     for helper in helper_paths:
         local = root / helper
@@ -1674,7 +1684,10 @@ def post_tool(payload, root):
     command = str((payload.get("tool_input") or {}).get("command") or "")
     used = state.get("PREFLIGHT") or {}
     if (state.get("ACTIVE") and payload.get("tool_name") == "Bash" and
-            re.fullmatch(r"node tools/codex/limited-local-verification\.mjs(?: test/[A-Za-z0-9_/-]+\.test\.ts)?", command) and
+            re.fullmatch(
+                r"(?:node tools/codex/limited-local-verification\.mjs|"
+                r"python3 tools/codex/limited-local-verification-launcher\.py)"
+                r"(?: test/[A-Za-z0-9_/-]+\.test\.ts)?", command) and
             used.get("result", {}).get("status") == "INCOMPLETE"):
         used["result"] = observe_preflight_response(payload.get("tool_response"), state,
                                                      payload.get("tool_use_id"))

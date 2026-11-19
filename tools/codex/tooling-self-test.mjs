@@ -1198,6 +1198,65 @@ process.exit(${failure === 'unit' || failure.startsWith('unit-') ? 1 : 0});`);
   assert(result.status === 0 && result.stdout.includes('SKIP') && result.stdout.includes('no tests executed'),
     'unwritable sandbox diagnostic directory must skip without running a test');
 }
+// Codex may start with a non-login PATH that cannot see any Node executable.
+// A separately installed Node 22 under a supported user manager must still run
+// BOTH bounded compiler phases and the selected unit with no extra command.
+{
+  const directory = path.join(temp, 'bounded-launcher-sparse-path');
+  const nodeHome = path.join(temp, 'preflight-node-home');
+  const sparsePath = path.join(temp, 'preflight-sparse-path');
+  const nodeBin = path.join(nodeHome, '.nvm/versions/node/v22.0.0/bin');
+  for (const dest of [
+    path.join(directory, '.codex/runtime'),
+    path.join(directory, 'node_modules/typescript/bin'),
+    path.join(directory, 'node_modules/vitest'),
+    path.join(directory, 'tools/codex'),
+    sparsePath, nodeBin,
+  ]) fs.mkdirSync(dest, { recursive: true });
+  for (const file of ['tools/codex/limited-local-verification.mjs',
+                      'tools/codex/local-preflight-progress-reporter.mjs']) {
+    fs.copyFileSync(path.join(root, file), path.join(directory, file));
+  }
+  fs.symlinkSync(process.execPath, path.join(nodeBin, 'node'));
+  fs.writeFileSync(path.join(nodeBin, 'npm'), '#!/bin/sh\necho 10.9.9\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(directory, '.codex/logs'), 'protected sandbox path');
+  fs.writeFileSync(path.join(directory, 'package.json'), JSON.stringify({ scripts: {
+    typecheck: 'tsc --noEmit && tsc -p tsconfig.next.json',
+  } }));
+  fs.writeFileSync(path.join(directory, 'node_modules/typescript/bin/tsc'),
+    "console.log('tsc ' + process.argv.slice(2).join(' '));");
+  fs.writeFileSync(path.join(directory, 'node_modules/vitest/vitest.mjs'),
+    "console.log('unit ' + process.argv.slice(2).join(' '));");
+  const data = JSON.stringify({ ACTIVE: true, WORKTREE: directory,
+    AUTHORIZATION_ID: 'sparse-path', PREFLIGHT: {
+      count: 1, test: 'test/affected.test.ts', patch: 'a'.repeat(64), nonce: 'b'.repeat(32),
+    } });
+  fs.writeFileSync(path.join(directory, '.codex/runtime/owner.json'), data);
+  fs.writeFileSync(path.join(directory, '.codex/runtime/latest-task.json'), JSON.stringify({
+    path: 'owner.json', sha256: createHash('sha256').update(data).digest('hex'),
+  }));
+  const python = mustRun('python3', ['-c', 'import sys; print(sys.executable)']).stdout.trim();
+  const environment = { HOME: nodeHome, PATH: sparsePath };
+  assert(run('/bin/bash', ['-c', 'command -v node'], { cwd: directory, env: environment }).status !== 0,
+    'launcher fixture must reproduce Node absent from Codex shell PATH');
+  const invoked = run(python, [path.join(root, 'tools/codex/limited-local-verification-launcher.py'),
+    'test/affected.test.ts'], { cwd: directory, env: environment });
+  assert(invoked.status === 0 && invoked.stdout.includes('PFM_PREFLIGHT_RESULT '),
+    'trusted launcher must find installed Node without packages: status=' +
+      String(invoked.status) + ' stdout=' + String(invoked.stdout).slice(0,1500) +
+      ' stderr=' + String(invoked.stderr).slice(0,1500));
+  const report = JSON.parse(invoked.stdout.split('PFM_PREFLIGHT_RESULT ')[1].trim());
+  assert(report.status === 'PASS', 'existing Node22 runs both typecheck phases and selected unit');
+  const log = fs.readFileSync(path.join(directory, report.log), 'utf8');
+  assert(log.includes('tsc --noEmit') && log.includes('tsc -p tsconfig.next.json') &&
+    log.includes('unit run test/affected.test.ts'), 'bounded checks execute exactly once');
+  assert(fs.readFileSync(path.join(directory, '.codex/logs'), 'utf8') === 'protected sandbox path',
+    'PATH recovery does not require writing to protected receipts or logs');
+  const second = run(python, [path.join(root, 'tools/codex/limited-local-verification-launcher.py'),
+    'test/affected.test.ts'], { cwd: directory, env: environment });
+  assert(second.status === 0 && second.stdout.includes('"status":"SKIP"'),
+    'a consumed reservation cannot rerun tests even through the launcher');
+}
 // Per-test progress is append-only diagnostic evidence, not an acceptance gate.
 // Simulate a killed run: one completed case survives, the next stays incomplete.
 {
@@ -1251,10 +1310,12 @@ const preparePreflightHookFixture = ({ startTask = true } = {}) => {
   const f = recoveryFixture({ initial: "none" });
   const helper = 'tools/codex/limited-local-verification.mjs';
   const reporter = 'tools/codex/local-preflight-progress-reporter.mjs';
+  const launcher = 'tools/codex/limited-local-verification-launcher.py';
   const command = `node ${helper} test/affected.test.ts`;
+  const launchCommand = `python3 ${launcher} test/affected.test.ts`;
   fs.mkdirSync(path.join(f.repository, 'tools/codex'), { recursive: true });
   fs.mkdirSync(path.join(f.repository, 'test'));
-  for (const file of [helper, reporter]) {
+  for (const file of [helper, reporter, launcher]) {
     fs.copyFileSync(path.join(root, file), path.join(f.repository, file));
   }
   fs.writeFileSync(path.join(f.repository, 'test/affected.test.ts'),
@@ -1284,8 +1345,65 @@ const preparePreflightHookFixture = ({ startTask = true } = {}) => {
       tool_input: { command }, tool_response: { exit_code: exit,
         stdout: 'PFM_PREFLIGHT_RESULT ' + JSON.stringify(report) } });
   };
-  return { f, helper, reporter, command, preflight, state, post };
+  return { f, helper, reporter, launcher, command, launchCommand, preflight, state, post };
 };
+// A sparse PATH cannot prevent the hook from reserving the trusted launcher,
+// but the direct Node command should fail clearly before any reservation.
+{
+  const { f, command, launchCommand, preflight, state } = preparePreflightHookFixture();
+  assert(JSON.stringify(f.claim()) === '{}', 'existing task may claim scope before preflight');
+  f.dirty();
+  const sparseDir = path.join(temp, 'preflight-hook-sparse-bin');
+  fs.mkdirSync(sparseDir);
+  const python = mustRun('python3', ['-c', 'import sys; print(sys.executable)']).stdout.trim();
+  fs.symlinkSync(python, path.join(sparseDir, 'python3'));
+  fs.symlinkSync(realGit, path.join(sparseDir, 'git'));
+  const sparse = { PATH: sparseDir };
+  const direct = f.invoke('PreToolUse', { tool_name: 'Bash',
+    tool_input: { command } }, sparse);
+  assert(direct.hookSpecificOutput?.permissionDecision === 'deny' &&
+    direct.hookSpecificOutput.permissionDecisionReason.includes('launcher'),
+    'missing Node in hook PATH directs Codex to the launcher');
+  assert(!state().PREFLIGHT, 'a rejected direct Node command must not consume an attempt');
+  const granted = f.invoke('PreToolUse', { tool_name: 'Bash',
+    tool_input: { command: launchCommand } }, sparse);
+  assert(JSON.stringify(granted) === '{}', 'trusted launcher accepted regardless of hook Node PATH');
+  assert(state().PREFLIGHT.count === 1, 'one real protected preflight reservation');
+  assert(preflight(launchCommand).hookSpecificOutput?.permissionDecision === 'deny',
+    'preflight already reserved; no repeat attempts through the launcher');
+}
+// Even if no Node 22 exists anywhere, the trusted launcher leaves a genuine
+// authenticated SKIP rather than running tests or issuing a retry token.
+{
+  const { f, launcher, launchCommand, preflight, state } = preparePreflightHookFixture();
+  assert(JSON.stringify(f.claim()) === '{}', 'unavailable Node fixture owns its writer receipt');
+  f.dirty();
+  assert(JSON.stringify(preflight(launchCommand)) === '{}', 'launcher reserves only one attempt');
+  const python = mustRun('python3', ['-c', 'import sys; print(sys.executable)']).stdout.trim();
+  const modulePath = path.join(root, launcher);
+  const code = [
+    'import importlib.util,sys',
+    'spec=importlib.util.spec_from_file_location("preflight_launcher", ' + JSON.stringify(modulePath) + ')',
+    'module=importlib.util.module_from_spec(spec)',
+    'spec.loader.exec_module(module)',
+    'module.candidate_nodes=lambda: []',
+    'sys.argv=["launcher","test/affected.test.ts"]',
+    'raise SystemExit(module.main())',
+  ].join('; ');
+  const result = run(python, ['-c', code], { cwd: f.repository });
+  assert(result.status === 0 && result.stdout.includes('PFM_PREFLIGHT_RESULT '),
+    'launcher reports authenticated SKIP if Node is truly unavailable');
+  const reported = JSON.parse(result.stdout.split('PFM_PREFLIGHT_RESULT ')[1].trim());
+  assert(reported.status === 'SKIP' && reported.reason.includes('no tests executed') &&
+    reported.log === undefined && reported.progress === undefined,
+    'missing Node must not fabricate diagnostic paths or a PASS');
+  f.invoke('PostToolUse', { tool_name: 'Bash', tool_input: { command: launchCommand },
+    tool_response: { exit_code: 0, stdout: result.stdout } });
+  assert(state().PREFLIGHT.result.status === 'SKIP', 'host seals honest Node-unavailable result');
+  f.dirty();
+  assert(preflight(launchCommand).hookSpecificOutput?.permissionDecision === 'deny',
+    'Node-unavailable SKIP never authorizes a local rerun');
+}
 // Advance only the synthetic REMOTE main tip. The task branch retains a
 // historically merged helper/reporter version until explicitly synchronized.
 const advanceSyntheticVerifierMain = (f, id) => {
@@ -1380,6 +1498,17 @@ const advanceSyntheticVerifierMain = (f, id) => {
   assert(preflight(command).hookSpecificOutput?.permissionDecisionReason.includes('one trusted origin/main ancestor'),
     'missing or unverifiable local main history fails closed, never trusts arbitrary helper');
 }
+// A task-local edit to the launcher itself must never gain execution authority.
+{
+  const { f, launcher, launchCommand, preflight } = preparePreflightHookFixture();
+  assert(JSON.stringify(f.claim()) === '{}', 'launcher tamper fixture starts with approved writer');
+  f.dirty();
+  fs.appendFileSync(path.join(f.repository, launcher), '# unmerged launcher modification\\n');
+  const denied = preflight(launchCommand);
+  assert(denied.hookSpecificOutput?.permissionDecision === 'deny' &&
+    denied.hookSpecificOutput.permissionDecisionReason.includes('complete trusted'),
+    'unmerged launcher changes are rejected even if Node is otherwise discoverable');
+}
 // A no-log startup SKIP is still a protected SKIP, not an invented PASS.
 {
   const { f, command, preflight, state } = preparePreflightHookFixture();
@@ -1400,7 +1529,7 @@ const advanceSyntheticVerifierMain = (f, id) => {
     'startup SKIP cannot automatically rerun local tests');
 }
 {
-  const { f, helper, reporter, command, preflight, state } = preparePreflightHookFixture();
+  const { f, helper, reporter, launcher, launchCommand, command, preflight, state } = preparePreflightHookFixture();
   assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'prepared task cannot reserve preflight');
   assert(JSON.stringify(f.claim()) === '{}', 'first edit admits writer before preflight');
   assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'unaffected named file rejected');
@@ -1408,7 +1537,11 @@ const advanceSyntheticVerifierMain = (f, id) => {
   for (const unsafe of [`bash -c '${command}'`, `${command}; echo bypass`, `${command} && true`,
     `${command}\ntrue`, `${command} --passWithNoTests`, `npx ${helper}`,
     `node ${helper} test/../outside.test.ts`, `NODE_OPTIONS=--import=bad ${command}`,
-    `node ${helper} test/not-found.test.ts`, 'npm test', 'npm run codex:verify',
+    `node ${helper} test/not-found.test.ts`,
+    `python3 ${launcher} --illegal`, `python3 ${launcher} test/not-found.test.ts`,
+    `python3 ${launcher} test/../outside.test.ts`, `${launchCommand}; echo bypass`,
+    `NODE_OPTIONS=--import=bad ${launchCommand}`,
+    'npm test', 'npm run codex:verify',
     'npm run build:web', 'npx playwright test', 'npm ci']) {
     assert(preflight(unsafe).hookSpecificOutput?.permissionDecision === 'deny', `unsafe preflight denied: ${unsafe}`);
   }

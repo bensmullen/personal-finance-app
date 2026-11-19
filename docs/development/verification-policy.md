@@ -7,8 +7,15 @@
 
 Codex implementation and repair turns may optionally use the sole audited
 bounded helper after #218 merges (PM approval 2026-10-21):
-`node tools/codex/limited-local-verification.mjs`, optionally followed by one
-directly affected tracked `test/name.test.ts`. The hook verifies the named file
+`python3 tools/codex/limited-local-verification-launcher.py`, optionally
+followed by one directly affected tracked `test/name.test.ts`. The legacy
+exact `node tools/codex/limited-local-verification.mjs` invocation is still
+allowed when Codex's own PATH resolves Node. The audited Python launcher
+finds an already installed Node 22 (including standard macOS and supported
+user-managed locations), prepends its bin directory for npm, and replaces
+itself with the original helper process. Neither route installs dependencies;
+if Node is genuinely unavailable the launcher reports an authenticated SKIP
+before any test runs. The hook verifies the named file
 contains tests and either changed itself or directly imports changed source.
 It runs the complete package typecheck API (`tsc --noEmit` then
 `tsc -p tsconfig.next.json`) within 60 seconds total, then that unit file within
@@ -23,7 +30,7 @@ diagnostic logs and case-level progress. The separate PostToolUse hook seals
 the host-returned outcome in protected, hash-bound `.codex/runtime/` state;
 local diagnostic files are never acceptance or authorization receipts. No
 flags, wrappers, shell chaining, arbitrary test selection, installers or
-alternate runners. Both helper and progress reporter must together match **one complete trusted
+alternate runners. Launcher, helper and progress reporter must together match **one complete trusted
 version** from either the task branch's unique merged-main ancestor or the
 current merged `origin/main` tip. Long-lived worktrees may retain their
 original merged verifier as main advances, and a reviewer/operator may also
