@@ -25,7 +25,15 @@ export default class LocalPreflightProgressReporter {
   }
 
   onTestCaseResult(testCase) {
-    const state = testCase.result()?.state;
-    record('end', testCase, ['passed', 'failed', 'skipped', 'todo'].includes(state) ? state : 'incomplete');
+    const result = testCase.result();
+    const state = result?.state;
+    // Vitest's per-case timeout exits the file nonzero, but must not become an
+    // ordinary FAIL eligible for a corrective local rerun. Inspect messages
+    // only in-process; never serialize assertion content into progress logs.
+    const timedOut = state === 'failed' && (result?.errors ?? []).some(error =>
+      /timeout/i.test(String(error?.name ?? '')) ||
+      /\\b(?:test|hook) timed out\\b/i.test(String(error?.message ?? '')));
+    record('end', testCase, timedOut ? 'timed_out' :
+      ['passed', 'failed', 'skipped', 'todo'].includes(state) ? state : 'incomplete');
   }
 }
