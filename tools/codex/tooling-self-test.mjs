@@ -1226,53 +1226,122 @@ for (const dirty of [false, true]) {
   f.invoke('Stop', { last_assistant_message: 'TASK_STATUS: BLOCKED\nBLOCKER: owner done' });
   assert(fs.readFileSync(receipt, 'utf8') === before, 'idempotent old Stop cannot replace new owner');
 }
-{
+const preparePreflightHookFixture = () => {
   const f = recoveryFixture({ initial: "none" });
   const helper = 'tools/codex/limited-local-verification.mjs';
+  const reporter = 'tools/codex/local-preflight-progress-reporter.mjs';
   const command = `node ${helper} test/affected.test.ts`;
   fs.mkdirSync(path.join(f.repository, 'tools/codex'), { recursive: true });
   fs.mkdirSync(path.join(f.repository, 'test'));
-  fs.copyFileSync(path.join(root, helper), path.join(f.repository, helper));
-  // The bounded hook must accept an in-repository .js import and ignore an
-  // out-of-tree relative import even on Python 3.8 (no Path.is_relative_to).
+  for (const file of [helper, reporter]) {
+    fs.copyFileSync(path.join(root, file), path.join(f.repository, file));
+  }
   fs.writeFileSync(path.join(f.repository, 'test/affected.test.ts'),
     "import { value } from '../src/allowed.js';\nimport { outside } from '../../outside.js';\nit('affected', () => value);\n");
-  fs.appendFileSync(path.join(f.repository, '.gitignore'), '.codex/logs/\n');
+  fs.appendFileSync(path.join(f.repository, '.gitignore'), '.pfm-preflight/\n');
   f.git('add', '.'); f.git('commit', '-m', 'preflight fixture');
   f.git('update-ref', 'refs/remotes/origin/main', f.git('rev-parse', 'HEAD'));
   f.git('push', 'origin', 'codex/policy-self-test');
   assert(f.start().hookSpecificOutput, 'preflight fixture prepares from shared head');
-  const preflight = text => f.invoke('PreToolUse', { tool_name: 'Bash', tool_input: { command: text } });
+  const preflight = value => f.invoke('PreToolUse', { tool_name: 'Bash', tool_input: { command: value } });
+  const state = () => {
+    const pointer = JSON.parse(fs.readFileSync(path.join(f.repository, '.codex/runtime/latest-task.json')));
+    return JSON.parse(fs.readFileSync(path.join(f.repository, '.codex/runtime', pointer.path)));
+  };
+  const post = (status, overrides = {}, exit = status === 'FAIL' ? 1 : 0) => {
+    const now = state();
+    const used = now.PREFLIGHT;
+    const prefix = `.pfm-preflight/preflight-${now.AUTHORIZATION_ID}-${used.count}/`;
+    const report = {
+      schema: 1, authorization: now.AUTHORIZATION_ID, attempt: used.count,
+      patch: used.patch, nonce: used.nonce, test: used.test,
+      status, reason: 'synthetic runner observation',
+      log: prefix + 'runner.log', progress: prefix + 'progress.jsonl',
+      ...overrides,
+    };
+    return f.invoke('PostToolUse', { tool_name: 'Bash',
+      tool_input: { command }, tool_response: { exit_code: exit,
+        stdout: 'PFM_PREFLIGHT_RESULT ' + JSON.stringify(report) } });
+  };
+  return { f, helper, reporter, command, preflight, state, post };
+};
+{
+  const { f, helper, reporter, command, preflight, state } = preparePreflightHookFixture();
   assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'prepared task cannot reserve preflight');
   assert(JSON.stringify(f.claim()) === '{}', 'first edit admits writer before preflight');
   assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'unaffected named file rejected');
   f.dirty();
   for (const unsafe of [`bash -c '${command}'`, `${command}; echo bypass`, `${command} && true`,
-    `${command}\ntrue`, `${command} --passWithNoTests`, `npx ${helper}`, `node ${helper} test/../outside.test.ts`,
-    `NODE_OPTIONS=--import=bad ${command}`, `node ${helper} test/not-found.test.ts`,
-    'npm test', 'npm run codex:verify', 'npm run build:web', 'npx playwright test', 'npm ci']) {
+    `${command}\ntrue`, `${command} --passWithNoTests`, `npx ${helper}`,
+    `node ${helper} test/../outside.test.ts`, `NODE_OPTIONS=--import=bad ${command}`,
+    `node ${helper} test/not-found.test.ts`, 'npm test', 'npm run codex:verify',
+    'npm run build:web', 'npx playwright test', 'npm ci']) {
     assert(preflight(unsafe).hookSpecificOutput?.permissionDecision === 'deny', `unsafe preflight denied: ${unsafe}`);
   }
   for (const unsafe of ['gh run watch 123', 'gh pr checks 123 --watch', 'gh run view 123',
-    'node tools/ci/forecast-feasibility.mjs', 'node tools/codex/verify.mjs', 'npm run codex:tooling-test',
-    "bash -c 'npm test'", "sh -c 'npx tsc'"]) {
-    assert(preflight(unsafe).hookSpecificOutput?.permissionDecision === 'deny', `unbounded verification denied: ${unsafe}`);
+    'node tools/ci/forecast-feasibility.mjs', 'node tools/codex/verify.mjs',
+    'npm run codex:tooling-test', "bash -c 'npm test'", "sh -c 'npx tsc'"]) {
+    assert(preflight(unsafe).hookSpecificOutput?.permissionDecision === 'deny', `unbounded check denied: ${unsafe}`);
   }
-  assert(JSON.stringify(preflight(command)) === '{}', 'exact directly affected helper allowed');
+  assert(JSON.stringify(preflight(command)) === '{}', 'exact helper and direct test allowed');
   const skipped = mustRun(process.execPath, [path.join(f.repository, helper), 'test/affected.test.ts'], { cwd: f.repository });
-  assert(skipped.stdout.startsWith('SKIP preflight:'), 'missing environment skips clearly without installs');
-  const latest = JSON.parse(fs.readFileSync(path.join(f.repository, '.codex/runtime/latest-task.json')));
-  const state = JSON.parse(fs.readFileSync(path.join(f.repository, '.codex/runtime', latest.path)));
-  const receipt = path.join(f.repository, `.codex/logs/preflight-${state.AUTHORIZATION_ID}.json`);
-  assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'SKIP cannot authorize retry');
-  fs.writeFileSync(receipt, JSON.stringify({ status: 'FAIL', patch: state.PREFLIGHT.patch }));
-  assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'FAIL without correction cannot retry');
+  assert(skipped.stdout.includes('PFM_PREFLIGHT_RESULT ') &&
+    JSON.parse(skipped.stdout.split('PFM_PREFLIGHT_RESULT ')[1]).status === 'SKIP',
+    'missing dependencies skip without test execution');
+  f.invoke('PostToolUse', { tool_name: 'Bash', tool_input: { command },
+    tool_response: { exit_code: 0, stdout: skipped.stdout } });
+  assert(state().PREFLIGHT.result.status === 'SKIP', 'host-observed SKIP sealed in hook-owned receipt');
+  assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'SKIP cannot retry');
   f.dirty();
-  assert(JSON.stringify(preflight(command)) === '{}', 'one corrected FAIL retry allowed');
+  assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'changed patch cannot retry SKIP');
+  fs.appendFileSync(path.join(f.repository, reporter), '// unmerged edit\n');
+  assert(preflight(command).hookSpecificOutput?.permissionDecisionReason.includes('merged origin/main'),
+    'an edited reporter must be denied just like an edited helper');
+}
+{
+  const { f, command, preflight, state, post } = preparePreflightHookFixture();
+  f.claim(); f.dirty();
+  assert(JSON.stringify(preflight(command)) === '{}', 'new local attempt admitted');
+  post('FAIL');
+  assert(state().PREFLIGHT.result.status === 'FAIL', 'observed FAIL protected by hook');
+  const push = f.invoke('PreToolUse', { tool_name: 'Bash',
+    tool_input: { command: 'git push origin codex/policy-self-test' } });
+  assert(push.hookSpecificOutput?.permissionDecisionReason.includes('LOCAL_PREFLIGHT_FAILED'),
+    'actual local failure must block ordinary push');
+  const used = state().PREFLIGHT;
+  const dirname = path.join(f.repository, '.pfm-preflight', `preflight-${state().AUTHORIZATION_ID}-${used.count}`);
+  fs.mkdirSync(dirname, { recursive: true });
+  fs.writeFileSync(path.join(dirname, 'runner.log.summary.json'), JSON.stringify({ status: 'PASS' }));
+  assert(f.invoke('PreToolUse', { tool_name: 'Bash',
+    tool_input: { command: 'git push origin codex/policy-self-test' } })
+    .hookSpecificOutput?.permissionDecisionReason.includes('LOCAL_PREFLIGHT_FAILED'),
+    'sandbox-writable diagnostic file cannot forge a protected PASS');
   f.dirty();
-  assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'third invocation denied');
-  fs.appendFileSync(path.join(f.repository, helper), '// unmerged edit\n');
-  assert(preflight(command).hookSpecificOutput?.permissionDecisionReason.includes('merged origin/main'), 'unmerged helper refused');
+  assert(JSON.stringify(preflight(command)) === '{}', 'one changed-patch FAIL correction retry allowed');
+  post('TIMEOUT');
+  assert(state().PREFLIGHT.result.status === 'TIMEOUT', 'timeout is distinct from PASS or assertion FAIL');
+  f.dirty();
+  assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny',
+    'timed out local test may never trigger another local retry');
+}
+{
+  const { f, command, preflight, state, post } = preparePreflightHookFixture();
+  f.claim(); f.dirty();
+  assert(JSON.stringify(preflight(command)) === '{}', 'new attempt reserved');
+  post('PASS', { nonce: 'f'.repeat(32) });
+  assert(state().PREFLIGHT.result.status === 'INCOMPLETE', 'wrong nonce cannot forge a PASS');
+  f.dirty();
+  assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny',
+    'unobserved/invalid response never causes a local rerun');
+}
+{
+  const { f, command, preflight, state } = preparePreflightHookFixture();
+  f.claim(); f.dirty();
+  assert(JSON.stringify(preflight(command)) === '{}', 'new attempt reserved');
+  f.dirty();
+  assert(state().PREFLIGHT.result.status === 'INCOMPLETE' &&
+    preflight(command).hookSpecificOutput?.permissionDecision === 'deny',
+    'PostToolUse missing/interrupted still forbids local reruns');
 }
 {
   // Ordinary publication denies explicit local FAIL, never missing or SKIP results.
