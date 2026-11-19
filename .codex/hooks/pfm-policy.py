@@ -254,14 +254,21 @@ def actionable_preflight_failure(root, state):
             return None
     status = receipt.get("status")
     if (receipt.get("attempt") == used.get("count") and
-            receipt.get("patch") == used.get("patch") and
-            (status == "FAIL" or (used.get("prior_failure") and
-                status in ("TIMEOUT", "INCOMPLETE")))):
-        return ("LOCAL_PREFLIGHT_FAILED: bounded verification executed and failed; "
-                "correct the authorized patch and use the permitted bounded retry. "
-                "Do not silently skip a known failure. If the failure is outside "
-                "authorized scope, report TASK_STATUS: BLOCKED with evidence; "
-                "the checkpoint mechanism preserves partial work.")
+            receipt.get("patch") == used.get("patch")):
+        if used.get("prior_failure") and status in ("TIMEOUT", "INCOMPLETE"):
+            return ("LOCAL_PREFLIGHT_FAILED: an earlier executed FAIL remains unresolved; "
+                    "the one correction attempt timed out or was unobserved. "
+                    "No further local retry is permitted. Report TASK_STATUS: BLOCKED "
+                    "and preserve the checkpoint for reviewer investigation.")
+        if status == "FAIL":
+            if used.get("count", 0) >= 2 or receipt.get("timeout_observed"):
+                return ("LOCAL_PREFLIGHT_FAILED: executed checks failed; local retry "
+                        "budget is exhausted or a case timed out. Report TASK_STATUS: BLOCKED "
+                        "and preserve the checkpoint.")
+            return ("LOCAL_PREFLIGHT_FAILED: bounded verification executed and failed; "
+                    "correct the authorized patch and use the permitted single retry. "
+                    "Do not deliberately skip a known failure; if out of scope, "
+                    "report TASK_STATUS: BLOCKED and preserve the checkpoint.")
     return None
 
 
@@ -321,9 +328,15 @@ def observe_preflight_response(response, state, tool_use_id=None):
                 report.get("attempt") != used.get("count") or
                 report.get("patch") != used.get("patch") or
                 report.get("nonce") != used.get("nonce") or
-                report.get("test") != used.get("test") or
-                report.get("log") != prefix + "runner.log" or
-                report.get("progress") != prefix + "progress.jsonl"):
+                report.get("test") != used.get("test")):
+                continue
+            # Before any tests start, the log directory may be unavailable.
+            # An authenticated SKIP with neither path is still a real SKIP.
+            no_paths = report.get("log") is None and report.get("progress") is None
+            normal_paths = (report.get("log") == prefix + "runner.log" and
+                            report.get("progress") == prefix + "progress.jsonl")
+            if not normal_paths and not (status == "SKIP" and no_paths and
+                    "no tests executed" in str(report.get("reason") or "")):
                 continue
             if observed_exit is not None and ((status == "FAIL") != (observed_exit != 0)):
                 continue
