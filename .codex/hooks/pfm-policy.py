@@ -217,6 +217,7 @@ def limited_preflight(command, root, state, tool_use_id=None):
             except (OSError, ValueError):
                 previous = {"status": "INCOMPLETE"}
         if (used.get("count", 0) >= 2 or previous.get("status") != "FAIL" or
+                previous.get("timeout_observed", False) or
                 previous.get("patch", used.get("patch")) != used.get("patch") or
                 fingerprint == used.get("patch") or test != used.get("test")):
             return ("Only a corrected, observed FAIL permits one local retry. "
@@ -326,7 +327,11 @@ def observe_preflight_response(response, state, tool_use_id=None):
                 continue
             if observed_exit is not None and ((status == "FAIL") != (observed_exit != 0)):
                 continue
+            timeout_observed = report.get("timeoutObserved", False)
+            if type(timeout_observed) is not bool or (timeout_observed and status not in ("FAIL", "TIMEOUT")):
+                continue
             return {"status": status, "patch": used["patch"], "attempt": used["count"],
+                    "timeout_observed": timeout_observed,
                     "reason": str(report.get("reason") or "")[:200],
                     "log": report["log"], "progress": report["progress"]}
     return fallback
