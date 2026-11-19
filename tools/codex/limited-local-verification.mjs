@@ -152,7 +152,7 @@ if (fd !== undefined) {
       let timeoutObserved = third === 'TIMEOUT';
       if (third === 'FAIL' && second === 'PASS' && args[0]) {
         try {
-          const events = readFileSync(progressPath, 'utf8').trim().split('\\n')
+          const events = readFileSync(progressPath, 'utf8').trim().split('\n')
             .filter(Boolean).map(line => JSON.parse(line));
           timeoutObserved = events.some(event => event.phase === 'end' && event.status === 'timed_out');
           // If only Vitest timeout cases failed, they are incomplete rather
