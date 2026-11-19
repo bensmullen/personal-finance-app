@@ -521,10 +521,10 @@ export const registerSsaMedicareSourceAuthority = (qualify: NonNullable<typeof s
 export const isSsaMedicareAuthorityParticipant = (participant: object): boolean => ownsSsaMedicareParticipant?.(participant) === true;
 /** Bounded composition-root ports. Factories install private identity
  * predicates once, never a participant ID or codec declaration. */
-type HouseholdCallbackOwner = "fsa" | "card" | "heloc_servicing" | "medicare_bank" | "aftertax_premiums" | "retirement_cash" | "heloc_draws";
+type HouseholdCallbackOwner = "fsa" | "card" | "heloc_servicing" | "medicare_bank" | "aftertax_premiums" | "retirement_cash" | "heloc_draws" | "tax";
 const householdCallbackOwners = new Map<HouseholdCallbackOwner, (participant: object) => boolean>();
 const callbackOwnerNames: readonly HouseholdCallbackOwner[] = Object.freeze([
-  "fsa", "card", "heloc_servicing", "medicare_bank", "aftertax_premiums", "retirement_cash", "heloc_draws",
+  "fsa", "card", "heloc_servicing", "medicare_bank", "aftertax_premiums", "retirement_cash", "heloc_draws", "tax",
 ]);
 export const registerHouseholdCallbackOwner = (owner: HouseholdCallbackOwner, owns: (participant: object) => boolean): void => {
   if (!callbackOwnerNames.includes(owner) || householdCallbackOwners.has(owner))
