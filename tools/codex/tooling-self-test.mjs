@@ -1210,8 +1210,13 @@ process.exit(${failure === 'unit' || failure.startsWith('unit-') ? 1 : 0});`);
     path.join(directory, '.codex/runtime'),
     path.join(directory, 'node_modules/typescript/bin'),
     path.join(directory, 'node_modules/vitest'),
+    path.join(directory, 'tools/codex'),
     sparsePath, nodeBin,
   ]) fs.mkdirSync(dest, { recursive: true });
+  for (const file of ['tools/codex/limited-local-verification.mjs',
+                      'tools/codex/local-preflight-progress-reporter.mjs']) {
+    fs.copyFileSync(path.join(root, file), path.join(directory, file));
+  }
   fs.symlinkSync(process.execPath, path.join(nodeBin, 'node'));
   fs.writeFileSync(path.join(nodeBin, 'npm'), '#!/bin/sh\necho 10.9.9\n', { mode: 0o755 });
   fs.writeFileSync(path.join(directory, '.codex/logs'), 'protected sandbox path');
