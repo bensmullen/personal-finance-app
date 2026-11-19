@@ -1131,7 +1131,7 @@ assert single(dict(hook_event_name='UserPromptSubmit', session_id='third', turn_
 const taskSkill = fs.readFileSync(path.join(root, ".agents/skills/pfm-pr-task/SKILL.md"), "utf8");
 // Exercise the sandbox-safe helper with synthetic process shims. No real
 // compiler/test suite or package installation is run by these fixtures.
-for (const failure of ['none', 'typecheck', 'unit']) {
+for (const failure of ['none', 'typecheck', 'unit', 'unit-timeout', 'unit-mixed']) {
   const directory = path.join(temp, `bounded-helper-${failure}`);
   for (const sub of ['.codex/runtime', 'node_modules/typescript/bin', 'node_modules/vitest']) {
     fs.mkdirSync(path.join(directory, sub), { recursive: true });
@@ -1144,8 +1144,17 @@ for (const failure of ['none', 'typecheck', 'unit']) {
   } }));
   fs.writeFileSync(path.join(directory, 'node_modules/typescript/bin/tsc'),
     `console.log('tsc', process.argv.slice(2).join(' ')); process.exit(${failure === 'typecheck' ? 1 : 0});`);
+  const progressCases = failure === 'unit-timeout'
+    ? JSON.stringify({ phase: 'end', status: 'timed_out', id: 'one' }) + '\n'
+    : failure === 'unit-mixed' ? [
+      JSON.stringify({ phase: 'end', status: 'timed_out', id: 'one' }),
+      JSON.stringify({ phase: 'end', status: 'failed', id: 'two' }),
+    ].join('\n') + '\n' : '';
   fs.writeFileSync(path.join(directory, 'node_modules/vitest/vitest.mjs'),
-    `console.log('unit', process.argv.slice(2).join(' ')); process.exit(${failure === 'unit' ? 1 : 0});`);
+    `import { appendFileSync } from 'node:fs';
+console.log('unit', process.argv.slice(2).join(' '));
+if (process.env.PFM_PREFLIGHT_PROGRESS) appendFileSync(process.env.PFM_PREFLIGHT_PROGRESS, ${JSON.stringify(progressCases)});
+process.exit(${failure === 'unit' || failure.startsWith('unit-') ? 1 : 0});`);
   const data = JSON.stringify({ ACTIVE: true, WORKTREE: directory, AUTHORIZATION_ID: 'helper-test',
     PREFLIGHT: { count: 1, test: 'test/affected.test.ts', patch: 'a'.repeat(64), nonce: 'b'.repeat(32) } });
   fs.writeFileSync(path.join(directory, '.codex/runtime/owner.json'), data);
@@ -1154,9 +1163,12 @@ for (const failure of ['none', 'typecheck', 'unit']) {
   }));
   const result = run(process.execPath, [path.join(root, 'tools/codex/limited-local-verification.mjs'),
     'test/affected.test.ts'], { cwd: directory });
-  assert(result.status === (failure === 'none' ? 0 : 1), 'bounded helper preserves process failure');
+  const expected = failure === 'none' ? 'PASS' : failure === 'unit-timeout' ? 'TIMEOUT' : 'FAIL';
+  assert(result.status === (expected === 'FAIL' ? 1 : 0), 'bounded helper preserves process failure and classifies case timeout');
   const outcome = JSON.parse(result.stdout.split('PFM_PREFLIGHT_RESULT ')[1]?.trim() ?? 'null');
-  assert(outcome?.status === (failure === 'none' ? 'PASS' : 'FAIL'), 'compact truthful host result');
+  assert(outcome?.status === expected, 'compact truthful host result');
+  assert(outcome.timeoutObserved === failure.startsWith('unit-'),
+    'case timeout is explicit even when mixed with a separate assertion FAIL');
   const log = fs.readFileSync(path.join(directory, outcome.log), 'utf8');
   assert(log.includes('tsc --noEmit'), 'first complete project typecheck');
   assert(log.includes('tsc -p tsconfig.next.json') === (failure !== 'typecheck'), 'second project checked after first passes');
