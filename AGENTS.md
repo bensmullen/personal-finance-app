@@ -226,7 +226,7 @@ Codex implementation/repair turns may invoke only the audited optional helper
 on a directly affected tracked test. It runs complete typecheck (60 seconds
 maximum) and at most one selected unit file (30 seconds maximum), with at most
 one correction retry after a hook-observed FAIL on a changed patch.
-A TIMEOUT, SKIP, missing result or interrupted invocation may NEVER cause a
+A process-level or individual Vitest-case TIMEOUT, SKIP, missing result or interrupted invocation may NEVER cause a
 local retry, even if some test cases already completed. Tests run only once per
 approved attempt. Node/dependencies unavailable is SKIP; bounded timeout is
 TIMEOUT/INCOMPLETE, not a PASS or a test assertion FAIL. No attempted local
