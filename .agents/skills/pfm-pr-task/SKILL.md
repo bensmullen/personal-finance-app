@@ -127,7 +127,7 @@ conditions when useful. Their exact headings are not parser requirements.
   acceptance.
 - All other local tests, builds, validators, E2E, benchmarks, dev servers and
   performance captures remain prohibited. Do not run the helper during its own framework implementation turn; the hook
-  requires helper and reporter to match a complete, identical version from
+  requires launcher, helper and reporter to match a complete, identical version from
   either the branch's unique merged-main ancestor or current merged main tip.
   Mixed versions and unmerged task edits are denied. An older worktree may
   receive the complete latest merged hook/helper/reporter as a separately
