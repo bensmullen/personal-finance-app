@@ -176,12 +176,39 @@ def limited_preflight(command, root, state, tool_use_id=None):
         return "Only the exact bounded preflight command is permitted"
     if not shutil.which('node'):
         return "SKIP bounded preflight: node unavailable; no installation required"
-    # Both executable and reporter must be pristine merged framework sources.
-    for helper in ("tools/codex/limited-local-verification.mjs",
-                   "tools/codex/local-preflight-progress-reporter.mjs"):
-        trusted = run_git(["show", f"origin/main:{helper}"], root)
-        if trusted.returncode or not (root / helper).is_file() or (root / helper).read_text() != trusted.stdout:
-            return "Bounded helper/reporters must equal merged origin/main"
+    # A task branch may legitimately retain its already-merged verifier after
+    # main advances, or receive an operator-reviewed framework-only update.
+    # Trust ONLY one complete helper/reporter pair from either the unique
+    # branch/main ancestor or the current merged main tip, never arbitrary
+    # local tool edits or a mixture of versions from different commits.
+    baseline = run_git(["merge-base", "--all", "HEAD", "refs/remotes/origin/main"], root)
+    ancestors = baseline.stdout.splitlines() if baseline.returncode == 0 else []
+    tip = run_git(["rev-parse", "--verify", "refs/remotes/origin/main^{commit}"], root)
+    main_tip = tip.stdout.strip() if tip.returncode == 0 else ""
+    if (len(ancestors) != 1 or not re.fullmatch(r"[0-9a-f]{40}", ancestors[0]) or
+            not re.fullmatch(r"[0-9a-f]{40}", main_tip)):
+        return ("Bounded verifier cannot establish one trusted origin/main "
+                "ancestor/tip; operator bootstrap/fetch and branch diagnosis required")
+    helper_paths = ("tools/codex/limited-local-verification.mjs",
+                    "tools/codex/local-preflight-progress-reporter.mjs")
+    local_tools = []
+    for helper in helper_paths:
+        local = root / helper
+        if not local.is_file() or local.is_symlink():
+            return ("Bounded helper/reporter is missing or unsafe in this "
+                    "worktree; operator-owned merged framework synchronization required")
+        local_tools.append(local.read_text())
+    trusted_versions = tuple(dict.fromkeys((ancestors[0], main_tip)))
+    def matches_merged_pair(commit):
+        for helper, contents in zip(helper_paths, local_tools):
+            trusted = run_git(["show", f"{commit}:{helper}"], root)
+            if trusted.returncode or trusted.stdout != contents:
+                return False
+        return True
+    if not any(matches_merged_pair(commit) for commit in trusted_versions):
+        return ("Bounded helper/reporter pair is not one complete trusted "
+                "origin/main version; operator-owned reviewed framework "
+                "synchronization required, never bypass hooks")
     test = match.group(1)
     if test:
         path = root / test
