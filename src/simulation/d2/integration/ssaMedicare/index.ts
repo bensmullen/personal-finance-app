@@ -1,6 +1,6 @@
 import { accountingTransactionId, type AccountId } from "../../../../accounting/index.js";
 import { ValidationError } from "../../../../diagnostics/index.js";
-import { domainId } from "../../../../identity/index.js";
+import { domainId, idempotencyKey } from "../../../../identity/index.js";
 import { calculationTraceId, calculationTraceRef } from "../../../../lineage/index.js";
 import type { SsaDeductionSource, SsaMedicareDeductionTerms, SsaPayableEvidence, SettlementDraft } from "../../../../semantics/settlement.js";
 import { applySsaMedicarePaymentAtomically, cloneAuthoritativeState, isNativeSsaMedicareOriginalInput,
@@ -8,7 +8,7 @@ import { applySsaMedicarePaymentAtomically, cloneAuthoritativeState, isNativeSsa
   type SsaMedicarePaymentInput, type SsaMedicarePaymentRecord } from "../../../../state/index.js";
 import { instant, type Instant } from "../../../../time/index.js";
 import { Money, USD } from "../../../../values/index.js";
-import { applyHouseholdExecutionOverlay, runHouseholdKernel, type CompiledHouseholdKernel,
+import { applyHouseholdExecutionOverlay, householdPreparationAttempt, runHouseholdKernel, type CompiledHouseholdKernel,
   type HouseholdKernelParticipant } from "../../../householdExecution.js";
 import { immutableConfiguration } from "../../../r3/compiledHousehold.js";
 import { registerHouseholdParticipantCodec } from "../../../r3/participantCodec.js";
@@ -59,13 +59,17 @@ export interface SsaMedicareInput {
   readonly nativePayments?: readonly NativeSsaMedicareOccurrence[];
 }
 const id = "d2_ssa_medicare";
+const ownedParticipants = new WeakSet<object>();
 const boundToRun = (source: NativeSsaMedicareOriginalInput["context"], context: RunContext): boolean =>
   source.runId === context.runId && source.asOf === context.asOf && source.dataCutoff === context.dataCutoff;
 function verifyDistinctWages(wages: readonly RecurringIncomeStream[], q: SsaMedicarePaymentFacts, context: RunContext): void {
-  const p = q.payable;
+  recheckDistinctWages(wages, q.payable, q.originalSources !== undefined, context);
+}
+function recheckDistinctWages(wages: readonly RecurringIncomeStream[], p: SsaPayableEvidence,
+  hasOriginals: boolean, context: RunContext): void {
   for (const wage of wages) {
     if (wage.ownerId !== p.recipientId || wage.start > p.paymentAt || wage.end !== undefined && wage.end <= p.paymentAt) continue;
-    if (q.originalSources === undefined) fail("SSA_EXCLUSIVE_REPRESENTATION_REQUIRED", "Wage exclusivity requires independently authenticated SSA originals");
+    if (!hasOriginals) fail("SSA_EXCLUSIVE_REPRESENTATION_REQUIRED", "Wage exclusivity requires independently authenticated SSA originals");
     if (wage.householdWageSource === undefined) fail("SSA_EXCLUSIVE_REPRESENTATION_REQUIRED", "Independent employer original required");
     try {
       qualifyDistinctWage(wage.householdWageSource!, wageStreamOriginal(wage), { runId: context.runId, asOf: context.asOf, dataCutoff: context.dataCutoff,
@@ -121,13 +125,14 @@ export function createSsaMedicareParticipant(configuration: SsaMedicareInput): H
     fail("SSA_DUPLICATE_PAYMENT", "Native events require distinct source identities and admitted recipients");
   const dueByMonth = new Map<string, NativeSsaMedicareOccurrence[]>();
   const liveSourceChecks = new WeakMap<SsaMedicarePaymentRecord, () => void>();
+  const admittedOpenings = new WeakSet<object>();
   for (const event of events) {
     instant(event.eventAt);
     const month = event.eventAt.slice(0, 7);
     const due = dueByMonth.get(month) ?? [];
     due.push(event); dueByMonth.set(month, due);
   }
-  return Object.freeze({ id, version: "ssa-medicare/v1", portableCodec: "d2-ssa-medicare/v1", economicInputs: input,
+  const participant = Object.freeze({ id, version: "ssa-medicare/v1", portableCodec: "d2-ssa-medicare/v1", economicInputs: input,
     prepare: (context, period, opening, work = [], tier = "detail") => {
       const seen = new Set<string>();
       const operations: ReturnType<HouseholdKernelParticipant["prepare"]>["operations"][number][] = [];
@@ -137,18 +142,22 @@ export function createSsaMedicareParticipant(configuration: SsaMedicareInput): H
       // untracked roots still authenticate every original through that validator.
       // Replay's explicit source-history entry point remains exhaustive.
       validateAuthoritativeState(opening.state);
-      const history = Object.values(opening.state.ssaMedicarePayments ?? {});
+      const attempt = householdPreparationAttempt(opening);
+      const indexedNativeHistory = attempt?.hasExternalParticipants === false && input.payments.length === 0 && admittedOpenings.has(attempt);
+      const history = indexedNativeHistory ? [] : Object.values(opening.state.ssaMedicarePayments ?? {});
       const byPaymentId = new Map(history.map(receipt => [receipt.payable.paymentId, receipt]));
       for (const receipt of history) {
         if (isNativeSsaMedicareOriginalInput(receipt.sourceInputs)) {
           if (receipt.payable.paymentAt >= period.start)
             fail("SSA_CHANGED_PAYMENT", "Period opening contains a current or future native SSA installment");
           const source = receipt.sourceInputs as NativeSsaMedicareOriginalInput;
-          // An unchanged receipt can reuse evaluator results within its own
-          // run, but still reads every original again before preparing work.
-          const check = boundToRun(source.context, context) ? liveSourceChecks.get(receipt) : undefined;
+          const sameRun = boundToRun(source.context, context);
+          // This run already admitted the posting and will reobserve it at
+          // release. Independent direct preparation still reads originals.
+          if (attempt !== undefined && sameRun) continue;
+          const check = sameRun ? liveSourceChecks.get(receipt) : undefined;
           if (check) check();
-          else validateNativeSsaMedicareReceipt(receipt, context, boundToRun(source.context, context)
+          else validateNativeSsaMedicareReceipt(receipt, context, sameRun
             ? verify => liveSourceChecks.set(receipt, verify) : undefined);
           continue;
         }
@@ -156,6 +165,7 @@ export function createSsaMedicareParticipant(configuration: SsaMedicareInput): H
         if (!knownBy(q, context.dataCutoff) || q.originalSources !== undefined && q.originalSources.dataCutoff !== context.dataCutoff)
           fail("SSA_SOURCE_NOT_ADMITTED", "Committed payment source cutoff differs from the current run");
       }
+      if (attempt !== undefined) admittedOpenings.add(attempt);
       const due = (dueByMonth.get(period.start.slice(0, 7)) ?? []).filter(event => event.eventAt >= period.start && event.eventAt < period.end);
       const planned: { q: SsaMedicarePaymentFacts; native?: SsaMedicarePaymentInput }[] = input.payments.map(q => ({ q }));
       for (const event of due) {
@@ -168,6 +178,8 @@ export function createSsaMedicareParticipant(configuration: SsaMedicareInput): H
         if (seen.has(q.payable.paymentId)) fail("SSA_DUPLICATE_PAYMENT", "Duplicate SSA payment identity in input");
         seen.add(q.payable.paymentId);
         const prior = byPaymentId.get(q.payable.paymentId);
+        if (indexedNativeHistory && opening.state.identities.externalIdempotencyKeys.includes(idempotencyKey("ssa-medicare:payment", q.payable.paymentId)))
+          fail("SSA_CHANGED_PAYMENT", "A native SSA installment cannot post twice");
         if (prior && (!same(prior.sourceInputs, native?.sourceInputs ?? q) || native !== undefined)) fail("SSA_CHANGED_PAYMENT", "Committed payment source/amount/version/account cannot change or post twice");
         if (q.payable.paymentAt < period.start || q.payable.paymentAt >= period.end) continue;
         if (!members.includes(q.payable.recipientId)) fail("SSA_SOURCE_NOT_ADMITTED", "Recipient absent from explicit household roster");
@@ -254,18 +266,20 @@ export function createSsaMedicareParticipant(configuration: SsaMedicareInput): H
       return runtime;
     },
   } satisfies HouseholdKernelParticipant);
+  ownedParticipants.add(participant);
+  return participant;
 }
 registerHouseholdParticipantCodec({ codec: "d2-ssa-medicare/v1", restore: value => {
   const input = value as SsaMedicareInput;
   for (const q of input.payments) qualifySsaMedicarePayment(q, input.householdId, q.payable.recipientId);
   return createSsaMedicareParticipant(input);
 } });
-registerSsaMedicareSourceAuthority(value => {
-  if (isNativeSsaMedicareOriginalInput(value)) return qualifyNativeSsaMedicareInput(value as NativeSsaMedicareOriginalInput).payment;
+registerSsaMedicareSourceAuthority((value, observation) => {
+  if (isNativeSsaMedicareOriginalInput(value)) return qualifyNativeSsaMedicareInput(value as NativeSsaMedicareOriginalInput, observation).payment;
   const q = value as ConfirmedSsaMedicarePayment;
   if (!q?.payable) return fail("SSA_MEDICARE_SOURCE_INCOMPLETE", "Raw coordinated source inputs required; a receipt is not source authority");
   return qualifySsaMedicarePayment(q, q.payable.householdId, q.payable.recipientId);
-});
+}, participant => ownedParticipants.has(participant));
 
 export function attachSsaMedicare(kernel: CompiledHouseholdKernel, input: SsaMedicareInput) {
   const wages = kernel.executable.cashFlowInput?.incomes ?? [];
@@ -347,11 +361,14 @@ export function validateSsaMedicareReplayHistory(
   participants: readonly HouseholdKernelParticipant[] | undefined, opening: AuthoritativeState,
   context: RunContext, checkpoints: readonly { readonly at: Instant; readonly state: AuthoritativeState }[],
   terminal: { readonly at: Instant; readonly state: AuthoritativeState }, cashFlow?: VerticalSlice2Input,
-): void {
+): () => void {
   const participant = participants?.find(p => p.id === id);
   const input = participant?.economicInputs as SsaMedicareInput | undefined;
   const events = input?.nativePayments ?? [];
   const inherited = new Map<string, SsaMedicarePaymentRecord>(), expected = new Set<string>();
+  const wages = cashFlow?.incomes ?? [];
+  const wageChecks: SsaPayableEvidence[] = [];
+  const legacy: SsaMedicarePaymentRecord[] = [];
   for (const receipt of Object.values(opening.ssaMedicarePayments ?? {})) {
     if (!isNativeSsaMedicareOriginalInput(receipt.sourceInputs)) continue;
     if (receipt.payable.paymentAt >= context.simulationStart)
@@ -390,7 +407,8 @@ export function validateSsaMedicareReplayHistory(
           stream.sourceTraceRefs?.some(ref => raw.c2.premiums.coverages.some(coverage =>
             ref.traceId === coverage.id || ref.traceId === coverage.quote.quoteId))))
         fail("SSA_EXCLUSIVE_REPRESENTATION_REQUIRED", "Restored income or premium stream overlaps source-qualified SSA");
-      verifyDistinctWages(cashFlow?.incomes ?? [], raw, context);
+      verifyDistinctWages(wages, raw, context);
+      if (wages.length > 0) wageChecks.push(qualified.payable);
       const proof = frontier.state.d2PostedTransactions?.[accountingTransactionId(event.eventId)];
       if (!receipt || receipt.version !== "ssa-medicare-payment/v3" || !same(receipt.sourceInputs, source) ||
         proof?.registration.kind !== "ssa_medicare_payment" || proof.registration.paymentKey !== key ||
@@ -404,8 +422,19 @@ export function validateSsaMedicareReplayHistory(
     }
   }
   for (const receipt of Object.values(terminal.state.ssaMedicarePayments ?? {})) {
-    if (!isNativeSsaMedicareOriginalInput(receipt.sourceInputs)) validateLegacySsaMedicareReceipt(receipt, context.dataCutoff);
+    if (!isNativeSsaMedicareOriginalInput(receipt.sourceInputs)) {
+      validateLegacySsaMedicareReceipt(receipt, context.dataCutoff);
+      legacy.push(receipt);
+    }
     else if (!expected.has(receipt.id) && !inherited.has(receipt.id))
       fail("SSA_CHANGED_PAYMENT", "Committed native SSA payment falls outside the qualified frontier");
   }
+  // Valid only alongside a fresh observation of this same immutable terminal
+  // journal. That observation rebuilds every admitted native receipt from its
+  // current SSA, Medicare and BANK publishers. Due-event completeness and
+  // stream overlap are structural once the exact receipts have been bound.
+  return () => {
+    for (const payable of wageChecks) recheckDistinctWages(wages, payable, true, context);
+    for (const receipt of legacy) validateLegacySsaMedicareReceipt(receipt, context.dataCutoff);
+  };
 }

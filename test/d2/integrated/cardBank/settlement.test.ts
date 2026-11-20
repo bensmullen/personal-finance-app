@@ -55,9 +55,8 @@ describe("#203 real issuer-quoted charges and BANK settlement", () => {
     const r = qualified(), state = opening();
     applyAccountingTransactionAtomically(state, r.originalTransaction, { ...d2SettlementPostingRegistration(r, "original"), operationId: "wrong-operation" });
     const before = canonicalSerialize(state), f = fixture(2, state);
-    const result = runHouseholdKernel({ kernel: f.kernel, runContext: f.context });
-    expect(result.periods).toHaveLength(0);
-    expect(result.diagnostics.some(d => d.code === "CARD_BANK_SOURCE_CONFLICT")).toBe(true);
+    expect(() => runHouseholdKernel({ kernel: f.kernel, runContext: f.context }))
+      .toThrow("Person BANK original unavailable at outward observation");
     expect(canonicalSerialize(state)).toBe(before);
   });
   it("rejects a changed payment, allocation, or receipt even if its hash is copied", () => {

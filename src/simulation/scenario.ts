@@ -22,7 +22,7 @@ import {
   validateRuleBinding,
   type FinancialRuleId,
 } from "../rules/index.js";
-import type { AuthoritativeState } from "../state/index.js";
+import { observeAuthoritativeSourceHistory, type AuthoritativeState } from "../state/index.js";
 import {
   instant,
   subtractMilliseconds,
@@ -1611,5 +1611,13 @@ export const compareVerticalSlice3Scenarios = (
   compare(request, applyVerticalSlice3Scenario, runVerticalSlice3, vs3Metrics);
 export const compareVerticalSlice4Scenarios = (
   request: ScenarioComparisonRequest<VerticalSlice4Input>,
-): ScenarioComparisonResult =>
-  compare(request, applyVerticalSlice4Scenario, runVerticalSlice4, vs4Metrics);
+): ScenarioComparisonResult => {
+  const histories: { state: AuthoritativeState; context: RunContext }[] = [];
+  const comparison = compare(request, applyVerticalSlice4Scenario, args => {
+    const result = runVerticalSlice4(args);
+    histories.push({ state: result.state, context: args.runContext });
+    return result;
+  }, vs4Metrics);
+  for (const { state, context } of histories) observeAuthoritativeSourceHistory(state, context);
+  return comparison;
+};

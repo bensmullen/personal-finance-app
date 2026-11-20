@@ -5,6 +5,7 @@ import { canonicalSerialize } from "../../../../src/simulation/run.js";
 import { qualifyRetirementRawSource } from "../../../../src/simulation/d2/integration/retirementCash/source.js";
 import { instant } from "../../../../src/time/index.js";
 import { fundedHousehold, reads, sources } from "./fundedScenario.js";
+import { expectRetirementReplayRejection } from "./sourceHistoryEfficiency/retirementReplayRejection.js";
 
 const path = process.env.PFM_S8_FUNDED_PAYLOAD;
 if (!path) throw new Error("S8_FUNDED_PAYLOAD_MISSING");
@@ -14,6 +15,8 @@ if (months !== 13 && months !== 25) throw new Error("S8_FUNDED_HORIZON_INVALID")
 // artifact bytes. Only the requested bounded horizon comes from the launcher.
 const s = fundedHousehold({ months });
 const mode = process.env.PFM_S8_FUNDED_SOURCE_MODE ?? "present";
+const unavailableRetirement = mode === "absent" || mode === "tampered";
+const posted = unavailableRetirement ? s.run() : undefined;
 if (mode === "missing_employer") s.wages.source.mode = "missing";
 if (mode === "changed_wage_bank") s.wages.source.mode = "bank_owner";
 if (mode === "absent") sources.delete(s.raw[0]!.sourceId);
@@ -25,6 +28,17 @@ const raw = sources.get(s.raw[0]!.sourceId);
 const qualification = raw && qualifyRetirementRawSource(raw, raw.cash.withdrawals.requests[0]!.operationId, s.context);
 if (mode === "present" && qualification?.status !== "qualified") throw new Error("S8_PUBLISHER_UNQUALIFIED");
 const { artifact, selected } = JSON.parse(readFileSync(path, "utf8"));
+if (posted) {
+  const rmd = s.satisfaction(posted.state);
+  const newPosting = s.run();
+  const readsBeforeRestore = reads;
+  const rejected = expectRetirementReplayRejection(() => restorePortableHouseholdReplayArtifact(artifact));
+  process.stdout.write(JSON.stringify({ rejected, publisherRead: reads > readsBeforeRestore,
+    qualification: qualification?.status ?? "unavailable", coverage: rmd.coverage,
+    satisfied: rmd.annual?.obligations.map(o => o.satisfied.amount.toString()) ?? null,
+    newPosting: { periods: newPosting.periods.length, state: canonicalSerialize(newPosting.state) } }));
+  process.exit(0);
+}
 let restored: ReturnType<typeof restorePortableHouseholdReplayArtifact>;
 try { restored = restorePortableHouseholdReplayArtifact(artifact); }
 catch (error) {
@@ -39,9 +53,7 @@ const twice = replayHouseholdForecastWindow(restored, selected);
 if (canonicalSerialize(out.state) !== canonicalSerialize(twice.state) || canonicalSerialize(out.periods) !== canonicalSerialize(twice.periods))
   throw new Error("S8_REPLAY_CHANGED");
 const rmd = s.satisfaction(out.state);
-const newPosting = mode === "present" ? undefined : s.run();
 process.stdout.write(JSON.stringify({ state: canonicalSerialize(out.state), periods: canonicalSerialize(out.periods),
   publisherRead: reads > 0, wageRead: s.wages.reads.employer > 0 && s.wages.reads.bank > 0,
   qualification: qualification?.status ?? "unavailable", coverage: rmd.coverage,
-  satisfied: rmd.annual?.obligations.map(o => o.satisfied.amount.toString()) ?? null,
-  ...(newPosting ? { newPosting: { periods: newPosting.periods.length, state: canonicalSerialize(newPosting.state) } } : {}) }));
+  satisfied: rmd.annual?.obligations.map(o => o.satisfied.amount.toString()) ?? null }));

@@ -10,7 +10,7 @@ import { recognizeTaxLegalBases } from "../../rules/tax/recognition.js";
 import type { TaxCoreRule, TaxIncomeFacts, TaxJurisdictionFacts } from "../../rules/tax/contracts.js";
 import { applySettlement, claimId, createObligation, createSettlement, createSettlementProposal, recognitionId, settlementId, settlementProposalId } from "../../semantics/index.js";
 import { applyAccountingTransactionAtomically, authoritativeClaimHistory, createIndexedRecognitionFact, registerAuthoritativeIdentity,
-  householdPayrollHealthPostingEvidence, payrollHealthPostingEvidence, type AuthoritativeState,
+  householdPayrollHealthPostingEvidence, payrollHealthPostingEvidence, registerHouseholdCallbackOwner, type AuthoritativeState,
   type D2SettlementSourceContext, type PayrollHealthDeductionEvidence } from "../../state/index.js";
 import { instant, subtractMilliseconds, utcDateOnlyInstant, type Instant } from "../../time/index.js";
 import { decimal, money, Money, Quantity, RoundingPolicy, Unit, USD } from "../../values/index.js";
@@ -166,6 +166,9 @@ export const taxCreditPositionIds = (input: HouseholdTaxInput, simulationEnd?: s
   return Object.freeze(jurisdictions.flatMap(jurisdiction => years.map(year => balanceIds(jurisdiction, year).creditPositionId)));
 };
 
+const ownedParticipants = new WeakSet<object>();
+registerHouseholdCallbackOwner("tax", participant => ownedParticipants.has(participant));
+
 export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput): HouseholdKernelParticipant => {
   const input = immutableConfiguration(configuration);
   const sources = new Map(input.incomes.map(income => [income.id, income]));
@@ -198,7 +201,7 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
       throw error;
     }
   };
-  return Object.freeze({
+  const participant = Object.freeze({
     id: "tax", version: input.filingStatuses === undefined ? "t1a-household-v1" : "t1a-household-v2", portableCodec: input.filingStatuses === undefined ? "household-tax/v1" : "household-tax/v2", economicInputs: Object.freeze({ ...input, catalogFingerprint: fingerprint }),
     observe: (descriptor, facts, runtime) => {
       if (facts.taxEconomics !== undefined || facts.taxDiagnostics !== undefined) {
@@ -521,4 +524,6 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
         } }; }) };
     },
   } satisfies HouseholdKernelParticipant);
+  ownedParticipants.add(participant);
+  return participant;
 };

@@ -54,10 +54,11 @@ describe("J1 portable v3 structural retirement evidence", () => {
     expect(canonicalSerialize(exportHouseholdReplayCheckpoints(restored))).toBe(canonicalSerialize(exportHouseholdReplayCheckpoints(summary)));
     const directory = mkdtempSync(join(tmpdir(), "pfm-retirement-j1-later-"));
     try {
-      const path = join(directory, "payload.json"); writeFileSync(path, JSON.stringify({ artifact, selected, rows: true, sources: true }), "utf8");
+      const path = join(directory, "payload.json"); writeFileSync(path, JSON.stringify({ artifact, selected }), "utf8");
       const worker = spawnSync(process.execPath, [fileURLToPath(new URL("../../../../node_modules/vite-node/vite-node.mjs", import.meta.url)),
         fileURLToPath(new URL("./portableWorker.ts", import.meta.url))], {
-        env: { ...process.env, PFM_RETIREMENT_J1_PAYLOAD: path }, encoding: "utf8", maxBuffer: 32 * 1024 * 1024,
+        env: { ...process.env, PFM_RETIREMENT_J1_PAYLOAD: path, PFM_RETIREMENT_J1_ROWS: "true",
+          PFM_RETIREMENT_J1_SOURCES: "true", PFM_RETIREMENT_J1_JOURNAL: "true" }, encoding: "utf8", maxBuffer: 32 * 1024 * 1024,
       });
       expect(worker.status, worker.stderr).toBe(0);
       expect(JSON.parse(worker.stdout)).toEqual({ state: canonicalSerialize(expected.state), periods: canonicalSerialize(expected.periods) });
@@ -89,15 +90,15 @@ describe("J1 portable v3 structural retirement evidence", () => {
         expect(canonicalSerialize(exportHouseholdReplayCheckpoints(restored))).toBe(canonicalSerialize(exportHouseholdReplayCheckpoints(summary)));
         expect(canonicalSerialize(replayHouseholdForecastWindow(restored, selected).state)).toBe(canonicalSerialize(expected.state));
         for (const sources of [true, false]) {
-          const path = join(directory, "payload.json"); writeFileSync(path, JSON.stringify({ artifact, selected, rows, sources }), "utf8");
+          const path = join(directory, "payload.json"); writeFileSync(path, JSON.stringify({ artifact, selected }), "utf8");
           const worker = spawnSync(process.execPath, [fileURLToPath(new URL("../../../../node_modules/vite-node/vite-node.mjs", import.meta.url)),
             fileURLToPath(new URL("./portableWorker.ts", import.meta.url))], {
-            env: { ...process.env, PFM_RETIREMENT_J1_PAYLOAD: path }, encoding: "utf8", maxBuffer: 32 * 1024 * 1024,
+            env: { ...process.env, PFM_RETIREMENT_J1_PAYLOAD: path, PFM_RETIREMENT_J1_ROWS: String(rows),
+              PFM_RETIREMENT_J1_SOURCES: String(sources), PFM_RETIREMENT_J1_JOURNAL: String(journal) }, encoding: "utf8", maxBuffer: 32 * 1024 * 1024,
           });
           expect(worker.status, worker.stderr).toBe(0);
-          // Missing source owner preserves actual cash and structural evidence;
-          // the record still explicitly says not_applied / tax incomplete.
-          expect(JSON.parse(worker.stdout)).toEqual({ state: canonicalSerialize(expected.state), periods: canonicalSerialize(expected.periods) });
+          expect(JSON.parse(worker.stdout)).toEqual(journal && !sources ? { rejected: true }
+            : { state: canonicalSerialize(expected.state), periods: canonicalSerialize(expected.periods) });
         }
       }
     } finally { rmSync(directory, { recursive: true, force: true }); }

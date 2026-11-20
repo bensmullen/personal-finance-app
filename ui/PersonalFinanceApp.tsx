@@ -8,6 +8,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -282,6 +283,13 @@ export function PersonalFinanceApp() {
   const [mortgageMonth, setMortgageMonth] = useState("");
   const [mortgageLoan, setMortgageLoan] = useState("");
   const [cashReturn, setCashReturn] = useState(false);
+  const focusCashMonthOnReturn = useRef(false);
+  useLayoutEffect(() => {
+    if (!focusCashMonthOnReturn.current || primary !== "Money" || subnav !== "Cash Flow") return;
+    focusCashMonthOnReturn.current = false;
+    const main = document.getElementById("main-content");
+    (main?.querySelector<HTMLSelectElement>('select[aria-label="paycheck forecast month"]') ?? main)?.focus();
+  }, [primary, subnav]);
   const [moreOpen, setMoreOpen] = useState(false);
   const [activePerson, setActivePerson] = useState<string | undefined>();
   const moreButton = useRef<HTMLButtonElement>(null);
@@ -599,7 +607,7 @@ export function PersonalFinanceApp() {
   };
 
   const navigate = (next: Primary, section = SUBNAV[next][0]!) => {
-    if (moreOpen) requestAnimationFrame(() => document.getElementById("main-content")?.focus());
+    if (moreOpen && !focusCashMonthOnReturn.current) requestAnimationFrame(() => document.getElementById("main-content")?.focus());
     setMoreOpen(false);
     setActivePerson(undefined);
     setPrimary(next);
@@ -944,7 +952,7 @@ export function PersonalFinanceApp() {
             <CalmAction primary onClick={() => { setCashReturn(true); navigate("Money", "Income"); }}>Review income</CalmAction>
             <CalmAction onClick={() => { setCashReturn(true); navigate("Money", "Spending"); }}>Edit spending</CalmAction>
           </CalmPageHeader>}
-          {cashReturn && !(primary === "Money" && subnav === "Cash Flow") && <div className="cash-return"><button type="button" onClick={() => { setCashReturn(false); navigate("Money", "Cash Flow"); requestAnimationFrame(() => document.querySelector<HTMLSelectElement>('.monthly-money select')?.focus()); }}>Return to Cash breakdown</button><small>Your selected modeled month is retained.</small></div>}
+          {cashReturn && !(primary === "Money" && subnav === "Cash Flow") && <div className="cash-return"><button type="button" onClick={() => { focusCashMonthOnReturn.current = true; setCashReturn(false); navigate("Money", "Cash Flow"); }}>Return to Cash breakdown</button><small>Your selected modeled month is retained.</small></div>}
           {primary === "Overview" && <Overview
             position={position!} forecast={householdForecast} draft={draft} forecastState={interactive.baseline}
             asOf={sessionSettings.asOf} dataCutoff={sessionSettings.dataCutoff}

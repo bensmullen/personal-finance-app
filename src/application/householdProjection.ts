@@ -27,6 +27,7 @@ import {
   replayHouseholdForecastWindow,
   compileHouseholdKernel,
   applyHouseholdExecutionOverlay,
+  observeHouseholdForecastSources,
   type HouseholdForecastSummaryResult,
   type ExecutableHouseholdProjection,
 } from "../simulation/householdExecution.js";
@@ -161,6 +162,7 @@ export interface HouseholdForecastRequest {
   readonly runIdentity: string;
 }
 
+const readModelSourceAdmissions = new WeakMap<object, () => void>();
 const issuedForecastSalaries = new WeakMap<ModeledPayrollReference, ModeledPayrollBinding>();
 registerModeledPayrollCompiler("canonical-forecast/v1", reference => issuedForecastSalaries.get(reference));
 const issueForecastSalary = (binding: ModeledPayrollBinding): NonNullable<ExecutableHouseholdProjection["cashFlowInput"]>["incomes"][number] => {
@@ -768,6 +770,7 @@ const toReadModel = (
   const debtPayoffs: { loanId: string; scheduledAt: string }[] = [];
   const replayBasis = performance === undefined ? createPortableHouseholdReplayArtifact(result, true, undefined, modeledPayroll, model)
     : performance.measure("application.replay_artifact", () => createPortableHouseholdReplayArtifact(result, true, undefined, modeledPayroll, model));
+  readModelSourceAdmissions.set(replayBasis, () => observeHouseholdForecastSources(result));
   const transport = createForecastDiagnosticTransport({ runId: String(result.runMetadata.runId), inputFingerprint: String(result.runMetadata.inputFingerprint) });
   const points = result.periods.map((period) => {
     const balances = period.debtBalances ?? [];
@@ -1063,7 +1066,6 @@ const execute = (
   let execution: ReturnType<typeof executeInternal> | undefined;
   try {
     execution = performance.measure("forecast.total", () => executeInternal(model, request, resolved, scopedObserver, performance));
-    return execution;
   } finally {
     performance.finish();
     if (observer !== undefined) {
@@ -1081,6 +1083,40 @@ const execute = (
         }
       } catch { /* Diagnostic transformation cannot affect the forecast. */ }
     }
+  }
+  try {
+    const forecast = execution.result;
+    if (forecast !== undefined) {
+      const admit = () => observeHouseholdForecastSources(forecast);
+      admit();
+      outwardSourceAdmissions.set(execution.read, admit);
+    }
+    return execution;
+  } catch {
+    return { read: Object.freeze({ scope: "household", status: "unavailable", executionError: true,
+      message: "Household source evidence is unavailable or changed. Run the forecast again.", diagnostics: Object.freeze([]) }) };
+  }
+};
+
+/** Reobserve the original artifacts after application/worker packaging. One
+ * artifact covers the full committed history, including terminal-only deltas. */
+const outwardSourceAdmissions = new WeakMap<object, () => void>();
+export const observeHouseholdReadModelSources = (
+  result: PersonalHouseholdForecastReadModel | PersonalHouseholdScenarioComparisonReadModel,
+  model: PortableModelEnvelope,
+): void => {
+  const admitResult = outwardSourceAdmissions.get(result);
+  if (admitResult !== undefined) { admitResult(); return; }
+  const points = "scope" in result ? result.status === "unavailable" ? [] : result.points
+    : result.alternatives.flatMap(alternative => alternative.points.flatMap(point => [point.baseline, point.alternative]));
+  const seen = new Set<unknown>();
+  for (const point of points) for (const ref of point.traceRefs) {
+    const basis = (ref.replayArtifact as { readonly basis?: unknown } | undefined)?.basis;
+    if (basis === undefined || seen.has(basis)) continue;
+    seen.add(basis);
+    const admit = typeof basis === "object" && basis !== null ? readModelSourceAdmissions.get(basis) : undefined;
+    if (admit) admit();
+    else restoreHouseholdForecastEvidence(basis, model);
   }
 };
 export const runPersonalHouseholdForecast = (
@@ -1303,6 +1339,13 @@ const compareHouseholds = (
       });
     const alternatives: PersonalHouseholdScenarioComparisonReadModel["alternatives"][number][] =
       [];
+    const committed = [baseline.result];
+    const release = (result: PersonalHouseholdScenarioComparisonReadModel): PersonalHouseholdScenarioComparisonReadModel => {
+      const admit = () => { for (const forecast of committed) observeHouseholdForecastSources(forecast); };
+      admit();
+      outwardSourceAdmissions.set(result, admit);
+      return result;
+    };
     const diagnosticCatalogs: ForecastCatalogTable[] = baseline.read.diagnosticCatalogs ? [baseline.read.diagnosticCatalogs] : [];
     const diagnostics: HouseholdDiagnostic[] = [
       ...baseline.read.diagnostics,
@@ -1317,7 +1360,7 @@ const compareHouseholds = (
         alternative.context === undefined ||
         alternative.read.status === "unavailable"
       )
-        return Object.freeze({
+        return release(Object.freeze({
           status: "unavailable",
           baselineName: request.baseline.name,
           alternatives: Object.freeze(alternatives),
@@ -1331,7 +1374,8 @@ const compareHouseholds = (
             alternative.read.status === "unavailable"
               ? alternative.read.message
               : `Alternative ${item.name} is unavailable.`,
-        });
+        }));
+      committed.push(alternative.result);
       commonBoundary(
         baseline as ExecutedHousehold,
         alternative as ExecutedHousehold,
@@ -1447,13 +1491,13 @@ const compareHouseholds = (
         }),
       );
     }
-    return Object.freeze({
+    return release(Object.freeze({
       status: overall,
       baselineName: request.baseline.name,
       alternatives: Object.freeze(alternatives),
       diagnosticCatalogs: Object.freeze(diagnosticCatalogs),
       diagnostics: Object.freeze(diagnostics),
-    });
+    }));
   } catch (error) {
     const diagnostics =
       error instanceof ValidationError ? error.issues : Object.freeze([]);

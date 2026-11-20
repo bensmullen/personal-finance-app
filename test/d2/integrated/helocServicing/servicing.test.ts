@@ -236,9 +236,15 @@ describe("independent issuer/BANK admission and exact original history", () => {
     const jan = qualified().receipt, state = opening();
     applyD2SettlementAtomically(state, jan, fixture().context);
     const r = second.issuer.request;
-    publish([{ ...second, issuer: withProvenance({ ...second.issuer, request: { ...r,
-      checkpoint: { ...r.checkpoint, originalPrincipal: money("900"), history: [] } } }) }]);
+    const omitted = { ...second, issuer: withProvenance({ ...second.issuer, request: { ...r,
+      checkpoint: { ...r.checkpoint, originalPrincipal: money("900"), history: [] } } }) };
+    publish([omitted]);
+    const before = canonicalSerialize(state);
+    expect(() => run(fixture(3, state, ["month:1"]))).toThrow(/D2_SETTLEMENT_SOURCE_INCOMPLETE: source_unavailable/);
+    expect(canonicalSerialize(state)).toBe(before);
+    publish([docs[0]!, omitted]);
     const result = run(fixture(3, state, ["month:1"]));
+    expect(result.status).toBe("incomplete");
     expect(result.state.identities.postedTransactionIds).toHaveLength(2);
     expect(result.state.accounts[ids.bank]!.cash.equals(money("394.90"))).toBe(true);
   });

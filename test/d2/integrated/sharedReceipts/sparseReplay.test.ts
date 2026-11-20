@@ -83,7 +83,10 @@ describe("mixed P1/P2 cold sparse checkpoint work", () => {
       let work!: ReturnType<typeof meter.stop>;
       try {
         artifact = createPortableHouseholdReplayArtifact(f.forecast, false, measurement => { exported = measurement; });
-        expect(sourceCalls()).toBe(0);
+        // Portable release observes each FSA and health original plus the
+        // single card, HELOC and retirement originals once.
+        expect(sourceCalls()).toBe(2 * count + 3);
+        resetSourceCalls();
         cold = restorePortableHouseholdReplayArtifact(JSON.parse(JSON.stringify(artifact)), {
           now: () => performance.now(), includeCheckpointBytes: true, record: measurement => { restored = measurement; },
         });

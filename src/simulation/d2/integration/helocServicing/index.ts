@@ -2,8 +2,9 @@ import { accountingTransactionId, type AccountingTransaction } from "../../../..
 import { ValidationError } from "../../../../diagnostics/index.js";
 import { idempotencyKey } from "../../../../identity/index.js";
 import { applyD2HelocOriginalAtomically, applyD2SettlementAtomically, d2SettlementPostingRegistration,
-  requalifyD2SettlementReceiptHistory, type AuthoritativeState, type D2HelocSettlementReceipt, type D2SettlementSourceContext } from "../../../../state/index.js";
-import { applyHouseholdExecutionOverlay, type CompiledHouseholdKernel, type HouseholdKernelParticipant } from "../../../householdExecution.js";
+  requalifyD2SettlementReceiptHistory, registerHouseholdCallbackOwner, type AuthoritativeState, type D2HelocSettlementReceipt,
+  type D2PostedTransactionProof, type D2SettlementSourceContext } from "../../../../state/index.js";
+import { applyHouseholdExecutionOverlay, householdPreparationAttempt, type CompiledHouseholdKernel, type HouseholdKernelParticipant } from "../../../householdExecution.js";
 import type { HouseholdWorkDescriptor } from "../../../intraperiodScheduler.js";
 import { immutableConfiguration } from "../../../r3/compiledHousehold.js";
 import type { HouseholdOperationFacts } from "../../../r3/domainOperations.js";
@@ -17,6 +18,9 @@ export type { HelocServiceDocument, HelocBankDebit, HelocSourceWitness, HelocSer
 
 export interface HelocServicingInput { readonly sourceIds: readonly string[] }
 const participantId = "d2_heloc_servicing", codec = "d2-heloc-servicing/v1";
+const ownedParticipants = new WeakSet<object>();
+registerHouseholdCallbackOwner("heloc_servicing", participant => ownedParticipants.has(participant));
+export const ownsHelocServicingParticipant = (participant: HouseholdKernelParticipant): boolean => ownedParticipants.has(participant);
 function fail(message: string, code = "HELOC_SERVICING_S7_INCOMPLETE"): never {
   throw new ValidationError({ severity: "error", code, message: `S7 incomplete: ${message}`, entityType: "heloc_servicing" });
 }
@@ -29,36 +33,64 @@ function resources(state: AuthoritativeState, r: D2HelocSettlementReceipt): void
       || !state.liabilities[r.chargeLiabilityId]!.balance.currency.equals(r.amount.currency))))
     fail("Exact existing owned BANK, original principal and separate source-owned temporary payable required");
 }
-function posted(state: AuthoritativeState, r: D2HelocSettlementReceipt, role: "original" | "settlement"): boolean {
+function posted(state: AuthoritativeState, r: D2HelocSettlementReceipt, role: "original" | "settlement",
+  verifiedRepayments?: WeakMap<D2HelocSettlementReceipt, D2PostedTransactionProof>): boolean {
   const tx = role === "original" ? r.originalTransaction : r.paymentTransaction, proof = state.d2PostedTransactions?.[tx.id];
   const id = state.identities.postedTransactionIds.includes(tx.id);
-  if (id !== (proof !== undefined) || proof && (!same(proof.transaction, tx)
-    || !same(proof.registration, d2SettlementPostingRegistration(r, role)))) fail("Canonical journal/registration differs from independently rebuilt original");
+  if (id !== (proof !== undefined)) fail("Canonical journal/registration differs from independently rebuilt original");
+  if (proof !== undefined && verifiedRepayments?.get(r) !== proof) {
+    if (!same(proof.transaction, tx) || !same(proof.registration, d2SettlementPostingRegistration(r, role)))
+      fail("Canonical journal/registration differs from independently rebuilt original");
+    verifiedRepayments?.set(r, proof);
+  }
   return id;
 }
 
 /** B1's history is a conditional input. Check every included original against
  * actual canonical postings; also reject omission of any committed repayment. */
-function principalHistory(state: AuthoritativeState, q: QualifiedHelocService, context: D2SettlementSourceContext): void {
+function principalHistory(state: AuthoritativeState, q: QualifiedHelocService, context: D2SettlementSourceContext,
+  inherited?: ReadonlySet<D2HelocSettlementReceipt["id"]>,
+  verifiedRepayments?: WeakMap<D2HelocSettlementReceipt, D2PostedTransactionProof>): void {
   const c = q.document.request.checkpoint, r = q.receipt, history = c.history;
+  const closingAt = serviceInstant(c.closingAt);
   const repayments = Object.values(state.d2SettlementReceipts ?? {}).filter((x): x is D2HelocSettlementReceipt =>
-    x.kind === "heloc_phase_service" && x.liabilityId === r.liabilityId && x.effectiveAt <= serviceInstant(c.closingAt));
+    x.kind === "heloc_phase_service" && x.liabilityId === r.liabilityId && x.effectiveAt <= closingAt);
+  const actualRepayments = new Map(repayments.map(row => [row.paymentTransaction.id, row]));
+  const reportedHistory = new Map(history.map(row => [row.postingId, row]));
+  const reportedRows = inherited === undefined || inherited.size > 0 ? new Map<string, string>() : undefined;
   for (const old of repayments) {
+    if (old.source.issuerId !== r.source.issuerId || old.source.lineId !== r.source.lineId
+      || old.source.personId !== r.source.personId || old.source.householdId !== r.source.householdId
+      || reportedHistory.get(old.paymentTransaction.id)?.kind !== "principal_repayment")
+      fail("Checkpoint omits or changes an actual prior principal repayment");
+  }
+  // Each repayment written by this scheduler already checked its predecessor's
+  // cumulative history. Reobserve the latest link and every inherited link.
+  const latest = repayments.reduce<D2HelocSettlementReceipt | undefined>((previous, row) =>
+    previous === undefined || previous.effectiveAt < row.effectiveAt ? row : previous, undefined);
+  for (const old of repayments) {
+    if (inherited !== undefined && old !== latest && !inherited.has(old.id)) continue;
     const original = qualifyHelocServicingSource(old.source.sourceId, context);
     if (original.status !== "qualified" || !same(original.receipt, old)) fail("Prior repayment publisher no longer qualifies");
     const prior = original.document.request.checkpoint;
     if (prior.originalAt !== c.originalAt || !prior.originalPrincipal.equals(c.originalPrincipal) || !same(prior.originalSource, c.originalSource)
-      || prior.history.some(h => !history.some(current => current.postingId === h.postingId && same(current, h))))
+      || prior.history.some(h => {
+        const reported = reportedHistory.get(h.postingId);
+        if (reported === undefined) return true;
+        if (reportedRows === undefined) return !same(reported, h);
+        let key = reportedRows.get(h.postingId);
+        if (key === undefined) {
+          key = canonicalSerialize(reported);
+          reportedRows.set(h.postingId, key);
+        }
+        return key !== canonicalSerialize(h);
+      }))
       fail("Original principal or already posted historical evidence changed between installments");
-    if (old.source.issuerId !== r.source.issuerId || old.source.lineId !== r.source.lineId
-      || old.source.personId !== r.source.personId || old.source.householdId !== r.source.householdId
-      || !history.some(h => h.kind === "principal_repayment" && h.postingId === old.paymentTransaction.id))
-      fail("Checkpoint omits or changes an actual prior principal repayment");
   }
   for (const h of history) {
     if (h.kind === "principal_repayment") {
-      const old = repayments.find(x => x.paymentTransaction.id === h.postingId);
-      if (!old || !posted(state, old, "settlement") || old.operationId !== h.operationId || old.authorizationId !== h.authorizationId
+      const old = actualRepayments.get(accountingTransactionId(h.postingId));
+      if (!old || !posted(state, old, "settlement", verifiedRepayments) || old.operationId !== h.operationId || old.authorizationId !== h.authorizationId
         || old.claimId !== h.claimId || old.source.fundingId !== h.fundingId || old.effectiveAt !== serviceInstant(h.effectiveAt)
         || !old.principalPaid.equals(h.principal) || !old.interest.equals(h.interest)
         || !old.principalPaid.plus(old.interest).equals(h.cash)) fail("Proposed or altered history is not posted principal authority");
@@ -100,15 +132,36 @@ export function createHelocServicingParticipant(configuration: HelocServicingInp
   const input = immutableConfiguration({ sourceIds: [...configuration.sourceIds].sort() });
   if (input.sourceIds.some(s => typeof s !== "string" || !s.trim()) || new Set(input.sourceIds).size !== input.sourceIds.length)
     fail("Unique nonempty source lookup IDs required");
-  return Object.freeze({ id: participantId, version: "1", portableCodec: codec, economicInputs: input,
+  const catalogs = new WeakMap<object, {
+    months: ReadonlyMap<string, ReadonlySet<D2HelocSettlementReceipt>>;
+    inherited: ReadonlySet<D2HelocSettlementReceipt["id"]>;
+  }>();
+  // The internal writer's immutable repayment/proof pairs recur in later
+  // cumulative originals. Current publisher reads and all row comparisons
+  // still run. Only the exact archived journal comparison is shared.
+  const repaymentChecks = new WeakMap<object, WeakMap<D2HelocSettlementReceipt, D2PostedTransactionProof>>();
+  const participant = Object.freeze({ id: participantId, version: "1", portableCodec: codec, economicInputs: input,
     prepare: (context, period, opening, work = [], tier = "detail") => {
-      try { requalifyD2SettlementReceiptHistory(opening.state, context); }
+      const attempt = householdPreparationAttempt(opening);
+      const cached = attempt === undefined ? undefined : catalogs.get(attempt);
+      let verifiedRepayments: WeakMap<D2HelocSettlementReceipt, D2PostedTransactionProof> | undefined;
+      if (attempt?.hasExternalParticipants === false) {
+        verifiedRepayments = repaymentChecks.get(attempt) ?? new WeakMap();
+        repaymentChecks.set(attempt, verifiedRepayments);
+      }
+      try { if (attempt === undefined) requalifyD2SettlementReceiptHistory(opening.state, context); }
       catch { fail("Historical source or signed journal no longer qualifies"); }
-      const qualified: QualifiedHelocService[] = [];
-      for (const id of input.sourceIds) {
+      const load = (id: string): QualifiedHelocService => {
         const q = qualifyHelocServicingSource(id, context);
         if (q.status !== "qualified") fail(`${id}: ${q.reason}`);
-        qualified.push(q);
+        return q;
+      };
+      const qualified: QualifiedHelocService[] = [];
+      if (cached === undefined) qualified.push(...input.sourceIds.map(load));
+      else for (const receipt of cached.months.get(period.start.slice(0, 7)) ?? []) {
+        const current = load(receipt.source.sourceId);
+        if (!same(current.receipt, receipt)) fail("Issuer or BANK source changed after catalog observation");
+        qualified.push(current);
       }
       const used = new Set<string>();
       for (const { receipt: r } of qualified) {
@@ -132,7 +185,7 @@ export function createHelocServicingParticipant(configuration: HelocServicingInp
         if (opening.state.d2SettlementReceipts?.[r.id] && !same(opening.state.d2SettlementReceipts[r.id], r))
           fail("Committed receipt differs from current independent source");
       }
-      for (const proof of Object.values(opening.state.d2PostedTransactions ?? {})) {
+      for (const proof of cached === undefined ? Object.values(opening.state.d2PostedTransactions ?? {}) : []) {
         if (proof.registration.kind !== "heloc_phase_service") continue;
         // Ownership is by source receipt ID, never by a caller's transaction hash.
         const owner = qualified.find(q => q.receipt.id === (proof.registration.kind === "heloc_phase_service" ? proof.registration.service.id : ""));
@@ -141,6 +194,18 @@ export function createHelocServicingParticipant(configuration: HelocServicingInp
         const role = proof.registration.role;
         if (r.originalProof === "principal_only" && role === "original") fail("Principal-only journal has a fabricated charge registration");
         posted(opening.state, r, role);
+      }
+      const inherited = cached?.inherited ?? (attempt === undefined ? undefined : new Set(Object.values(opening.state.d2SettlementReceipts ?? {})
+        .filter(r => r.kind === "heloc_phase_service").map(r => r.id)));
+      if (attempt !== undefined && cached === undefined && inherited !== undefined) {
+        const months = new Map<string, Set<D2HelocSettlementReceipt>>();
+        for (const { receipt } of qualified) for (const tx of [receipt.originalTransaction, receipt.paymentTransaction]) {
+          const month = tx.date.slice(0, 7);
+          const due = months.get(month) ?? new Set<D2HelocSettlementReceipt>();
+          due.add(receipt);
+          months.set(month, due);
+        }
+        catalogs.set(attempt, { months, inherited });
       }
       const operations: ReturnType<HouseholdKernelParticipant["prepare"]>["operations"][number][] = [];
       if (input.sourceIds.length) operations.push({ descriptor: { id: `heloc-service:coverage:${period.start}`, domain: "liabilities",
@@ -173,7 +238,8 @@ export function createHelocServicingParticipant(configuration: HelocServicingInp
           const current = qualifyHelocServicingSource(r.source.sourceId, context);
           if (current.status !== "qualified" || !same(current.receipt, r)) fail("Issuer or BANK source changed after preparation");
           resources(candidate.state, r);
-          principalHistory(candidate.state, q, context);
+          principalHistory(candidate.state, current, context, attempt?.hasExternalParticipants === false ? inherited : undefined,
+            verifiedRepayments);
           const existing = candidate.state.d2SettlementReceipts?.[r.id];
           if (existing && !same(existing, r)) fail("Committed receipt changed");
           try {
@@ -195,6 +261,8 @@ export function createHelocServicingParticipant(configuration: HelocServicingInp
       return { id: participantId, operations };
     },
   } satisfies HouseholdKernelParticipant);
+  ownedParticipants.add(participant);
+  return participant;
 }
 registerHouseholdParticipantCodec({ codec, restore: input => createHelocServicingParticipant(input as HelocServicingInput) });
 

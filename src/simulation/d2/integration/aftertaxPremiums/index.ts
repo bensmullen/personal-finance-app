@@ -1,4 +1,5 @@
 import { accountingTransactionId } from "../../../../accounting/index.js";
+import { registerHouseholdCallbackOwner } from "../../../../state/index.js";
 import { domainId } from "../../../../identity/index.js";
 import { ValidationError } from "../../../../diagnostics/index.js";
 import { sha256 } from "../../../../rules/tax/t1b/contentIdentity.js";
@@ -147,6 +148,8 @@ export function registerAftertaxPremiumSourcePort(port: AftertaxPremiumSourcePor
 interface PremiumGuardBinding { readonly source: HouseholdExpenseSourceRef; readonly context: HouseholdBankEventContext; }
 /** Observe the real payroll proof, regardless of which route executes first.
  * A conflict rolls back the period; this guard never posts money. */
+const ownedParticipants = new WeakSet<object>();
+registerHouseholdCallbackOwner("aftertax_premiums", participant => ownedParticipants.has(participant));
 function premiumGuard(input: PremiumGuardBinding): HouseholdKernelParticipant {
   const binding = immutableConfiguration(input), id = `aftertax-source:${canonicalSerialize(binding.source.original)}`;
   const reject = (message: string): never => {
@@ -164,7 +167,7 @@ function premiumGuard(input: PremiumGuardBinding): HouseholdKernelParticipant {
       && s.periodStart < d.original.period.end && s.periodEnd > d.original.period.start)
       reject("DUPLICATE_PREMIUM_PAYROLL_ROUTE");
   };
-  return Object.freeze({ id, version: "1", portableCodec: "d2-aftertax-source/v1", economicInputs: binding,
+  const participant = Object.freeze({ id, version: "1", portableCodec: "d2-aftertax-source/v1", economicInputs: binding,
     prepare: (context, period, opening) => {
       if (binding.context.eventAt >= period.start && binding.context.eventAt < period.end) {
         if (context.runId !== binding.context.runId || context.asOf !== binding.context.asOf || context.dataCutoff !== binding.context.dataCutoff)
@@ -212,6 +215,8 @@ function premiumGuard(input: PremiumGuardBinding): HouseholdKernelParticipant {
       return runtime;
     },
   } satisfies HouseholdKernelParticipant);
+  ownedParticipants.add(participant);
+  return participant;
 }
 registerHouseholdParticipantCodec({ codec: "d2-aftertax-source/v1", restore: value => premiumGuard(value as PremiumGuardBinding) });
 

@@ -27,11 +27,16 @@ import {
 import {
   assertAuthoritativeStateCurrency,
   admitS4OpeningSources,
+  observeAuthoritativeSourceHistory,
+  equalAuthoritativeSourceHistory,
+  isOwnedHouseholdCallbackParticipant,
   cloneAuthoritativeState,
   createIndexedExecutionState,
   createAuthoritativeState,
+  materializeExecutionState,
   registerAuthoritativeIdentity,
   validateAuthoritativeState,
+  authoritativeCheckpointDelta,
   authoritativeStateChangesSince,
   snapshotAuthoritativeCheckpoint,
   isAuthoritativeCheckpointSnapshot,
@@ -171,6 +176,12 @@ export interface HouseholdKernelParticipant {
   readonly observe?: (descriptor: HouseholdWorkDescriptor, facts: HouseholdOperationFacts, runtime: Readonly<Record<string, unknown>>,
     observation?: { readonly postingProofs: AuthoritativeState["d2PostedTransactions"]; readonly context: RunContext }) => Readonly<Record<string, unknown>>;
 }
+
+// Only a built-in prepare call inside this execution may use the scheduler's
+// opening and release admissions. Standalone prepare calls admit their own history.
+interface HouseholdPreparationAttempt { readonly hasExternalParticipants: boolean }
+const ownedParticipantInputs = new WeakMap<object, HouseholdPreparationAttempt>();
+export const householdPreparationAttempt = (input: object): HouseholdPreparationAttempt | undefined => ownedParticipantInputs.get(input);
 
 /** Explicit reusable boundary for repeated deterministic evaluations. */
 interface HouseholdKernelRunInput {
@@ -385,6 +396,8 @@ const runCompiledHouseholdProjectionInternal = (
     readonly retainDiagnostics?: (period: Period) => boolean;
     readonly acceptSummary?: (period: HouseholdForecastSummaryPeriod) => void;
   },
+  retainClosingState?: (state: AuthoritativeState) => void,
+  privateComparison = false,
 ): CompiledHouseholdProjectionRunResult => {
   const { runContext } = request;
   const tier = periodRetention?.acceptSummary === undefined ? "detail" : "summary";
@@ -403,6 +416,8 @@ const runCompiledHouseholdProjectionInternal = (
     : applyHouseholdExecutionOverlay(reusable, source));
   const compiled = kernel.executable;
   const participants = [...(compiled.participants ?? []), ...(request.participants ?? [])].sort((a, b) => a.id.localeCompare(b.id));
+  const externalParticipants = new Set(participants.filter(participant => !isOwnedHouseholdCallbackParticipant(participant)));
+  const preparationAttempt = Object.freeze({ hasExternalParticipants: externalParticipants.size > 0 });
   if (String(runContext.scenarioId) !== compiled.scenarioIdentity)
     throw new ValidationError({
       severity: "error",
@@ -429,7 +444,18 @@ const runCompiledHouseholdProjectionInternal = (
   admitS4OpeningSources(compiled.reconciledOpeningState, runContext);
   if (periodRetention?.resume !== undefined)
     admitS4OpeningSources(periodRetention.resume.state, runContext);
+  if (externalParticipants.size < participants.length) {
+    observeAuthoritativeSourceHistory(compiled.reconciledOpeningState, runContext);
+    if (periodRetention?.resume !== undefined) observeAuthoritativeSourceHistory(periodRetention.resume.state, runContext);
+  }
   let state = createIndexedExecutionState(cloneAuthoritativeState(compiled.reconciledOpeningState), counts => performance.counters(counts));
+  const materializeClosingState = (): AuthoritativeState => {
+    if (privateComparison) return state;
+    if (retainClosingState === undefined) return materializeExecutionState(state);
+    const closing = cloneAuthoritativeState(state);
+    retainClosingState(closing);
+    return materializeExecutionState(closing);
+  };
   let primitiveState = createPrimitiveRuntimeStateStore(
     compiled.reconciledPrimitiveState,
   );
@@ -486,21 +512,34 @@ const runCompiledHouseholdProjectionInternal = (
     const periodContext = Object.freeze({ ...runContext, simulationStart: period.start, simulationEnd: period.end });
     const builtins = householdDomainParticipants({ cash, investments, liabilities }, compiled, periodContext, kernel, tier);
     const additional = participants.map(participant => {
-      const prepared = participant.prepare(periodContext, period, {
+      const external = externalParticipants.has(participant);
+      if (external) observeAuthoritativeSourceHistory(investmentOpening, runContext);
+      const participantOpening: OperationState = {
         state: cloneAuthoritativeState(investmentOpening),
         primitiveState: createPrimitiveRuntimeStateStore(investmentPrimitiveOpening),
         runtime: operationRuntime(opening),
-      }, builtins.flatMap(item => item.operations.map(operation => operation.descriptor)), tier);
+      };
+      if (!external) ownedParticipantInputs.set(participantOpening, preparationAttempt);
+      let prepared: ReturnType<HouseholdKernelParticipant["prepare"]>;
+      try {
+        prepared = participant.prepare(periodContext, period, participantOpening,
+          builtins.flatMap(item => item.operations.map(operation => operation.descriptor)), tier);
+      } finally {
+        ownedParticipantInputs.delete(participantOpening);
+      }
       if (prepared.id !== participant.id)
         throw new ValidationError({ severity: "error", code: "HOUSEHOLD_PARTICIPANT_MISMATCH",
           message: "Prepared participant identity must match its registration.", entityType: "household_projection" });
       return { id: prepared.id, operations: prepared.operations.map(operation => ({
         ...operation,
-        execute: (opening: OperationState, statuses: Map<string, string>) => operation.execute({
-          state: cloneAuthoritativeState(opening.state),
-          primitiveState: createPrimitiveRuntimeStateStore(opening.primitiveState),
-          runtime: opening.runtime,
-        }, statuses),
+        execute: (opening: OperationState, statuses: Map<string, string>) => {
+          if (external) observeAuthoritativeSourceHistory(opening.state, runContext);
+          return operation.execute({
+            state: cloneAuthoritativeState(opening.state),
+            primitiveState: createPrimitiveRuntimeStateStore(opening.primitiveState),
+            runtime: opening.runtime,
+          }, statuses);
+        },
       })) };
     });
     const operations = indexPreparedOperations([...builtins, ...additional]);
@@ -643,7 +682,15 @@ const runCompiledHouseholdProjectionInternal = (
           let runtime = operationRuntime(nextState);
           for (const participant of participants) if (participant.observe !== undefined) {
             performance.counters({ [`participant.${participant.id}.observations`]: 1 });
-            runtime = participant.observe(descriptor, result.facts, runtime, { postingProofs: nextState.d2PostedTransactions, context: runContext });
+            const external = externalParticipants.has(participant);
+            if (external) observeAuthoritativeSourceHistory(nextState, runContext);
+            const observation = { postingProofs: nextState.d2PostedTransactions, context: runContext };
+            if (!external) ownedParticipantInputs.set(observation, preparationAttempt);
+            try {
+              runtime = participant.observe(descriptor, result.facts, runtime, observation);
+            } finally {
+              ownedParticipantInputs.delete(observation);
+            }
           }
           restoreOperationRuntime(nextState, runtime);
           if (tier === "summary") performance.counters({ summaryOperationsExecuted: 1 });
@@ -1139,8 +1186,8 @@ const runCompiledHouseholdProjectionInternal = (
         requestedHorizon,
         stoppedAt: period.start,
         ...(reachedThrough === undefined ? {} : { reachedThrough }),
-        state: createAuthoritativeState(state),
-        primitiveState: materializePrimitiveRuntimeStateStore(primitiveState),
+        state: materializeClosingState(),
+        primitiveState: privateComparison ? primitiveState : materializePrimitiveRuntimeStateStore(primitiveState),
         periods: Object.freeze(committed),
         diagnostics: Object.freeze(diagnostics),
         displayInputs: display(runContext),
@@ -1152,8 +1199,8 @@ const runCompiledHouseholdProjectionInternal = (
     runMetadata,
     requestedHorizon,
     reachedThrough: reachedThrough ?? requestedHorizon.end,
-    state: createAuthoritativeState(state),
-    primitiveState: materializePrimitiveRuntimeStateStore(primitiveState),
+    state: materializeClosingState(),
+    primitiveState: privateComparison ? primitiveState : materializePrimitiveRuntimeStateStore(primitiveState),
     periods: Object.freeze(committed),
     diagnostics: Object.freeze(diagnostics),
     displayInputs: display(runContext),
@@ -1165,11 +1212,19 @@ export const runCompiledHouseholdProjection = (
   observer?: PerformanceObserver,
 ): CompiledHouseholdProjectionRunResult => {
   const performance = createPerformanceSession(observer);
+  let result: CompiledHouseholdProjectionRunResult | undefined;
+  let closingState: AuthoritativeState | undefined;
   try {
-    return runCompiledHouseholdProjectionInternal(request, performance);
+    result = runCompiledHouseholdProjectionInternal(request, performance, undefined, state => {
+      closingState = state;
+    });
   } finally {
     performance.finish();
   }
+  // The materialized copy is private until release and has the same journal.
+  // Use its indexed parent for observation after the performance callbacks.
+  observeAuthoritativeSourceHistory(closingState ?? result.state, request.runContext);
+  return result;
 };
 
 export interface HouseholdForecastSummaryResult extends Omit<CompiledHouseholdProjectionRunResult, "periods"> {
@@ -1194,16 +1249,42 @@ export interface HouseholdReplayCheckpoint {
 // forecasts without these optional roots can still replay from the opening basis.
 const forecastCheckpoints = new WeakMap<object, readonly HouseholdReplayCheckpoint[]>();
 const forecastTerminalRoots = new WeakMap<object, AuthoritativeState>();
-const restoredReplayAdmission = new WeakMap<object, () => void>();
+interface RestoredSourceHistory {
+  readonly state: AuthoritativeState;
+  readonly admitModel?: () => void;
+}
+const restoredReplayAdmission = new WeakMap<object, { readonly observe: () => void; readonly history?: RestoredSourceHistory }>();
 
 /** Recheck independently supplied originals when a restored basis is actually used. */
-export const registerRestoredReplayAdmission = (replay: HouseholdForecastSummaryResult["replay"], admit: () => void): void => {
-  restoredReplayAdmission.set(replay, admit);
+export const registerRestoredReplayAdmission = (replay: HouseholdForecastSummaryResult["replay"],
+  observe: () => void, history?: RestoredSourceHistory): void => {
+  restoredReplayAdmission.set(replay, { observe, ...(history === undefined ? {} : { history }) });
+};
+
+/** Reobserve the exact admitted history without executing another forecast.
+ * Restored bases retain their independently reconstructed terminal inventory. */
+const observeForecastSourceRoot = (forecast: Pick<HouseholdForecastSummaryResult, "replay">): AuthoritativeState | undefined => {
+  const admit = restoredReplayAdmission.get(forecast.replay);
+  if (admit !== undefined) {
+    const history = admit.history;
+    history?.admitModel?.();
+    admit.observe();
+    if (history !== undefined) observeAuthoritativeSourceHistory(history.state, forecast.replay.runContext);
+    return history !== undefined && isAuthoritativeCheckpointSnapshot(history.state) ? history.state : undefined;
+  }
+  const state = forecastTerminalRoots.get(forecast.replay);
+  if (state === undefined) throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: missing source history root");
+  observeAuthoritativeSourceHistory(state, forecast.replay.runContext);
+  return state;
+};
+
+export const observeHouseholdForecastSources = (forecast: Pick<HouseholdForecastSummaryResult, "replay">): void => {
+  observeForecastSourceRoot(forecast);
 };
 
 /** Private committed root for encoding a delta against the last checkpoint. */
 export const householdReplayTerminalRoot = (forecast: HouseholdForecastSummaryResult): AuthoritativeState =>
-  snapshotAuthoritativeCheckpoint(forecastTerminalRoots.get(forecast) ?? forecast.state,
+  snapshotAuthoritativeCheckpoint(forecastTerminalRoots.get(forecast.replay) ?? forecast.state,
     forecastCheckpoints.get(forecast)?.at(-1)?.state);
 
 /** Non-materializing engineering evidence; never exports authoritative state. */
@@ -1220,10 +1301,14 @@ export const householdReplayCheckpointSelection = (
 
 /** Materialized data only; private persistent indexes never cross transport. */
 export const exportHouseholdReplayCheckpoints = (forecast: Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods">): readonly HouseholdReplayCheckpoint[] =>
-  Object.freeze((forecastCheckpoints.get(forecast) ?? []).map(checkpoint => Object.freeze({ ...checkpoint,
-    state: createAuthoritativeState(checkpoint.state),
+{
+  const checkpoints = Object.freeze((forecastCheckpoints.get(forecast) ?? []).map(checkpoint => Object.freeze({ ...checkpoint,
+    state: materializeExecutionState(checkpoint.state),
     primitiveState: materializePrimitiveRuntimeStateStore(checkpoint.primitiveState),
   })));
+  observeHouseholdForecastSources(forecast);
+  return checkpoints;
+};
 
 /** Portable export consumes safe persistent views, not the legacy materialized
  * diagnostic API above. No additional history/cache is retained by this view. */
@@ -1296,10 +1381,10 @@ export const registerHouseholdReplayCheckpoints = (
   forecastCheckpoints.set(forecast, Object.freeze(restored));
 };
 
-/** Direct summary evaluation. Financial operations are shared with the detailed adapter. */
-export const runHouseholdForecastSummary = (
+const collectHouseholdForecastSummary = (
   request: { readonly kernel: CompiledHouseholdKernel; readonly overlay?: HouseholdExecutionOverlay; readonly runContext: RunContext; readonly participants?: readonly HouseholdKernelParticipant[] },
   observer?: PerformanceObserver,
+  privateComparison = false,
 ): HouseholdForecastSummaryResult => {
   const baseKernel = request.overlay === undefined ? request.kernel : applyHouseholdExecutionOverlay(request.kernel, request.overlay);
   const kernel = request.participants === undefined ? baseKernel : applyHouseholdExecutionOverlay(baseKernel, {
@@ -1310,6 +1395,7 @@ export const runHouseholdForecastSummary = (
   const summaries: HouseholdForecastSummaryPeriod[] = [];
   const checkpoints: HouseholdReplayCheckpoint[] = [];
   let terminalRoot: AuthoritativeState | undefined;
+  let forecast: HouseholdForecastSummaryResult | undefined;
   try {
     const result = runCompiledHouseholdProjectionInternal({
       compiled: { ...kernel.executable, executionKernel: kernel }, runContext,
@@ -1326,16 +1412,69 @@ export const runHouseholdForecastSummary = (
           runtime: operationRuntime(state),
           state: cloneAuthoritativeState(state), primitiveState: createPrimitiveRuntimeStateStore(primitiveState) }));
       },
-    });
-    const forecast: HouseholdForecastSummaryResult = Object.freeze({ ...result, resultTier: "summary", periods: Object.freeze(summaries),
+    }, undefined, privateComparison);
+    forecast = Object.freeze({ ...result, resultTier: "summary", periods: Object.freeze(summaries),
       replay: Object.freeze({ kernel, runContext }) });
     forecastCheckpoints.set(forecast, Object.freeze(checkpoints));
-    if (terminalRoot !== undefined) forecastTerminalRoots.set(forecast, terminalRoot);
+    forecastTerminalRoots.set(forecast.replay, terminalRoot ?? cloneAuthoritativeState(result.state));
     performance.counters({ replayCheckpointsRetained: checkpoints.length, summaryPeriodsRetained: summaries.length });
-    return forecast;
   } finally {
     performance.finish();
   }
+  return forecast;
+};
+
+/** Direct summary evaluation. Financial operations are shared with the detailed adapter. */
+export const runHouseholdForecastSummary = (
+  request: Parameters<typeof collectHouseholdForecastSummary>[0],
+  observer?: PerformanceObserver,
+): HouseholdForecastSummaryResult => {
+  const forecast = collectHouseholdForecastSummary(request, observer);
+  observeHouseholdForecastSources(forecast);
+  return forecast;
+};
+
+/** Regenerate cold replay evidence without releasing the private comparison run.
+ * The restore caller observes the admitted archive at its own return boundary. */
+export const assertHouseholdReplayRegenerates = (
+  forecast: Pick<HouseholdForecastSummaryResult, "replay" | "periods" | "runMetadata">,
+  terminal: AuthoritativeState,
+  checkpoints: readonly HouseholdReplayCheckpoint[],
+  includesFixedLoans: boolean,
+): void => {
+  const { kernel, runContext } = forecast.replay;
+  const expected = collectHouseholdForecastSummary({ kernel, runContext }, undefined, true);
+  const mismatch = (boundary: string): never => {
+    // Regeneration may stop on a missing original. Observe the actual
+    // archived postings before classifying the result as a replay mismatch.
+    observeAuthoritativeSourceHistory(terminal, runContext);
+    throw new Error(`HOUSEHOLD_REPLAY_BASIS_MISMATCH: ${includesFixedLoans ? "fixed loan " : ""}committed history differs from independent execution (${boundary})`);
+  };
+  if (canonicalSerialize(expected.runMetadata) !== canonicalSerialize(forecast.runMetadata)) mismatch("run metadata");
+  if (!equalHouseholdReplaySummaries(expected.periods, forecast.periods)) mismatch("period summaries");
+  const expectedAt = new Map((forecastCheckpoints.get(expected) ?? []).map(checkpoint => [checkpoint.at, checkpoint]));
+  if (checkpoints.length !== expectedAt.size) mismatch("checkpoint count");
+  const equal = (left: unknown, right: unknown) => canonicalSerialize(left) === canonicalSerialize(right);
+  let archivedBefore = kernel.executable.reconciledOpeningState, expectedBefore = archivedBefore;
+  const compare = (archived: AuthoritativeState, reconstructed: AuthoritativeState, boundary: string) => {
+    const actual = authoritativeCheckpointDelta(archived, archivedBefore, equal);
+    const regenerated = authoritativeCheckpointDelta(reconstructed, expectedBefore, equal);
+    for (const key of Object.keys(regenerated.records)) {
+      if (!equal(actual.records[key], regenerated.records[key])) mismatch(`${boundary} records: ${key}`);
+    }
+    for (const key of Object.keys(regenerated.identities)) {
+      if (!equal(actual.identities[key], regenerated.identities[key])) mismatch(`${boundary} identities: ${key}`);
+    }
+    archivedBefore = archived;
+    expectedBefore = reconstructed;
+  };
+  for (const checkpoint of checkpoints) {
+    const reconstructed = expectedAt.get(checkpoint.at) ?? mismatch("checkpoint frontier");
+    if (!equal(checkpoint.primitiveState, reconstructed.primitiveState) ||
+        !equal(checkpoint.runtime, reconstructed.runtime)) mismatch("checkpoint runtime");
+    compare(checkpoint.state, reconstructed.state, "checkpoint");
+  }
+  compare(terminal, forecastTerminalRoots.get(expected.replay)!, "terminal");
 };
 
 export type HouseholdReplayPhase = "replay_started" | "replay_executed" | "verification_started"
@@ -1441,15 +1580,20 @@ export const replayHouseholdForecastWindow = (
     throw new ValidationError({ severity: "error", code: "HOUSEHOLD_REPLAY_WINDOW_INVALID",
       message: "Replay requires an aligned window of successfully committed forecast periods.", entityType: "household_projection" });
   const performance = createPerformanceSession(observer);
+  let result: CompiledHouseholdProjectionRunResult | undefined;
+  let replayedRoot: AuthoritativeState | undefined;
   try {
-    restoredReplayAdmission.get(forecast.replay)?.();
+    const admission = restoredReplayAdmission.get(forecast.replay);
+    if (phase !== undefined) observeForecastSourceRoot(forecast);
+    else admission?.history?.admitModel?.();
     const checkpoint = (forecastCheckpoints.get(forecast) ?? []).filter(value => value.at <= selectedWindow.start).at(-1);
     report("replay_started");
     const replay = runCompiledHouseholdProjectionInternal({
       compiled: { ...kernel.executable, executionKernel: kernel }, runContext,
     }, performance, { accept: () => {}, retain: period => period.start >= selectedWindow.start && period.end <= selectedWindow.end,
       ...(checkpoint === undefined ? {} : { resume: checkpoint }), stopAfter: selectedWindow.end,
-      retainDiagnostics: period => period.start >= selectedWindow.start });
+      retainDiagnostics: period => period.start >= selectedWindow.start,
+      checkpoint: (_period, state) => { replayedRoot = state; } });
     report("replay_executed");
     performance.counters({ replayCheckpointResumes: checkpoint === undefined ? 0 : 1,
       replayDetailPeriodsMaterialized: replay.periods.length });
@@ -1458,13 +1602,24 @@ export const replayHouseholdForecastWindow = (
     report("summary_materialized");
     const summariesMatch = equalHouseholdReplaySummaries(summaries, selected, report);
     if (canonicalSerialize(replay.runMetadata) !== canonicalSerialize(forecast.runMetadata) || !summariesMatch) {
+      // A replay can stop short after an original is withdrawn, including a
+      // lender occurrence that had no funded posting in the archived state.
+      // Reobserve the archived basis before classifying an economic mismatch.
+      observeForecastSourceRoot(forecast);
+      const sourceDenial = replay.diagnostics.find(issue => issue.code === "FIXED_LOAN_ORIGINAL_NOT_ADMITTED");
+      if (sourceDenial !== undefined) throw new ValidationError(sourceDenial);
       report("replay_mismatched");
       throw new ValidationError({ severity: "error", code: "HOUSEHOLD_REPLAY_BASIS_MISMATCH",
         message: "Immutable forecast artifacts did not reproduce the displayed forecast exactly.", entityType: "household_projection" });
     }
     report("replay_verified");
-    return Object.freeze({ ...replay, requestedHorizon: Object.freeze({ ...selectedWindow }) });
+    result = Object.freeze({ ...replay, requestedHorizon: Object.freeze({ ...selectedWindow }) });
   } finally {
     performance.finish();
   }
+  const archivedRoot = observeForecastSourceRoot(forecast);
+  const selectedRoot = replayedRoot ?? result.state;
+  if (archivedRoot === undefined || !equalAuthoritativeSourceHistory(archivedRoot, selectedRoot))
+    observeAuthoritativeSourceHistory(selectedRoot, runContext);
+  return result;
 };

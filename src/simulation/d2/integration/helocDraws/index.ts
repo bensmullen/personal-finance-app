@@ -2,7 +2,7 @@ import { accountingTransactionId, createAccountingLeg, createAccountingTransacti
 import { ValidationError } from "../../../../diagnostics/index.js";
 import { idempotencyKey } from "../../../../identity/index.js";
 import { calculationTraceId, calculationTraceRef } from "../../../../lineage/index.js";
-import { applyAccountingTransactionAtomically, registerAuthoritativeIdentity } from "../../../../state/index.js";
+import { applyAccountingTransactionAtomically, registerAuthoritativeIdentity, registerHouseholdCallbackOwner } from "../../../../state/index.js";
 import { instant } from "../../../../time/index.js";
 import { Money, USD } from "../../../../values/index.js";
 import { applyHouseholdExecutionOverlay, runHouseholdKernel, type CompiledHouseholdKernel,
@@ -39,6 +39,8 @@ export interface HelocDrawDiagnostic {
   readonly traceRefs: readonly string[];
 }
 const participantId = "d2_heloc_draws";
+const ownedParticipants = new WeakSet<object>();
+registerHouseholdCallbackOwner("heloc_draws", participant => ownedParticipants.has(participant));
 const at = (date: string) => instant(`${date}T00:00:00.000Z`);
 const same = (a: unknown, b: unknown) => canonicalSerialize(a) === canonicalSerialize(b);
 // The household portable replay wire format admits exact Money and rule values,
@@ -96,7 +98,7 @@ const unposted = (input: HelocDrawInput): readonly HelocDrawDiagnostic[] => Obje
 export function createHelocDrawParticipant(configuration: HelocDrawInput): HouseholdKernelParticipant {
   const input = immutableConfiguration({ ...configuration, quotes: [...configuration.quotes].sort((a, b) =>
     canonicalSerialize([a.request.period.start, a.request.lineId]).localeCompare(canonicalSerialize([b.request.period.start, b.request.lineId]))) });
-  return Object.freeze({ id: participantId, version: "d2-draw-only/v1", portableCodec: "d2-heloc-draws/v1", economicInputs: immutableConfiguration(portableRates(input)),
+  const participant = Object.freeze({ id: participantId, version: "d2-draw-only/v1", portableCodec: "d2-heloc-draws/v1", economicInputs: immutableConfiguration(portableRates(input)),
     prepare: (context, period, opening, work = [], tier = "detail") => {
       const active = input.quotes.filter(q => at(q.request.period.start) < period.end && at(q.request.period.endExclusive) > period.start);
       const operationIds = new Set<string>(); const authorizations = new Set<string>(); const lines = new Set<string>();
@@ -214,6 +216,8 @@ export function createHelocDrawParticipant(configuration: HelocDrawInput): House
       return { id: participantId, operations };
     },
   } satisfies HouseholdKernelParticipant);
+  ownedParticipants.add(participant);
+  return participant;
 }
 registerHouseholdParticipantCodec({ codec: "d2-heloc-draws/v1", restore: value => createHelocDrawParticipant(restoreRates(value) as HelocDrawInput) });
 

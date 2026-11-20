@@ -102,12 +102,14 @@ describe("#149 S8-3 real joint-household funded RMD portable acceptance", () => 
         expect(child(selected, "present")).toEqual({ state: canonicalSerialize(expected.state), periods: canonicalSerialize(expected.periods),
           publisherRead: true, wageRead: true, qualification: "qualified", coverage: "incomplete", satisfied: ["700"] });
       }
-      const selected = detail.periods.at(-1)!.period, expected = replayHouseholdForecastWindow(summary, selected);
+      const selected = detail.periods.at(-1)!.period;
       for (const mode of ["missing_employer", "changed_wage_bank"])
         expect(child(selected, mode)).toEqual({ rejected: true });
       for (const mode of ["absent", "tampered"]) {
         const result = child(selected, mode);
-        expect(result.state).toBe(canonicalSerialize(expected.state));
+        expect(result.rejected).toBe(true);
+        expect(result).not.toHaveProperty("state");
+        expect(result).not.toHaveProperty("periods");
         expect(result.publisherRead).toBe(true);
         expect(result.qualification).toBe(mode === "absent" ? "unavailable" : "incomplete");
         expect(result.coverage).toBe("incomplete"); expect(result.satisfied).toEqual(["0"]);

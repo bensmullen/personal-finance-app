@@ -10,16 +10,22 @@ import { attachRetirementCash, evaluateFundedRmdSatisfaction } from "../../../..
 import { readRetirementRawSource, qualifyRetirementRawSource } from "../../../../src/simulation/d2/integration/retirementCash/source.js";
 import { funded, sources } from "./fundedScenario.js";
 import { fixture } from "./scenario.js";
+import { expectRetirementReplayRejection } from "../jointHousehold/sourceHistoryEfficiency/retirementReplayRejection.js";
 const path = process.env.PFM_RETIREMENT_CASH_TEST_PAYLOAD;
 if (!path) throw new Error("RETIREMENT_CASH_TEST_PAYLOAD_MISSING");
-const { artifact, selected, fundedPlan, sourceMode = "present" } = JSON.parse(readFileSync(path, "utf8"));
+const planEnvironment = process.env.PFM_RETIREMENT_CASH_TEST_PLAN;
+// Existing positive launchers can supply documentary plan inputs alongside the artifact.
+const legacy = planEnvironment === undefined ? JSON.parse(readFileSync(path, "utf8")) : undefined;
+const fundedPlan = planEnvironment === undefined ? legacy.fundedPlan : JSON.parse(planEnvironment);
+const sourceMode = process.env.PFM_RETIREMENT_CASH_TEST_SOURCE_MODE ?? "present";
 // Reconstruct the synthetic independent publisher, never from artifact bytes.
 const f = fundedPlan ? fixture(fundedPlan.months) : undefined;
 const plan = f && funded(f, fundedPlan.label, fundedPlan.amounts);
 const newKernel = plan && attachRetirementCash(f!.kernel, plan.cash).kernel;
 let sourceEvidence;
-let newPosting;
+let negative;
 if (fundedPlan) {
+  const posted = sourceMode === "present" ? undefined : runHouseholdKernel({ kernel: newKernel!, runContext: f!.context });
   if (sourceMode === "absent") sources.delete(plan!.raw.sourceId);
   if (sourceMode === "tampered") sources.set(plan!.raw.sourceId, { ...plan!.raw,
     availability: plan!.raw.availability.map(a => ({ ...a, knownAt: instant("2099-01-01T00:00:00.000Z") })) });
@@ -30,8 +36,17 @@ if (fundedPlan) {
     throw new Error("RETIREMENT_TEST_INDEPENDENT_PUBLISHER_NOT_QUALIFIED");
   if (sourceMode !== "present") {
     const rejected = runHouseholdKernel({ kernel: newKernel!, runContext: f!.context });
-    newPosting = { periods: rejected.periods.length, state: canonicalSerialize(rejected.state) };
+    const satisfaction = evaluateFundedRmdSatisfaction(plan!.reference, posted!.state, f!.context, f!.context.simulationEnd);
+    negative = { sourceEvidence, newPosting: { periods: rejected.periods.length, state: canonicalSerialize(rejected.state) },
+      satisfaction: { coverage: satisfaction.coverage, reason: satisfaction.reason ?? null,
+        satisfied: satisfaction.annual?.obligations.map(o => canonicalSerialize(o.satisfied)) ?? null } };
   }
+}
+const { artifact, selected } = legacy ?? JSON.parse(readFileSync(path, "utf8"));
+if (negative) {
+  const rejected = expectRetirementReplayRejection(() => restorePortableHouseholdReplayArtifact(artifact));
+  process.stdout.write(JSON.stringify({ rejected, ...negative }));
+  process.exit(0);
 }
 const restored = restorePortableHouseholdReplayArtifact(artifact);
 const result = replayHouseholdForecastWindow(restored, selected);
@@ -40,5 +55,5 @@ if (canonicalSerialize(result.state) !== canonicalSerialize(twice.state) || cano
   throw new Error("RETIREMENT_TEST_REPLAY_CHANGED");
 const satisfaction = plan && evaluateFundedRmdSatisfaction(plan.reference, result.state, f!.context, f!.context.simulationEnd);
 process.stdout.write(JSON.stringify({ state: canonicalSerialize(result.state), periods: canonicalSerialize(result.periods),
-  ...(satisfaction ? { sourceEvidence, newPosting, satisfaction: { coverage: satisfaction.coverage, reason: satisfaction.reason ?? null,
+  ...(satisfaction ? { sourceEvidence, satisfaction: { coverage: satisfaction.coverage, reason: satisfaction.reason ?? null,
     satisfied: satisfaction.annual?.obligations.map(o => canonicalSerialize(o.satisfied)) ?? null } } : {}) }));

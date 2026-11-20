@@ -13,6 +13,7 @@ import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayAr
 import { d, fixture, ids, source } from "./scenario.js";
 import { rmdObligationId, type RmdRequest } from "../../../../src/simulation/d2/retirement/distributions/index.js";
 import { funded, sources } from "./fundedScenario.js";
+import { expectRetirementReplayRejection } from "../jointHousehold/sourceHistoryEfficiency/retirementReplayRejection.js";
 import { canonicalSerialize, createRunContext } from "../../../../src/simulation/run.js";
 
 const execute = (p = funded(), f = fixture()) => runHouseholdKernel({ kernel: attachRetirementCash(f.kernel, p.cash).kernel,
@@ -219,7 +220,9 @@ describe("J2-A actual account-scoped RMD satisfaction", () => {
     expect(summary.periods, JSON.stringify(summary.diagnostics)).toHaveLength(months);
     expect(summary.state).toEqual(detail.state);
     expect(summary.outputCapabilities?.rmdSatisfaction?.status).toBe("incomplete");
-    const restored = restorePortableHouseholdReplayArtifact(JSON.parse(JSON.stringify(createPortableHouseholdReplayArtifact(summary))));
+    const artifact = createPortableHouseholdReplayArtifact(summary);
+    const serializedArtifact = JSON.stringify(artifact);
+    const restored = restorePortableHouseholdReplayArtifact(JSON.parse(serializedArtifact));
     const selected = detail.periods.at(-1)!.period;
     const once = replayHouseholdForecastWindow(restored, selected), twice = replayHouseholdForecastWindow(restored, selected);
     expect(once.state).toEqual(detail.state);
@@ -228,26 +231,27 @@ describe("J2-A actual account-scoped RMD satisfaction", () => {
     const directory = mkdtempSync(join(tmpdir(), "pfm-funded-rmd-"));
     try {
       const payload = join(directory, "payload.json");
-      writeFileSync(payload, JSON.stringify({ artifact: createPortableHouseholdReplayArtifact(summary), selected,
-        fundedPlan: { months, label: `portable:${months}`, amounts: ["700"] } }));
+      writeFileSync(payload, JSON.stringify({ artifact, selected }));
+      const env = { ...process.env, PFM_RETIREMENT_CASH_TEST_PAYLOAD: payload,
+        PFM_RETIREMENT_CASH_TEST_PLAN: JSON.stringify({ months, label: `portable:${months}`, amounts: ["700"] }) };
       const worker = spawnSync(process.execPath, [fileURLToPath(new URL("../../../../node_modules/vite-node/vite-node.mjs", import.meta.url)),
         fileURLToPath(new URL("./portableWorker.ts", import.meta.url))], {
-        env: { ...process.env, PFM_RETIREMENT_CASH_TEST_PAYLOAD: payload }, encoding: "utf8", maxBuffer: 32 * 1024 * 1024,
+        env, encoding: "utf8", maxBuffer: 32 * 1024 * 1024,
       });
       expect(worker.status, worker.stderr).toBe(0);
       expect(JSON.parse(worker.stdout)).toEqual({ state: canonicalSerialize(once.state), periods: canonicalSerialize(once.periods),
         sourceEvidence: { present: true, qualification: "qualified" }, satisfaction: { coverage: "incomplete",
           reason: "source_not_qualified", satisfied: [canonicalSerialize(money("700"))] } });
       for (const sourceMode of ["absent", "tampered"]) {
-        writeFileSync(payload, JSON.stringify({ artifact: createPortableHouseholdReplayArtifact(summary), selected,
-          fundedPlan: { months, label: `portable:${months}`, amounts: ["700"] }, sourceMode }));
         const unavailable = spawnSync(process.execPath, [fileURLToPath(new URL("../../../../node_modules/vite-node/vite-node.mjs", import.meta.url)),
           fileURLToPath(new URL("./portableWorker.ts", import.meta.url))], {
-          env: { ...process.env, PFM_RETIREMENT_CASH_TEST_PAYLOAD: payload }, encoding: "utf8", maxBuffer: 32 * 1024 * 1024,
+          env: { ...env, PFM_RETIREMENT_CASH_TEST_SOURCE_MODE: sourceMode }, encoding: "utf8", maxBuffer: 32 * 1024 * 1024,
         });
         expect(unavailable.status, `${sourceMode}: ${unavailable.stderr}`).toBe(0);
         const unverified = JSON.parse(unavailable.stdout);
-        expect(unverified.state).toBe(canonicalSerialize(once.state));
+        expect(unverified.rejected).toBe(true);
+        expect(unverified).not.toHaveProperty("state");
+        expect(unverified).not.toHaveProperty("periods");
         expect(unverified.sourceEvidence).toEqual({ present: sourceMode === "tampered",
           qualification: sourceMode === "tampered" ? "incomplete" : "unavailable" });
         expect(unverified.satisfaction).toEqual({ coverage: "incomplete",
@@ -257,8 +261,10 @@ describe("J2-A actual account-scoped RMD satisfaction", () => {
       }
     } finally { rmSync(directory, { recursive: true, force: true }); }
     sources.delete(p.raw.sourceId);
-    const missing = restorePortableHouseholdReplayArtifact(JSON.parse(JSON.stringify(createPortableHouseholdReplayArtifact(summary))));
-    expect(replayHouseholdForecastWindow(missing, selected).state.accounts[ids.bank]!.cash.equals(money("900"))).toBe(true);
+    expectRetirementReplayRejection(() => restorePortableHouseholdReplayArtifact(artifact));
+    expectRetirementReplayRejection(() => restorePortableHouseholdReplayArtifact(JSON.parse(serializedArtifact)));
+    expectRetirementReplayRejection(() => replayHouseholdForecastWindow(restored, selected));
+    expect(once.state.accounts[ids.bank]!.cash.equals(money("900"))).toBe(true);
     expect(result(p, detail.state, f).coverage).toBe("incomplete");
   }, 60_000);
 
