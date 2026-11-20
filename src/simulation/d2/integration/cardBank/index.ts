@@ -149,8 +149,10 @@ export function qualifyCardBankSource(sourceId: string, context: D2SettlementSou
       a.authorizedAt > a.knownAt || a.publishedAt > a.knownAt || a.knownAt > a.effectiveAt ||
       a.knownAt > context.dataCutoff || a.publishedAt > context.asOf || a.effectiveAt >= a.expiresAt)
       return incomplete("source_not_qualified");
+    const chargeSources = c.charges.map(charge => charge.source);
     const sources = [c.statementSource, c.minimum.source, c.postingPolicy.source, c.allocationPolicy.source,
-      c.payment.source, ...c.charges.map(x => x.source)];
+      c.payment.source, ...chargeSources];
+    const selectedSources = new Set(sources);
     if (d.continuity) {
       const evidence = d.continuityProvenance;
       if (!evidence || ![evidence.publishedAt, evidence.knownAt].every(dated) || evidence.publishedAt > evidence.knownAt ||
@@ -169,16 +171,15 @@ export function qualifyCardBankSource(sourceId: string, context: D2SettlementSou
         }
       }
     }
-    if (new Set(d.provenance.map(w => w.source.ruleSnapshotId)).size !== d.provenance.length)
-      return incomplete("source_not_qualified");
+    const provenance = new Map(d.provenance.map(w => [w.source.ruleSnapshotId, w] as const));
+    if (provenance.size !== d.provenance.length) return incomplete("source_not_qualified");
     for (const s of sources) {
-      const witnesses = d.provenance.filter(w => same(w.source, s));
-      if (witnesses.length !== 1) return incomplete("source_not_qualified");
-      const w = witnesses[0]!;
+      const w = provenance.get(s.ruleSnapshotId);
+      if (!w || !same(w.source, s)) return incomplete("source_not_qualified");
       if (![w.publishedAt, w.knownAt].every(dated) || w.publishedAt > w.knownAt || w.knownAt > context.dataCutoff ||
         w.publishedAt > context.asOf || s.asOf > w.knownAt.slice(0, 10) ||
-        (sources.slice(0, 5 + c.charges.length).includes(s) && w.knownAt > a.effectiveAt) ||
-        (c.charges.some(x => same(x.source, s)) && w.knownAt > d.charge.effectiveAt))
+        (selectedSources.has(s) && w.knownAt > a.effectiveAt) ||
+        (w.knownAt > d.charge.effectiveAt && chargeSources.some(charge => charge.ruleSnapshotId === s.ruleSnapshotId && same(charge, s))))
         return incomplete("source_not_qualified");
     }
     if (d.continuity) {

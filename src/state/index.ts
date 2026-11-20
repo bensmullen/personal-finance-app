@@ -15,7 +15,7 @@ import { prepareSsaMedicareDeductionProposals, prepareSourcedSsaWithoutMedicare,
 import type { ClaimId, RecognitionId, SettlementId } from "../semantics/identity.js";
 import type { CalculationTraceId } from "../lineage/index.js";
 import { createRecognitionFact as createRecognitionFactWithHistory, type RecognitionFactDraft, type RecognitionFact } from "../semantics/recognition.js";
-import { Money, Quantity, USD, decimal, type Currency, type Rate } from "../values/index.js";
+import { DecimalAmount, Money, Quantity, USD, decimal, type Currency, type Rate } from "../values/index.js";
 import { instant, type Instant } from "../time/index.js";
 import { sha256 } from "../rules/tax/t1b/contentIdentity.js";
 
@@ -547,6 +547,46 @@ const paymentValue = (value: unknown): string => {
         : Object.fromEntries(Object.keys(v).sort().map(k => [k, plain((v as Record<string, unknown>)[k])])) : v;
   return JSON.stringify(plain(value));
 };
+
+// Journal and publisher responses normally have the same plain shape. Walk
+// both values without allocating sorted copies or rendering every amount.
+// Keep the archival serializer for equivalent encodings with different shapes
+// and for value types with their own serialization.
+const matchingPaymentFields = (left: unknown, right: unknown): boolean => {
+  if (left === null || right === null || typeof left !== "object" || typeof right !== "object")
+    return left === right && typeof left !== "function" && typeof left !== "symbol";
+  const prototype = Object.getPrototypeOf(left);
+  if (prototype !== Object.getPrototypeOf(right)) return false;
+  if (prototype === Money.prototype) {
+    const a = left as Money, b = right as Money;
+    return Object.getPrototypeOf(a.amount) === DecimalAmount.prototype && Object.getPrototypeOf(b.amount) === DecimalAmount.prototype &&
+      typeof a.currency.code === "string" && a.currency.code === b.currency.code &&
+      (a.amount === b.amount || a.amount.equals(b.amount));
+  }
+  if (prototype === Array.prototype) {
+    const a = left as readonly unknown[], b = right as readonly unknown[];
+    if (a.length !== b.length || Object.hasOwn(a, "map") || Object.hasOwn(b, "map") ||
+        Object.hasOwn(a, "constructor") || Object.hasOwn(b, "constructor")) return false;
+    for (let i = 0; i < a.length; i++) {
+      const x = Object.getOwnPropertyDescriptor(a, i), y = Object.getOwnPropertyDescriptor(b, i);
+      if (!x || !("value" in x) || !y || !("value" in y) || !matchingPaymentFields(x.value, y.value)) return false;
+    }
+    return true;
+  }
+  if ((prototype !== Object.prototype && prototype !== null) || "toJSON" in left || "toJSON" in right) return false;
+  const keys = Object.keys(left);
+  if (keys.length !== Object.keys(right).length) return false;
+  for (const key of keys) {
+    // Leave accessors to the serializer so a live value is observed once.
+    const a = Object.getOwnPropertyDescriptor(left, key), b = Object.getOwnPropertyDescriptor(right, key);
+    if (!a || !("value" in a) || !b?.enumerable || !("value" in b) || !matchingPaymentFields(a.value, b.value)) return false;
+  }
+  return true;
+};
+
+const samePaymentValue = (left: unknown, right: unknown): boolean =>
+  matchingPaymentFields(left, right) || paymentValue(left) === paymentValue(right);
+
 const frozenPaymentValues = new WeakSet<object>();
 const freezePayment = <T>(v: T): T => {
   if (v === null || typeof v !== "object" || v instanceof Money) return v;
@@ -566,7 +606,7 @@ const validatePaymentSources = (input: SsaMedicarePaymentInput, observation?: D2
   const values = (v: SsaMedicarePaymentInput) => ({ payable: v.payable, right: v.right, requests: v.requests,
     bankAccountId: v.bankAccountId, bankCashBefore: v.bankCashBefore, rightSettlementId: v.rightSettlementId, sourceInputs: v.sourceInputs,
     ...(v.nativeHousehold === undefined ? {} : { nativeHousehold: v.nativeHousehold }) });
-  if (paymentValue(values(input)) !== paymentValue(values(qualified))) paymentInvalid("Payment differs from requalified A1/C2 source authority");
+  if (!samePaymentValue(values(input), values(qualified))) paymentInvalid("Payment differs from requalified A1/C2 source authority");
 };
 export const isNativeSsaMedicareOriginalInput = (input: unknown): boolean =>
   (input as { readonly mode?: unknown } | null)?.mode === "ssa-medicare-originals/v2";
@@ -988,8 +1028,10 @@ export const restoreAuthoritativeCheckpointDelta = (before: AuthoritativeState, 
     for (const [id, value] of Object.entries(change.set)) {
       if (!value || typeof value !== "object" || Array.isArray(value)) return invalid();
       const prior = index.get(id);
-      if (immutable.has(key) && prior !== undefined && paymentValue(prior) !== paymentValue(value)) return invalid();
-      if (prior !== undefined && paymentValue(prior) === paymentValue(value)) continue;
+      if (prior !== undefined) {
+        if (samePaymentValue(prior, value)) continue;
+        if (immutable.has(key)) return invalid();
+      }
       index.set(id, freezePayment(value)); changed.push(id);
     }
     observe?.(0, changed.length + change.remove.length);
@@ -1005,7 +1047,7 @@ export const restoreAuthoritativeCheckpointDelta = (before: AuthoritativeState, 
       for (const id of change.remove) Reflect.deleteProperty(record, id);
       for (const id of changed) {
         record[id] = index.get(id)!;
-        if (paymentValue(record[id]) !== paymentValue(change.set[id])) return invalid();
+        if (!samePaymentValue(record[id], change.set[id])) return invalid();
       }
     } else {
       const guard = key === "d2PostedTransactions" ? d2PostingWrite as (key: string, a: object | undefined, b: object | undefined) => void
@@ -1854,7 +1896,7 @@ const qualifyRetirement = (d: RetirementDistributionRecord, context: D2Settlemen
   if (d.source.knownAt > context.dataCutoff) return { status: "incomplete", reason: "source_not_qualified" };
   if (!retirementSourceAuthority) return { status: "incomplete", reason: "source_unavailable" };
   const result = retirementSourceAuthority.qualify(d.source, context);
-  if (result.status === "qualified" && paymentValue(result.distribution) !== paymentValue(d)) d2Invalid("Retirement evidence differs from independently qualified original source");
+  if (result.status === "qualified" && !samePaymentValue(result.distribution, d)) d2Invalid("Retirement evidence differs from independently qualified original source");
   return result;
 };
 /** Restored cash truth is portable even when its source owner is unavailable.
@@ -1987,7 +2029,7 @@ export const requalifyPayrollHealthPosting = (proof: D2PostedTransactionProof, c
   if (proof.registration.kind !== "payroll_health_deduction") return d2Invalid("Missing original payroll health posting");
   const d = proof.registration.deduction, qualified = qualifyPayrollHealthSource(d.source, context);
   if (qualified.status !== "qualified") throw new Error(`PAYROLL_HEALTH_SOURCE_INCOMPLETE: ${qualified.reason}`);
-  if (paymentValue(qualified.deduction) !== paymentValue(d) || paymentValue(qualified.transaction) !== paymentValue(proof.transaction))
+  if (!samePaymentValue(qualified.deduction, d) || !samePaymentValue(qualified.transaction, proof.transaction))
     d2Invalid("Original payroll health source, legal bases or signed journal changed");
   return d;
 };
@@ -2029,7 +2071,7 @@ const compactHouseholdEvidence = (e: HouseholdDomainPostingEvidence): HouseholdD
 const qualifyHouseholdPosting = (transaction: AccountingTransaction, evidence: HouseholdDomainPostingEvidence,
   currentCutoffCheck = false): HouseholdPayrollHealthEvidence | undefined => {
   const { context: c, route, originals } = freezePayment(evidence);
-  if (originals.length > 8 || paymentValue(evidence) !== paymentValue(compactHouseholdEvidence(evidence)))
+  if (originals.length > 8 || !samePaymentValue(evidence, compactHouseholdEvidence(evidence)))
     d2Invalid("Household evidence permits only bounded typed references and event context");
   instant(c.asOf); instant(c.dataCutoff); instant(c.eventAt);
   if (evidence.version !== "household-domain-posting/v1" || route.version !== "household-bank-route/v1" ||
@@ -2060,11 +2102,11 @@ const qualifyHouseholdOriginals = (transaction: AccountingTransaction, c: Househ
         !["person", "household", "organization", "account"].includes(witness.source.kind) ||
         !["person", "household", "organization", "account"].includes(witness.payer.kind)) d2Invalid("Invalid economic original reference");
     const qualified = householdEconomicAuthorities.get(JSON.stringify([ref.family, ref.publisherId]))?.qualify(ref, c);
-    if (!qualified || paymentValue(qualified.witness) !== paymentValue(witness) ||
-        paymentValue(qualified.context) !== paymentValue(c) || paymentValue(qualified.transaction) !== paymentValue(transaction) ||
-        paymentValue([...qualified.requiredFamilies].sort()) !== paymentValue(families))
+    if (!qualified || !samePaymentValue(qualified.witness, witness) ||
+        !samePaymentValue(qualified.context, c) || !samePaymentValue(qualified.transaction, transaction) ||
+        !samePaymentValue([...qualified.requiredFamilies].sort(), families))
       d2Invalid("Independent economic ORIGINAL missing, amended, withdrawn or journal changed");
-    if (nativeSource !== undefined && paymentValue(qualified!.nativeSource) !== paymentValue(nativeSource))
+    if (nativeSource !== undefined && !samePaymentValue(qualified!.nativeSource, nativeSource))
       d2Invalid("Independent native plan/member or issuer/liability source identity changed");
     if (transaction.type === "payroll_income" && ref.family === "wage" && families.includes("payroll_health")) {
       const health = originals.find(row => row.original.family === "payroll_health")!.original;
@@ -2110,7 +2152,7 @@ const qualifyNativePosting = (tx: AccountingTransaction, a: NativeHouseholdPosti
       sourceId: "unused", revisionId: "unused", digest: "unused" }, originals: a.originals });
   const projected = { version: a.version, transactionId: a.transactionId, family: a.family, cashRole: a.cashRole,
     context: compact.context, ...(a.route === undefined ? {} : { route: compact.route }), originals: compact.originals };
-  if (paymentValue(a) !== paymentValue(projected) || a.version !== "native-household-posting/v1" ||
+  if (!samePaymentValue(a, projected) || a.version !== "native-household-posting/v1" ||
       a.transactionId !== tx.id || a.family !== family || a.cashRole !== (nonbank ? "nonbank" : "bank") ||
       c.householdId !== householdId || c.personId !== personId || c.bankAccountId !== bankAccountId ||
       c.direction !== direction || c.eventAt !== tx.date || c.dataCutoff > c.asOf ||
@@ -2824,7 +2866,7 @@ const qualifyD2Receipt = (receipt: D2SettlementReceipt, context: D2SettlementSou
   const authority = d2SourceAuthorities.get(receipt.kind);
   if (authority === undefined) return { status: "incomplete", reason: "source_unavailable" };
   const result = authority.qualify(freezePayment(receipt.source), Object.freeze({ ...context }));
-  if (result.status === "qualified" && paymentValue(result.receipt) !== paymentValue(receipt))
+  if (result.status === "qualified" && !samePaymentValue(result.receipt, receipt))
     d2Invalid("Receipt differs from independently requalified source, approvals or actual signed journals");
   return result;
 };
@@ -2862,8 +2904,8 @@ const matchD2PostedTransaction = (state: AuthoritativeState, receipt: D2Settleme
   // Their exact transaction and underlying source identity still must match.
   const { operationId: _actualOperation, ...actualOriginal } = proof.registration;
   const { operationId: _expectedOperation, ...expectedOriginal } = registration;
-  if (paymentValue(proof.transaction) !== paymentValue(expected) ||
-      paymentValue(role === "original" ? actualOriginal : proof.registration) !== paymentValue(role === "original" ? expectedOriginal : registration))
+  if (!samePaymentValue(proof.transaction, expected) ||
+      !samePaymentValue(role === "original" ? actualOriginal : proof.registration, role === "original" ? expectedOriginal : registration))
     d2Invalid("Actual archived canonical posting/source binding differs from receipt");
   return true;
 };
@@ -2895,7 +2937,10 @@ export const admitS4OpeningSources = (state: AuthoritativeState, current: D2Sett
 const observeD2SettlementReceiptHistory = (state: AuthoritativeState, context: D2SettlementSourceContext,
   retirementObservedSeparately: boolean): void => {
   if (state.d2PostedTransactions === undefined && state.d2SettlementReceipts === undefined) return;
-  const receipts = Object.values(state.d2SettlementReceipts ?? {});
+  const receiptRecord = state.d2SettlementReceipts;
+  const receiptIndex = receiptRecord === undefined ? undefined : indexedRecords.get(receiptRecord)?.index;
+  const receipts = receiptIndex === undefined ? Object.values(receiptRecord ?? {})
+    : Array.from(receiptIndex.entries(), ([, row]) => row as D2SettlementReceipt);
   const nativePostingsObservedByReceipt = new Set<string>();
   for (const receipt of receipts) {
     if (!receipt.nativeHousehold) continue;
@@ -2987,7 +3032,7 @@ export const equalAuthoritativeSourceHistory = (left: AuthoritativeState, right:
   (["d2PostedTransactions", "d2SettlementReceipts", "retirementDistributionAllocations", "ssaMedicarePayments"] as const)
     .every(key => checkpointIndex(left, key).changesSince(checkpointIndex(right, key)).changes
       .every(change => change.before !== undefined && change.after !== undefined &&
-        paymentValue(change.before) === paymentValue(change.after)));
+        samePaymentValue(change.before, change.after)));
 
 interface D2RemainingReimbursement {
   readonly remainingReimbursement?: { readonly status: "incomplete";

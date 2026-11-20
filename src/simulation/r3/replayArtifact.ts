@@ -163,9 +163,12 @@ const decode = (wire: Wire, compactGraph: boolean, references = new Map<number, 
     case "array": return Object.freeze((value as Wire[]).map(child));
     case "record": {
       const entries = value as [string, Wire][];
-      if (new Set(entries.map(([key]) => key)).size !== entries.length)
-        throw new Error("HOUSEHOLD_REPLAY_ARTIFACT_UNSUPPORTED: duplicate record key");
-      return Object.freeze(Object.fromEntries(entries.map(([key, item]) => [key, child(item)])));
+      const keys = new Set<string>();
+      return Object.freeze(Object.fromEntries(entries.map(([key, item]) => {
+        if (keys.has(key)) throw new Error("HOUSEHOLD_REPLAY_ARTIFACT_UNSUPPORTED: duplicate record key");
+        keys.add(key);
+        return [key, child(item)];
+      })));
     }
     default: throw new Error("HOUSEHOLD_REPLAY_ARTIFACT_UNSUPPORTED: unknown value representation");
   }
