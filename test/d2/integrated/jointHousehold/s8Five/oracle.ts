@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import type { AccountingTransaction } from "../../../../../src/accounting/index.js";
+import { accountingTransactionId, type AccountingTransaction } from "../../../../../src/accounting/index.js";
 import type { CompiledHouseholdProjectionRunResult } from "../../../../../src/simulation/householdExecution.js";
 import { depositOperationId, originalOperationId } from "../../../../../src/simulation/d2/integration/fsaCash/source.js";
 import { idempotencyKey } from "../../../../../src/identity/index.js";
@@ -154,8 +154,8 @@ export function assertWitness(witness: Witness, expected: readonly (readonly Ent
     }
   }
   for (const original of sources.medical) {
-    expect(archive[originalOperationId(original)]?.registration.kind).toBe("fsa_paid_reimbursement");
-    expect(archive[depositOperationId(original)]?.registration.kind).toBe("fsa_paid_reimbursement");
+    expect(archive[accountingTransactionId(originalOperationId(original))]?.registration.kind).toBe("fsa_paid_reimbursement");
+    expect(archive[accountingTransactionId(depositOperationId(original))]?.registration.kind).toBe("fsa_paid_reimbursement");
   }
   expect(Object.keys(state.ssaMedicarePayments!)).toHaveLength(count);
   for (const row of Object.values(state.ssaMedicarePayments!)) {

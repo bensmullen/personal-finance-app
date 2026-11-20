@@ -12,11 +12,11 @@ import { fixture as loanFixture } from "../../fixedLoanOriginalBridge/scenario.j
 import { ids as fixedIds } from "../../householdBankAuthority/scenario.js";
 import { ids as helocIds, documents } from "../../helocServicing/scenario.js";
 import { bank, bankEvent, ids, revision, sameObservation, seenAt, start } from "./bank.js";
-import { bytes, mapDocument, observe, testId } from "./sourceMeter.js";
+import { bytes, mapDocument, observe, sourceMeterActive, testId } from "./sourceMeter.js";
 
 const fsa = new Map<string, FsaCashSource>();
 const cards = new Map<string, CardBankDocument>();
-const issuer = new Map<string, { original: HelocServiceDocument; size: number }>();
+const issuer = new Map<string, { original: HelocServiceDocument; size?: number }>();
 const helocBank = new Map<string, HelocBankDebit>();
 const lender = new Map<string, FixedLoanContractOriginal>();
 const installments = new Map<string, FixedLoanPaymentOriginal>();
@@ -39,6 +39,7 @@ export function installCashSources(): void {
     const row = issuer.get(id);
     if (!row || cashFault.missing === id) return undefined;
     const original = cashFault.heloc?.(row.original) ?? row.original;
+    if (!sourceMeterActive()) return original;
     const history = original.request.checkpoint.history.slice();
     helocReads.historyRows += history.length;
     for (const [index, row] of original.request.checkpoint.history.entries()) {
@@ -49,7 +50,7 @@ export function installCashSources(): void {
       } });
     }
     return observe("helocIssuer", { ...original, request: { ...original.request, checkpoint: { ...original.request.checkpoint, history } } },
-      original === row.original ? row.size : bytes(original));
+      original === row.original ? (row.size ??= bytes(original)) : bytes(original));
   } }, bank: { read: id => observe("helocBank", cashFault.missing === id ? undefined : helocBank.get(id)) } });
   registerFixedLoanOriginalProvider({ publisherId: lenderId, readOriginals(query) {
     if (!sameObservation(query)) return undefined;
@@ -132,7 +133,7 @@ export function publishCashSources(count: number) {
       .replaceAll("synthetic-employer", identity.employerId).replaceAll("synthetic-plan", identity.planId)
       .replaceAll(fsaIds.household, ids.household).replaceAll(fsaIds.person, ids.alice).replaceAll(fsaIds.bank, ids.bank));
     const request = { ...medical.request, receipts: medical.request.receipts.map(row => ({
-      ...row, destination: { ...row.destination!, ownerId: ids.household, householdBank: true },
+      ...row, destination: { ...row.destination!, ownerId: ids.household, householdBank: true as const },
     })) };
     fsa.set(medical.sourceId, { ...medical, request, provenance: provenance(request),
       original: { ...medical.original, bankCashBefore: money(cents(cash[index]!.medicalBefore)) },
@@ -148,7 +149,7 @@ export function publishCashSources(count: number) {
   const helocs = mapDocument(documents(count, true), value => value.replaceAll(helocIds.household, ids.household)
     .replaceAll(helocIds.person, ids.bob));
   for (const row of helocs) {
-    issuer.set(row.issuer.sourceId, { original: row.issuer, size: bytes(row.issuer) });
+    issuer.set(row.issuer.sourceId, { original: row.issuer });
     helocBank.set(row.bank.id, row.bank);
   }
 

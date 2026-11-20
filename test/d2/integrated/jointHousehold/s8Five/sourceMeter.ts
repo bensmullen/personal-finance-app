@@ -21,6 +21,19 @@ export const families = ["fsa", "fsaBank", "card", "cardBank", "helocIssuer", "h
 export type Family = typeof families[number];
 export interface SourceWork { count: number; bytes: number; consumedEnvelopeBytes: number }
 export const reads = new Map<Family, SourceWork>();
+let measuring = false;
+export const sourceMeterActive = () => measuring;
+
+export function measureSourceWork(run: () => void): void {
+  measuring = true;
+  try {
+    run();
+  } finally {
+    measuring = false;
+    reads.clear();
+  }
+}
+
 function meterEnvelope<T>(original: T, complete: () => void): T {
   let pending = 1;
   function visit(value: unknown): unknown {
@@ -48,7 +61,7 @@ function meterEnvelope<T>(original: T, complete: () => void): T {
   return visit(original) as T;
 }
 export function observe<T>(family: Family, original: T | undefined, issuedBytes?: number): T | undefined {
-  if (original === undefined) return undefined;
+  if (!measuring || original === undefined) return original;
   const stats = reads.get(family) ?? { count: 0, bytes: 0, consumedEnvelopeBytes: 0 };
   const size = issuedBytes ?? bytes(original);
   stats.count++;

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
+import { accountingTransactionId } from "../../../../../src/accounting/index.js";
 import { attachAftertaxPremiums } from "../../../../../src/simulation/d2/integration/aftertaxPremiums/index.js";
 import { attachCardBank } from "../../../../../src/simulation/d2/integration/cardBank/index.js";
 import { qualifyHelocServicingSource } from "../../../../../src/simulation/d2/integration/helocServicing/index.js";
@@ -11,6 +12,7 @@ import { createFundingPolicy, fundingPolicyId } from "../../../../../src/funding
 import type { PerformanceObserver } from "../../../../../src/diagnostics/index.js";
 import { attachSsaMedicare } from "../../../../../src/simulation/d2/integration/ssaMedicare/index.js";
 import { applyHouseholdExecutionOverlay, compileHouseholdKernel, replayHouseholdForecastWindow, runHouseholdKernel } from "../../../../../src/simulation/householdExecution.js";
+import type { HouseholdContentionRule } from "../../../../../src/simulation/intraperiodScheduler.js";
 import { runCompiledHouseholdProjection as reference } from "../../../../../src/simulation/r3/referenceHouseholdExecution.js";
 import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../../../../../src/simulation/r3/replayArtifact.js";
 import { canonicalSerialize, runId } from "../../../../../src/simulation/run.js";
@@ -23,7 +25,7 @@ import { cashFault, helocReads, publishContendingLoan } from "./cashSources.js";
 import { healthFault, publishPremium } from "./healthAndRetirement.js";
 import { assertWitness, expectedJournals } from "./oracle.js";
 import { household, installPublishers } from "./scenario.js";
-import { bytes, reads, testId, type Family, type SourceWork } from "./sourceMeter.js";
+import { bytes, measureSourceWork, reads, testId, type Family, type SourceWork } from "./sourceMeter.js";
 import { wageFault } from "./wages.js";
 
 installPublishers();
@@ -58,7 +60,7 @@ it("checks built-in authenticated VS2 wages and VS4 fixed loans against the froz
   expect(actual.state).toEqual(expected.state);
 });
 
-it("grows native wages, FSA, card, SSA/CMS, fixed loans and HELOC through 1/12/24 observations", () => {
+it("grows native wages, FSA, card, SSA/CMS, fixed loans and HELOC through 1/12/24 observations", () => measureSourceWork(() => {
   const growing: readonly Family[] = ["wage", "wageBank", "fsa", "fsaBank", "card", "cardBank", "lender", "loanBank",
     "ssaAward", "irmaa", "ssaInstallment", "medicareInstallment", "ssaBank", "helocBank"];
   const baseline = new Map<string, SourceWork>();
@@ -149,7 +151,7 @@ it("grows native wages, FSA, card, SSA/CMS, fixed loans and HELOC through 1/12/2
     expect(tail.state).toEqual(summary.state);
     expect(tail.periods[0]!.transactions).toEqual(full.periods.at(-1)!.transactions);
   }
-}, 120_000);
+}), 120_000);
 
 it("replays earliest, sparse and terminal windows in a fresh publisher process", () => {
   const fixture = household(12), summary = runHouseholdKernel(fixture);
@@ -218,13 +220,13 @@ it("rejects mismatched run observation, a duplicate source, and a same-amount wr
   const rejected = detail(fixture);
   expect(rejected.status).toBe("incomplete");
   const card = fixture.sources.cards[0]!;
-  expect(rejected.state.d2PostedTransactions?.[card.charge.operationId]).toBeUndefined();
+  expect(rejected.state.d2PostedTransactions?.[accountingTransactionId(card.charge.operationId)]).toBeUndefined();
   expect(rejected.state.liabilities[card.payment.cardAccountId]?.balance).toEqual(money("1000"));
   expect(Object.values(rejected.state.d2SettlementReceipts ?? {}).some(row => row.kind === "card_interest_payment")).toBe(false);
 });
 
 it("rolls back when two distinct issuer originals consume the same payment authorization", () => {
-  const fixture = household(12);
+  const fixture = household(2);
   const [first, second] = fixture.sources.cards;
   cashFault.card = row => row.sourceId !== second!.sourceId ? row : { ...row, payment: {
     ...row.payment, authorizationId: first!.payment.authorizationId,
@@ -281,8 +283,8 @@ it("rejects a household-owned account on the legacy HELOC route", () => {
 });
 
 it("rejects an independently qualified later HELOC checkpoint that changes a committed prior row", () => {
-  const fixture = household(12), summary = runHouseholdKernel(fixture);
-  expect(summary.periods).toHaveLength(14);
+  const fixture = household(2), summary = runHouseholdKernel(fixture);
+  expect(summary.periods).toHaveLength(4);
   const preceding = replayHouseholdForecastWindow(summary, fixture.periods[2]!).state;
   const [first, second] = fixture.sources.helocs;
   const firstBytes = canonicalSerialize(first);
@@ -321,7 +323,7 @@ it("uses explicit policy when approved loan service and the insurer compete for 
   expect(attached.admittedOperationIds).toHaveLength(1);
   const expenseFirst = { before: "cash_expense_settlement", after: "liability_required_service" } as const;
   const loanFirst = { before: "liability_required_service", after: "cash_expense_settlement" } as const;
-  const execute = (rules: readonly (typeof expenseFirst | typeof loanFirst)[]) => {
+  const execute = (rules: readonly HouseholdContentionRule[]) => {
     const kernel = applyHouseholdExecutionOverlay(attached.kernel, { contentionPolicy: { id: "s8-five-authored-policy", version: "1", rules } });
     return runHouseholdKernel({ kernel, runContext, resultTier: "detail" });
   };
@@ -338,10 +340,16 @@ it("uses explicit policy when approved loan service and the insurer compete for 
   expect(paidLoan.state.d2PostedTransactions?.[premium.original.settlement.id]).toBeUndefined();
   expect(paidPremium.state.accounts[ids.personBank]).toEqual(opening.accounts[ids.personBank]);
   expect(paidLoan.state.accounts[ids.personBank]).toEqual(opening.accounts[ids.personBank]);
+  const cyclic = [expenseFirst,
+    { before: "liability_required_service", after: "investment_transfer" },
+    { before: "investment_transfer", after: "cash_expense_settlement" },
+  ];
   for (const [rules, error] of [[[], "HOUSEHOLD_CONTENTION_UNRESOLVED"],
-    [[expenseFirst, loanFirst], "HOUSEHOLD_CONTENTION_POLICY_CYCLE"]] as const) {
+    [[expenseFirst, loanFirst], "HOUSEHOLD_CONTENTION_POLICY_CONTRADICTION"],
+    [cyclic, "HOUSEHOLD_CONTENTION_POLICY_CYCLE"]] as const) {
     const rejected = execute(rules);
     expect(rejected.diagnostics.map(row => row.code)).toContain(error);
+    expect(rejected.periods).toEqual([]);
     expect(rejected.state).toEqual(opening);
   }
   bankFault.route = "loanBank";
@@ -349,16 +357,28 @@ it("uses explicit policy when approved loan service and the insurer compete for 
   expect(execute([expenseFirst]).state).toEqual(paidPremium.state);
   const selectedUnauthorized = execute([loanFirst]);
   expect(selectedUnauthorized.diagnostics.map(row => row.code)).toContain("FIXED_LOAN_DEBIT_PERMISSION_DENIED");
+  expect(selectedUnauthorized.periods).toEqual([]);
   expect(selectedUnauthorized.state).toEqual(opening);
   delete bankFault.mode;
+
+  // $25 cannot cover the $100 required service. The two accounts together
+  // can cover it, so this reaches the lender's actual allocation check.
+  const splitOpening = createAuthoritativeState({ ...opening, accounts: { ...opening.accounts,
+    [ids.bank]: { ...opening.accounts[ids.bank]!, cash: money("25") },
+  } });
   const split = createFundingPolicy({ id: fundingPolicyId("s8-five-split"), orderedSources: [
     { kind: "cash_account", accountId: ids.bank }, { kind: "cash_account", accountId: ids.personBank },
-  ], allowPartial: true, insufficientFundsBehavior: "unfunded" });
-  const unsupported = applyHouseholdExecutionOverlay(attached.kernel, {
-    liabilityInput: { ...attached.kernel.executable.liabilityInput!, loans: [{ ...loan, fundingPolicy: split }] },
+  ], allowPartial: false, insufficientFundsBehavior: "unfunded" });
+  const unsupported = applyHouseholdExecutionOverlay(base, {
+    reconciledOpeningState: splitOpening,
+    liabilityInput: { ...base.executable.liabilityInput!, loans: [{ ...loan, fundingPolicy: split }] },
   });
   const rejectedSplit = runHouseholdKernel({ kernel: unsupported, runContext, resultTier: "detail" });
-  expect(rejectedSplit.state).toEqual(opening);
+  expect(rejectedSplit.diagnostics).toContainEqual(expect.objectContaining({
+    code: "FIXED_LOAN_ORIGINAL_NOT_ADMITTED",
+    message: "Required actual funding must use the one household-owned BANK named by the lender",
+  }));
+  expect(rejectedSplit.state).toEqual(splitOpening);
   expect(rejectedSplit.periods).toEqual([]);
 });
 

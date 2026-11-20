@@ -1,3 +1,4 @@
+import { domainId } from "../../../../../src/identity/index.js";
 import { attachAftertaxPremiums } from "../../../../../src/simulation/d2/integration/aftertaxPremiums/index.js";
 import { attachCardBank } from "../../../../../src/simulation/d2/integration/cardBank/index.js";
 import { attachFsaCash } from "../../../../../src/simulation/d2/integration/fsaCash/index.js";
@@ -24,7 +25,7 @@ export function installPublishers(): void {
   installCashSources();
 }
 
-export function household(count: 1 | 12 | 24, opts: { reverse?: boolean; overlap?: boolean } = {}) {
+export function household(count: number, opts: { reverse?: boolean; overlap?: boolean } = {}) {
   delete bankFault.route; delete bankFault.mode; delete bankFault.at;
   resetHealthFaults();
   resetBenefits();
@@ -46,7 +47,10 @@ export function household(count: 1 | 12 | 24, opts: { reverse?: boolean; overlap
     ...Object.fromEntries([ids.helocCharges, ids.expensePayable, ...sources.loans.map(loan => loan.interestPayableLiabilityId),
       medicare.confirmed[0]!.payable.liabilityId, premium.confirmed[0]!.payable.liabilityId].map(id => [id, { id, balance: money("0") }])),
     ...Object.fromEntries(sources.loans.map(loan => [loan.principalLiabilityId, { id: loan.principalLiabilityId, balance: loan.originalPrincipal }])),
-    ...Object.fromEntries(sources.cards.map(({ payment }) => [payment.cardAccountId, { id: payment.cardAccountId, balance: money("1000") }])),
+    ...Object.fromEntries(sources.cards.map(({ payment }) => {
+      const id = domainId("liability", payment.cardAccountId);
+      return [id, { id, balance: money("1000") }];
+    })),
   } });
   const compiled: ExecutableHouseholdProjection = { reconciledOpeningState: opening,
     reconciledPrimitiveState: createPrimitiveRuntimeStateStore(), scenarioIdentity: runContext.scenarioId,
