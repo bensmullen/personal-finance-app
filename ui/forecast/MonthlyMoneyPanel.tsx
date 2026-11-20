@@ -1,6 +1,6 @@
 "use client";
 import * as React from "react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { isPositiveMonthlyMoney } from "../../src/application/monthlyMoney.js";
 import type { PersonalHouseholdForecastReadModel } from "../../src/application/householdProjection.js";
 import type { PersonalDraft } from "../../src/application/personalMvp.js";
@@ -21,6 +21,19 @@ export function MonthlyMoneyPanel({ draft, forecast, current, pending = false, m
 }) {
   const points = forecast && forecast.status !== "unavailable" ? forecast.points : [];
   const [selected, setSelected] = useState("");
+  const transferMonthFocus = useRef(false);
+  const attachMonthPicker = useCallback((node: HTMLSelectElement | null) => {
+    if (!node) return;
+    const { ownerDocument } = node;
+    if (transferMonthFocus.current && ownerDocument.activeElement === ownerDocument.body) node.focus();
+    transferMonthFocus.current = false;
+    // Loading and resolved evidence render the control in different slots.
+    return () => { transferMonthFocus.current = ownerDocument.activeElement === node; };
+  }, []);
+  useLayoutEffect(() => {
+    // If no replacement mounted in this commit, discard the focus handoff.
+    transferMonthFocus.current = false;
+  });
   const point = points.find(value => value.periodStart.slice(0, 7) === (selectedMonth ?? selected)) ?? points[0];
   const evidence = useForecastEvidence(forecast, draft, current, { operation: "monthly_evidence", startIndex: point ? points.indexOf(point) : -1, liabilityId: "" });
   const detail = evidence.detail;
@@ -34,7 +47,7 @@ export function MonthlyMoneyPanel({ draft, forecast, current, pending = false, m
   const holdingLink = (id: string) => <button key={id} type="button" onClick={() => review("Investment", id)}>{referenceLabel(draft, "Investment", id)}</button>;
   const monthLabel = (value: string) => new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(value));
   const Evidence = mode === "paycheck" ? CashDetailsContent : React.Fragment;
-  const monthPicker = !!points.length && <FieldShell fieldKey="moneyMonth" required><select aria-label={`${mode} forecast month`} value={point?.periodStart.slice(0, 7) ?? ""} onChange={event => (selectMonth ?? setSelected)(event.target.value)}>{points.map(value => <option key={value.periodStart} value={value.periodStart.slice(0, 7)}>{monthLabel(value.periodStart)}</option>)}</select></FieldShell>;
+  const monthPicker = !!points.length && <FieldShell fieldKey="moneyMonth" required><select ref={mode === "paycheck" ? attachMonthPicker : undefined} aria-label={`${mode} forecast month`} value={point?.periodStart.slice(0, 7) ?? ""} onChange={event => (selectMonth ?? setSelected)(event.target.value)}>{points.map(value => <option key={value.periodStart} value={value.periodStart.slice(0, 7)}>{monthLabel(value.periodStart)}</option>)}</select></FieldShell>;
   return <section className={`${mode === "paycheck" ? "calm-panel" : "panel"} monthly-money`} data-evidence-state={!point ? "unavailable" : !current ? "stale" : error ? "error" : detail ? "incomplete" : "loading"} aria-label={mode === "paycheck" ? "Your Paycheck" : mode === "debt" ? "Monthly mortgage payments" : "Housing payments and transfers"}>
     <CashDetailsScope enabled={mode === "paycheck"} title="Where modeled income goes">
     <div className="panel-head"><h2>{mode === "paycheck" ? "Explain this month’s income" : mode === "debt" ? "Monthly mortgage payments" : "Housing payments & transfers"}</h2>

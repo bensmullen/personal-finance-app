@@ -17,15 +17,19 @@ import { ids, originalFacts } from "../../householdBankAuthority/scenario.js";
 const nestedLender = "348-evidence-nested-lender";
 const nestedBank = { publisherId: "348-evidence-nested-bank", sourceId: "nested-bank-permission", accountId: ids.bank };
 let nestedContract: FixedLoanContractOriginal | undefined;
+const nestedReads = { lender: 0, bank: 0 };
 beforeEach(() => {
   reset();
   nestedContract = undefined;
+  nestedReads.lender = 0;
+  nestedReads.bank = 0;
 });
 const published = instant("2025-01-01T00:00:00.000Z");
 const revision = { status: "active", revisionId: "nested-original-1", publishedAt: published, knownAt: published,
   effectiveFrom: published, effectiveUntil: instant("2030-01-01T00:00:00.000Z") } as const;
 registerFixedLoanOriginalProvider({ publisherId: nestedLender, readOriginals(query) {
   if (!nestedContract || query.reference.contractSourceId !== nestedContract.reference.contractSourceId || query.eventAt !== at) return undefined;
+  nestedReads.lender++;
   return { version: "fixed-loan-original-inventory/v1", query, completeness: "complete", checkedAt: query.asOf,
     completeThrough: query.dataCutoff, contractHistory: [{ ...revision, original: nestedContract }],
     paymentHistory: [{ ...revision, original: { sourceId: "nested-january-installment", contractSourceId: nestedContract.reference.contractSourceId,
@@ -34,6 +38,7 @@ registerFixedLoanOriginalProvider({ publisherId: nestedLender, readOriginals(que
 } });
 registerHouseholdBankOriginalProvider({ publisherId: nestedBank.publisherId, readOriginals(query) {
   if (query.sourceId !== nestedBank.sourceId) return undefined;
+  nestedReads.bank++;
   return { version: "household-bank-original-inventory/v1", publisherId: nestedBank.publisherId, query,
     checkedAt: query.context.asOf, completeThrough: query.context.dataCutoff, completeness: "complete", originals: originalFacts(query) };
 } });
@@ -139,35 +144,50 @@ it.each([
   const nestedSelection = { ...nested.selection, operation, requestId: 2, fingerprint: nested.fingerprint, points: [nested.point] };
   const nestedRequest = { ...nestedSelection, source: { basis: nested.basis, model: createSyntheticPersonalDraft() } };
   const stillClock = { now: () => 0 };
+  const reads = () => ({ outer: { lender: control.lenderReads, bank: control.bankReads }, nested: { ...nestedReads } });
 
   for (const withdrawn of [undefined, "issuer", "bank"] as const) {
     control.lenderAvailable = true;
     control.permission = "debit";
     let projected = false;
+    let initialRestore: "cold" | "warm" | undefined;
     let nestedResponse: EvidenceWorkerResponse | undefined;
-    let outerReadsBeforeRelease: { lender: number; bank: number } | undefined;
+    let beforeNested: ReturnType<typeof reads> | undefined;
+    let beforeRelease: ReturnType<typeof reads> | undefined;
     const reenter = () => {
+      beforeNested = reads();
       nestedResponse = executeForecastWorkerRequest(nestedRequest, stillClock);
+      beforeRelease = reads();
       if (withdrawn === "issuer") control.lenderAvailable = false;
       if (withdrawn === "bank") control.permission = "revoked";
-      outerReadsBeforeRelease = { lender: control.lenderReads, bank: control.bankReads };
     };
     const response = executeForecastWorkerRequest(request, { now: () => {
       if (callback === "final clock" && projected && !nestedResponse) reenter();
       return 0;
     } }, progress => {
-      if (progress.outcome !== "progress" || progress.phase !== "projected") return;
+      if (progress.outcome !== "progress") return;
+      if (progress.phase === "decoded") initialRestore ??= "cold";
+      if (progress.phase === "restore_warm") initialRestore ??= "warm";
+      if (progress.phase !== "projected") return;
       projected = true;
       if (callback === "projected") reenter();
     });
 
+    expect(initialRestore).toBe(withdrawn === undefined ? "cold" : "warm");
+    expect(projected).toBe(true);
     expect(nestedResponse).toMatchObject({ outcome: "result", sourceIdentityMatched: true, requestId: 2 });
-    expect(outerReadsBeforeRelease).toBeDefined();
-    expect(control.lenderReads).toBeGreaterThan(outerReadsBeforeRelease!.lender);
-    if (withdrawn !== "issuer") expect(control.bankReads).toBeGreaterThan(outerReadsBeforeRelease!.bank);
+    expect(beforeRelease!.outer).toEqual(beforeNested!.outer);
+    expect(beforeRelease!.nested.lender).toBeGreaterThan(beforeNested!.nested.lender);
+    expect(beforeRelease!.nested.bank).toBeGreaterThan(beforeNested!.nested.bank);
     expect(response).toMatchObject({ requestId: 1, fingerprint: outer.fingerprint, ownership: "transported_source",
       outcome: withdrawn ? "error" : "result", sourceIdentityMatched: withdrawn === undefined });
+    // A detected BANK revocation can end admission before the lender is read.
+    if (withdrawn !== "bank") expect(control.lenderReads).toBeGreaterThan(beforeRelease!.outer.lender);
+    if (withdrawn !== "issuer") expect(control.bankReads).toBeGreaterThan(beforeRelease!.outer.bank);
+    expect(nestedReads).toEqual(beforeRelease!.nested);
     expect(executeForecastWorkerRequest(nestedSelection, stillClock))
       .toMatchObject({ outcome: "result", sourceIdentityMatched: true, fingerprint: nested.fingerprint });
+    expect(nestedReads.lender).toBeGreaterThan(beforeRelease!.nested.lender);
+    expect(nestedReads.bank).toBeGreaterThan(beforeRelease!.nested.bank);
   }
 });
