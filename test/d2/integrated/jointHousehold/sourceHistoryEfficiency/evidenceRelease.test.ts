@@ -3,15 +3,52 @@ import { createSyntheticPersonalDraft } from "../../../../../src/application/per
 import type { HouseholdForecastPoint } from "../../../../../src/application/householdProjection.js";
 import { householdEvidenceMonth, restoreHouseholdEvidencePoints } from "../../../../../src/application/mortgageChartData.js";
 import { calculationTraceId } from "../../../../../src/lineage/index.js";
+import { registerFixedLoanOriginalProvider, type FixedLoanContractOriginal } from "../../../../../src/simulation/d2/integration/fixedLoanOriginalBridge/source.js";
+import { registerHouseholdBankOriginalProvider } from "../../../../../src/simulation/d2/integration/householdBank/index.js";
 import { compileHouseholdKernel, runHouseholdForecastSummary } from "../../../../../src/simulation/householdExecution.js";
 import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../../../../../src/simulation/r3/replayArtifact.js";
+import { instant } from "../../../../../src/time/index.js";
+import { money } from "../../../../../src/values/index.js";
 import { executeForecastWorkerRequest } from "../../../../../ui/forecast/execute.js";
-import { control, fixture, principal, reset, start } from "../../fixedLoanOriginalBridge/scenario.js";
+import type { EvidenceWorkerResponse } from "../../../../../ui/forecast/protocol.js";
+import { at, control, fixture, principal, reset, start } from "../../fixedLoanOriginalBridge/scenario.js";
+import { ids, originalFacts } from "../../householdBankAuthority/scenario.js";
 
-beforeEach(reset);
+const nestedLender = "348-evidence-nested-lender";
+const nestedBank = { publisherId: "348-evidence-nested-bank", sourceId: "nested-bank-permission", accountId: ids.bank };
+let nestedContract: FixedLoanContractOriginal | undefined;
+beforeEach(() => {
+  reset();
+  nestedContract = undefined;
+});
+const published = instant("2025-01-01T00:00:00.000Z");
+const revision = { status: "active", revisionId: "nested-original-1", publishedAt: published, knownAt: published,
+  effectiveFrom: published, effectiveUntil: instant("2030-01-01T00:00:00.000Z") } as const;
+registerFixedLoanOriginalProvider({ publisherId: nestedLender, readOriginals(query) {
+  if (!nestedContract || query.reference.contractSourceId !== nestedContract.reference.contractSourceId || query.eventAt !== at) return undefined;
+  return { version: "fixed-loan-original-inventory/v1", query, completeness: "complete", checkedAt: query.asOf,
+    completeThrough: query.dataCutoff, contractHistory: [{ ...revision, original: nestedContract }],
+    paymentHistory: [{ ...revision, original: { sourceId: "nested-january-installment", contractSourceId: nestedContract.reference.contractSourceId,
+      eventAt: at, taxYear: 2026, contractualPayment: money("1"), currentInterest: money("0"),
+      interestDue: money("0"), principalDue: money("1"), bank: nestedBank } }] };
+} });
+registerHouseholdBankOriginalProvider({ publisherId: nestedBank.publisherId, readOriginals(query) {
+  if (query.sourceId !== nestedBank.sourceId) return undefined;
+  return { version: "household-bank-original-inventory/v1", publisherId: nestedBank.publisherId, query,
+    checkedAt: query.context.asOf, completeThrough: query.context.dataCutoff, completeness: "complete", originals: originalFacts(query) };
+} });
 
-function evidence() {
-  const request = fixture("mortgage", "growth", 2, 1);
+function nestedMortgage(request: ReturnType<typeof fixture>): ReturnType<typeof fixture> {
+  const loan = request.input.loans[0]!;
+  const reference = { ...loan.originalSource!, publisherId: nestedLender, contractSourceId: "nested-mortgage" };
+  nestedContract = { reference, householdId: ids.household, borrowerId: ids.alice, legalOwnerId: ids.alice,
+    loanId: loan.id, principalLiabilityId: loan.principalLiabilityId, interestPayableLiabilityId: loan.interestPayableLiabilityId,
+    debtFamily: "mortgage", originalPrincipal: money("2"), annualRate: loan.annualRate, totalPayments: 2, paymentSchedule: loan.paymentSchedule };
+  const input = { ...request.input, loans: [{ ...loan, originalSource: reference }] };
+  return { ...request, input, compiled: { ...request.compiled, liabilityInput: input } };
+}
+
+function evidence(request = fixture("mortgage", "growth", 2, 1)) {
   const summary = runHouseholdForecastSummary({ kernel: compileHouseholdKernel(request.compiled, start), runContext: request.runContext });
   const basis = createPortableHouseholdReplayArtifact(summary);
   const period = summary.periods[0]!.period;
@@ -86,4 +123,51 @@ it.each([
     });
   expect(projected).toBe(true);
   expect(withdrawnInFinalClock).toMatchObject({ outcome: "error", sourceIdentityMatched: false });
+});
+
+it.each([
+  ["monthly_evidence", "projected"],
+  ["monthly_evidence", "final clock"],
+  ["mortgage_evidence", "projected"],
+  ["mortgage_evidence", "final clock"],
+] as const)("reobserves the outer %s source after reentry from %s", (operation, callback) => {
+  const outer = evidence();
+  const nested = evidence(nestedMortgage(fixture("mortgage", "growth", 2, 1)));
+  expect(nested.fingerprint).not.toBe(outer.fingerprint);
+  const request = { ...outer.selection, operation, requestId: 1, fingerprint: outer.fingerprint, points: [outer.point],
+    source: { basis: outer.basis, model: createSyntheticPersonalDraft() } };
+  const nestedSelection = { ...nested.selection, operation, requestId: 2, fingerprint: nested.fingerprint, points: [nested.point] };
+  const nestedRequest = { ...nestedSelection, source: { basis: nested.basis, model: createSyntheticPersonalDraft() } };
+  const stillClock = { now: () => 0 };
+
+  for (const withdrawn of [undefined, "issuer", "bank"] as const) {
+    control.lenderAvailable = true;
+    control.permission = "debit";
+    let projected = false;
+    let nestedResponse: EvidenceWorkerResponse | undefined;
+    let outerReadsBeforeRelease: { lender: number; bank: number } | undefined;
+    const reenter = () => {
+      nestedResponse = executeForecastWorkerRequest(nestedRequest, stillClock);
+      if (withdrawn === "issuer") control.lenderAvailable = false;
+      if (withdrawn === "bank") control.permission = "revoked";
+      outerReadsBeforeRelease = { lender: control.lenderReads, bank: control.bankReads };
+    };
+    const response = executeForecastWorkerRequest(request, { now: () => {
+      if (callback === "final clock" && projected && !nestedResponse) reenter();
+      return 0;
+    } }, progress => {
+      if (progress.outcome !== "progress" || progress.phase !== "projected") return;
+      projected = true;
+      if (callback === "projected") reenter();
+    });
+
+    expect(nestedResponse).toMatchObject({ outcome: "result", sourceIdentityMatched: true, requestId: 2 });
+    expect(outerReadsBeforeRelease).toBeDefined();
+    expect(control.lenderReads).toBeGreaterThan(outerReadsBeforeRelease!.lender);
+    if (withdrawn !== "issuer") expect(control.bankReads).toBeGreaterThan(outerReadsBeforeRelease!.bank);
+    expect(response).toMatchObject({ requestId: 1, fingerprint: outer.fingerprint, ownership: "transported_source",
+      outcome: withdrawn ? "error" : "result", sourceIdentityMatched: withdrawn === undefined });
+    expect(executeForecastWorkerRequest(nestedSelection, stillClock))
+      .toMatchObject({ outcome: "result", sourceIdentityMatched: true, fingerprint: nested.fingerprint });
+  }
 });
