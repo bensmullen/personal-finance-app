@@ -1505,6 +1505,34 @@ def pre_tool(payload, root):
         deny("Subagents are disabled for PFM implementation turns.")
         return
 
+    # One strictly read-only diagnostic, usable even after a task receipt
+    # closes. Never authorize a modified script or launcher from a task branch.
+    # No reservation, writer admission, tests, installs or receipt writes.
+    diagnostic = "python3 tools/codex/node-environment-diagnostic.py"
+    if tool == "Bash" and "node-environment-diagnostic.py" in command:
+        if command != diagnostic:
+            deny("Only the exact read-only Node diagnostic command is permitted.")
+            return
+        trusted_origins = {
+            "https://github.com/bensmullen/personal-finance-app",
+            "https://github.com/bensmullen/personal-finance-app.git",
+            "git@github.com:bensmullen/personal-finance-app.git",
+            "ssh://git@github.com/bensmullen/personal-finance-app.git",
+        }
+        if origin_url(root) not in trusted_origins:
+            deny("Node diagnostic requires the exact approved repository origin.")
+            return
+        for name in ("tools/codex/node-environment-diagnostic.py",
+                     "tools/codex/limited-local-verification-launcher.py"):
+            trusted = run_git(["show", f"origin/main:{name}"], root)
+            local = root / name
+            if (trusted.returncode or not local.is_file() or local.is_symlink() or
+                    local.read_text() != trusted.stdout):
+                deny("Node diagnostic and launcher must equal trusted merged origin/main.")
+                return
+        emit({})
+        return
+
     current = state is not None and current_grant(root, payload, state)
     matching_branch = current and current_branch(root) == state["TARGET_BRANCH"]
     if not matching_branch:
