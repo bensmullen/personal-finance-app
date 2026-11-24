@@ -1398,6 +1398,11 @@ const preparePreflightHookFixture = ({ startTask = true } = {}) => {
   });
   assert(JSON.stringify(request(cmd)) === '{}',
     'trusted read-only Node diagnosis allowed without active authorization');
+  assert(f.invoke('PreToolUse', {
+    tool_name: 'Bash', tool_input: { command: cmd },
+  }, { PFM_POLICY_TEST_ORIGIN: 'https://evil.invalid/bensmullen/personal-finance-app' })
+    .hookSpecificOutput?.permissionDecision === 'deny',
+    'repository-name substring in an untrusted origin must never authorize the diagnostic');
   for (const command of [cmd + ' --probe', cmd + '; echo bypass',
                          'bash -c "' + cmd + '"', cmd + '\ntrue',
                          'NODE_OPTIONS=--import=bad ' + cmd]) {
