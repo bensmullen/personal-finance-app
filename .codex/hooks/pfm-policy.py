@@ -1513,8 +1513,14 @@ def pre_tool(payload, root):
         if command != diagnostic:
             deny("Only the exact read-only Node diagnostic command is permitted.")
             return
-        if APPROVED_REPOSITORY not in origin_url(root):
-            deny("Node diagnostic requires the approved repository origin.")
+        trusted_origins = {
+            "https://github.com/bensmullen/personal-finance-app",
+            "https://github.com/bensmullen/personal-finance-app.git",
+            "git@github.com:bensmullen/personal-finance-app.git",
+            "ssh://git@github.com/bensmullen/personal-finance-app.git",
+        }
+        if origin_url(root) not in trusted_origins:
+            deny("Node diagnostic requires the exact approved repository origin.")
             return
         for name in ("tools/codex/node-environment-diagnostic.py",
                      "tools/codex/limited-local-verification-launcher.py"):
