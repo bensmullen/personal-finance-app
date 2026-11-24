@@ -219,6 +219,14 @@ report `LOOKUP_REQUIRED: <exact missing fact>` rather than inventing it.
 
 Subagents are disabled by default.
 
+
+**Environment-only diagnosis:** A worktree with the merged guard may run
+`python3 tools/codex/node-environment-diagnostic.py` as an exact, read-only
+command even with no current task grant. This prints bounded, secret-free
+Node probe classifications and dependency-presence booleans; it does not run
+TypeScript/Vitest, mutate receipts, install packages, or grant local reruns.
+Use it to identify genuine Node/sandbox failures, not to circumvent a known
+SKIP, TIMEOUT or prior assertion failure.
 ## Optional bounded local verification (no execution prerequisite)
 
 Codex implementation/repair turns may invoke the audited optional launcher
