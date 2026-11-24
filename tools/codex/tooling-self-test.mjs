@@ -1392,7 +1392,7 @@ const preparePreflightHookFixture = ({ startTask = true } = {}) => {
   })();
   const cmd = 'python3 ' + diagnostic;
   const pointer = path.join(f.repository, '.codex/runtime/latest-task.json');
-  const before = fs.readFileSync(pointer, 'utf8');
+  const before = fs.existsSync(pointer) ? fs.readFileSync(pointer, 'utf8') : null;
   const request = command => f.invoke('PreToolUse', {
     tool_name: 'Bash', tool_input: { command },
   });
@@ -1418,7 +1418,7 @@ const preparePreflightHookFixture = ({ startTask = true } = {}) => {
          !output.stdout.includes('PFM_PREFLIGHT_RESULT') &&
          !output.stdout.includes('AUTHORIZATION_ID'),
     'diagnostic never discloses home/worktree/secrets or fabricates a verification result');
-  assert(fs.readFileSync(pointer, 'utf8') === before,
+  assert((fs.existsSync(pointer) ? fs.readFileSync(pointer, 'utf8') : null) === before,
     'read-only diagnostics leave protected task pointer unchanged');
   fs.appendFileSync(path.join(f.repository, diagnostic), '\n# unmerged diagnostic tamper\n');
   assert(request(cmd).hookSpecificOutput?.permissionDecision === 'deny',
