@@ -3,6 +3,17 @@
 **Status:** repository-enforced  
 **Purpose:** choose verification from failure risk and changed surface without spending Codex runtime supervising tests.
 
+
+**Read-only Node environment diagnosis (separate from verification):** On a
+worktree containing the merged diagnostic hook, Codex may execute exactly
+`python3 tools/codex/node-environment-diagnostic.py` without an active task
+receipt. PreToolUse requires the diagnostic and its imported launcher to equal
+trusted merged `origin/main` files. The command only probes previously
+installed Node candidates with a total seven-second budget and coarse
+failure classes, reports npm/TypeScript/Vitest presence, and never installs,
+runs tests, writes files or touches verification reservations. No environment
+paths, stdout/stderr contents, secret variables or receipt identifiers are
+reported. It is never a second local verification attempt or PASS evidence.
 ## 1. Responsibility boundary
 
 Codex implementation and repair turns may optionally use the sole audited
