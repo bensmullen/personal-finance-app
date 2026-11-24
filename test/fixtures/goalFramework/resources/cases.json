@@ -1,0 +1,16 @@
+{
+  "dataset": "synthetic",
+  "account_scope": "fixture-account",
+  "pool_id": "shared-work-codex",
+  "unit": "messages",
+  "host": {
+    "cpu_millicores": 200,
+    "memory_mib": 64,
+    "processes": 1,
+    "disk_mib": 10,
+    "ci_minutes": 1,
+    "test_slots": 1
+  },
+  "sizes": [1, 10, 100],
+  "storage_faults": ["before-file-sync", "after-rename"]
+}
