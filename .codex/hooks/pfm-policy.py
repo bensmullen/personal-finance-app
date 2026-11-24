@@ -20,7 +20,10 @@ APPROVED_BRANCH_PREFIXES = ("codex/", "agent/")
 CONTROL_PATHS = (
     "AGENTS.md", ".codex/", ".agents/", ".github/workflows/", "tools/codex/", "tools/ci/",
     "docs/development/handoff-authoring-policy.md", "docs/development/verification-policy.md",
-    "docs/development/agent-",
+    "docs/development/agent-", "docs/development/goal-framework/",
+    "docs/development/milestone-issue-", "tools/roadmap/",
+    "test/goalFramework", "test/fixtures/goalFramework/",
+    "test/goalIssueMetadata.test.ts", "test/milestoneIssueRegister.test.ts",
 )
 TASK_MARKERS = ("PFM_TASK_V3", "PFM_TASK_V2")
 TASK_ATTACHMENT_NAMES = {"pasted-text.txt", "writing-block.md"}
@@ -673,8 +676,10 @@ def allowed(path, patterns):
 
 
 def is_control_path(path):
-    path = normalize(path)
-    return any(path == item.rstrip("/") or path.startswith(item) for item in CONTROL_PATHS)
+    # Worktrees can live on case-insensitive macOS volumes. Compare protected
+    # control names without case while keeping the stored path unchanged.
+    path = normalize(path).casefold()
+    return any(path == item.rstrip("/").casefold() or path.startswith(item.casefold()) for item in CONTROL_PATHS)
 
 
 def validate_task(prompt):
