@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "as_of": "2026-11-17",
+  "as_of": "2026-11-24",
   "authority": "Roadmap issue allocation only. Financial meaning remains in controlled specifications; GitHub is authoritative for current issue state.",
   "lifecycle": "Every new non-learning product, bug, milestone or framework issue must be registered at creation and linked to an owner stage and first mandatory closeout gate. Deferred means explicitly gated, not forgotten. Closing or moving an issue requires reconciliation here and in roadmap. U1 handoff completed: #94 is superseded by #120 after PR #98 merged; only #120 holds final U1/D1 owner acceptance. #94 technical closeout is not U1 UAT approval; all historical #94 dependency edges now point to #120. D2 parallel reallocation 2026-10-17: #103's unimplemented retirement distribution/RMD scope is consolidated into #146; backend #146/#147/#148 may overlap U1 #120 after approved financial contracts and #149 shared interface freeze. #149 alone owns deferred cross-domain/UI seams and final D2-D acceptance. #114 is merged preparation, not D2 functionality. U1B-C #142 closed after PR #157 merged; U1B-D #161 newly allocated to its own stage, implementation sequential after merged registration PR, not blocked by final #120 UAT. U1B-E requires separate later authorization.",
   "stage_gates": {
@@ -84,7 +84,7 @@
       ]
     },
     "U1B_E": {
-      "stage": "U1B shared-chart polish and Planning sourced retirement/V6 integration",
+      "stage": "U1B shared-chart polish and Planning sourced V6 integration",
       "blocking_transition": "PR #269 / #187 may merge as a technical checkpoint after exact-head CI and audit, without closing final UX acceptance. Five-stage design-first review, production parity, D2 source/UI handshakes and final D1+D2 PM UAT remain under #120.",
       "required_issue_numbers": [
         252,
@@ -149,6 +149,40 @@
       "blocking_transition": "Before any #313 implementation, settle independent interest original/publisher vs canonical application-issued tax-plan replay authority, approve the source/cutoff/run interface and paths, and review #277 merged S2 receipts. Preserve all mandatory native interest/tax execution and source-backed alternate replay under D2 #277/#149. This gate does not itself approve deferral of any other R5/private-alpha requirement.",
       "required_issue_numbers": [
         313
+      ]
+    },
+    "GOAL_FRAMEWORK_P1": {
+      "stage": "Approved goal-driven engineering framework P1",
+      "blocking_transition": "Pure authority/contracts pass positive and negative tests; no execution enabled. Separate engineering track; no new D1/D2/private-alpha dependency.",
+      "required_issue_numbers": [
+        363
+      ]
+    },
+    "GOAL_FRAMEWORK_P2": {
+      "stage": "Approved goal-driven engineering framework P2",
+      "blocking_transition": "Migration equivalence, lifecycle fault tests, household evidence refusal and honest resource/context policy accepted. Separate engineering track; no new D1/D2/private-alpha dependency.",
+      "required_issue_numbers": [
+        364,
+        365,
+        366,
+        367
+      ]
+    },
+    "GOAL_FRAMEWORK_P3": {
+      "stage": "Approved goal-driven engineering framework P3",
+      "blocking_transition": "Actual local and cloud certification plus two-outcome supervised pilot accepted; PM merges. Separate engineering track; no new D1/D2/private-alpha dependency.",
+      "required_issue_numbers": [
+        368,
+        369
+      ]
+    },
+    "GOAL_FRAMEWORK_P4": {
+      "stage": "Approved goal-driven engineering framework P4",
+      "blocking_transition": "Independent merge/UAT audit, measured final pilot and explicit activation/rollback evidence accepted. Separate engineering track; no new D1/D2/private-alpha dependency.",
+      "required_issue_numbers": [
+        362,
+        370,
+        371
       ]
     }
   },
@@ -1075,6 +1109,183 @@
         "PFA-PERF-021"
       ],
       "scope": "Mandatory publisher-authenticated live retirement original history with bounded event, revision, withdrawal and RMD usage deltas; retain exact funding, atomic posting, account/year capacity, replay and proportional reads/validated bytes for repeated funded distributions. Design may proceed alongside #348, but overlapping production work follows its merge. Not a prerequisite to #331; final D2 #149 remains gated."
+    },
+    {
+      "issue_number": 362,
+      "owner_stage": "engineering-goal-framework-coordination",
+      "blocking_gate": "GOAL_FRAMEWORK_P4",
+      "depends_on": [
+        371
+      ],
+      "spec_requirement_ids": [
+        "GF-R01",
+        "GF-R02",
+        "GF-R03",
+        "GF-R04",
+        "GF-R05",
+        "GF-R06",
+        "GF-R07",
+        "GF-R08",
+        "GF-R09",
+        "GF-R10",
+        "GF-R11",
+        "GF-R12",
+        "GF-R13",
+        "GF-R14",
+        "GF-R15",
+        "GF-R16",
+        "GF-R17",
+        "GF-R18",
+        "GF-R19",
+        "GF-R20",
+        "GF-R21",
+        "GF-R22",
+        "GF-R23",
+        "GF-R24"
+      ],
+      "scope": "Approved four-phase autonomous development goal owner: traceable bounded tasks, hybrid compatibility, safe parallel delivery, independent household and UAT gates, measured efficiency and reversible activation. Not a coding grant or product milestone change."
+    },
+    {
+      "issue_number": 363,
+      "owner_stage": "engineering-goal-framework-gf-01",
+      "blocking_gate": "GOAL_FRAMEWORK_P1",
+      "depends_on": [],
+      "spec_requirement_ids": [
+        "GF-R01",
+        "GF-R03",
+        "GF-R04",
+        "GF-R23",
+        "GF-R24"
+      ],
+      "scope": "Goal authority and APIV contracts for approved bounded goal orchestration; preserve financial, authorization and human UAT boundaries."
+    },
+    {
+      "issue_number": 364,
+      "owner_stage": "engineering-goal-framework-gf-02",
+      "blocking_gate": "GOAL_FRAMEWORK_P2",
+      "depends_on": [
+        363
+      ],
+      "spec_requirement_ids": [
+        "GF-R02",
+        "GF-R23"
+      ],
+      "scope": "Operational issue metadata migration for approved bounded goal orchestration; preserve financial, authorization and human UAT boundaries."
+    },
+    {
+      "issue_number": 365,
+      "owner_stage": "engineering-goal-framework-gf-03",
+      "blocking_gate": "GOAL_FRAMEWORK_P2",
+      "depends_on": [
+        363
+      ],
+      "spec_requirement_ids": [
+        "GF-R03",
+        "GF-R04",
+        "GF-R05",
+        "GF-R07",
+        "GF-R14",
+        "GF-R23"
+      ],
+      "scope": "Lifecycle and workspace safety for approved bounded goal orchestration; preserve financial, authorization and human UAT boundaries."
+    },
+    {
+      "issue_number": 366,
+      "owner_stage": "engineering-goal-framework-gf-04",
+      "blocking_gate": "GOAL_FRAMEWORK_P2",
+      "depends_on": [
+        363
+      ],
+      "spec_requirement_ids": [
+        "GF-R13",
+        "GF-R15",
+        "GF-R16"
+      ],
+      "scope": "Evidence and household readiness for approved bounded goal orchestration; preserve financial, authorization and human UAT boundaries."
+    },
+    {
+      "issue_number": 367,
+      "owner_stage": "engineering-goal-framework-gf-05",
+      "blocking_gate": "GOAL_FRAMEWORK_P2",
+      "depends_on": [
+        363
+      ],
+      "spec_requirement_ids": [
+        "GF-R10",
+        "GF-R11",
+        "GF-R12",
+        "GF-R19"
+      ],
+      "scope": "Usage, reservations and context for approved bounded goal orchestration; preserve financial, authorization and human UAT boundaries."
+    },
+    {
+      "issue_number": 368,
+      "owner_stage": "engineering-goal-framework-gf-06",
+      "blocking_gate": "GOAL_FRAMEWORK_P3",
+      "depends_on": [
+        364,
+        365,
+        366,
+        367
+      ],
+      "spec_requirement_ids": [
+        "GF-R06",
+        "GF-R07",
+        "GF-R09",
+        "GF-R12",
+        "GF-R22",
+        "GF-R23"
+      ],
+      "scope": "Certified hybrid adapters for approved bounded goal orchestration; preserve financial, authorization and human UAT boundaries."
+    },
+    {
+      "issue_number": 369,
+      "owner_stage": "engineering-goal-framework-gf-07",
+      "blocking_gate": "GOAL_FRAMEWORK_P3",
+      "depends_on": [
+        368
+      ],
+      "spec_requirement_ids": [
+        "GF-R08",
+        "GF-R09",
+        "GF-R14",
+        "GF-R21",
+        "GF-R24"
+      ],
+      "scope": "Parallel orchestration pilot for approved bounded goal orchestration; preserve financial, authorization and human UAT boundaries."
+    },
+    {
+      "issue_number": 370,
+      "owner_stage": "engineering-goal-framework-gf-08",
+      "blocking_gate": "GOAL_FRAMEWORK_P4",
+      "depends_on": [
+        369
+      ],
+      "spec_requirement_ids": [
+        "GF-R16",
+        "GF-R18",
+        "GF-R22",
+        "GF-R23"
+      ],
+      "scope": "Delegated merge and UAT gates for approved bounded goal orchestration; preserve financial, authorization and human UAT boundaries."
+    },
+    {
+      "issue_number": 371,
+      "owner_stage": "engineering-goal-framework-gf-09",
+      "blocking_gate": "GOAL_FRAMEWORK_P4",
+      "depends_on": [
+        369,
+        370
+      ],
+      "spec_requirement_ids": [
+        "GF-R17",
+        "GF-R19",
+        "GF-R20",
+        "GF-R21",
+        "GF-R22",
+        "GF-R24"
+      ],
+      "scope": "Optimization, mutation and final pilot for approved bounded goal orchestration; preserve financial, authorization and human UAT boundaries."
     }
   ],
   "legacy_open_task_reconciliation": {

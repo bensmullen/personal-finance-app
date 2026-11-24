@@ -1,0 +1,35 @@
+name: Goal framework plan integrity
+
+on:
+  pull_request:
+    paths:
+      - docs/development/goal-framework/**
+      - docs/development/milestone-issue-register.json
+      - .codex/hooks/pfm-policy.py
+      - tools/codex/verify-goal-framework-plan.py
+      - test/goalFrameworkPlan.test.ts
+      - .github/workflows/goal-framework-plan.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: goal-framework-plan-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan-and-saved-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check plan and negative fixtures without models or dependencies
+        run: python3 tools/codex/verify-goal-framework-plan.py --self-test
+      - name: Re-fetch saved issues and validate with actual V3 parser
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 tools/codex/verify-goal-framework-plan.py --live-contracts
