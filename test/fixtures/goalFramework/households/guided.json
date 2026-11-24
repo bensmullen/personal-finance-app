@@ -1,0 +1,21 @@
+{
+  "start": "2026-01-01",
+  "end": "2027-01-01",
+  "asset": "0.00",
+  "debt": "0.00",
+  "monthlySpending": "275.10",
+  "households": [
+    {
+      "name": "Synthetic Amber",
+      "income": "615.37",
+      "cash": "1240.59",
+      "editedIncome": "620.19"
+    },
+    {
+      "name": "Synthetic Indigo",
+      "income": "0.00",
+      "cash": "987.43",
+      "editedIncome": "0.00"
+    }
+  ]
+}

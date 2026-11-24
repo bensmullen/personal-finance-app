@@ -1,0 +1,88 @@
+{
+  "schema": "GF04_HOUSEHOLDS_V1",
+  "revision": 1,
+  "applicable": [
+    {
+      "id": "flagship",
+      "owner": 120,
+      "requirements": ["PFA-DET-001–014", "PFA-UX-015–020"],
+      "evidence": [
+        {"path": "e2e/u1b-low-input-forecast.spec.ts", "covers": "Real worker forecast, exact opening and posted cash, dates, period selection, stale state and cold evidence restore on desktop and mobile."},
+        {"path": "e2e/u1b-financial-charts.spec.ts", "covers": "Shared chart keyboard, touch, 200% text, partial and error surfaces. Injected failure probes witness refusal and error UX."},
+        {"path": "e2e/u1b-planning-experience.spec.ts", "covers": "Readable retirement sources and explicit uncomputed income."},
+        {"path": "e2e/u1-guided-authoring.spec.ts", "covers": "Salary staging, cancel and discard, validation, incomplete status and repair."}
+      ],
+      "gaps": ["V6_RETIREMENT_INCOME_SOURCE_COVERAGE"]
+    },
+    {
+      "id": "low-input",
+      "owner": 120,
+      "requirements": ["PFA-UX-016", "PFA-UX-018–020"],
+      "evidence": [
+        {"path": "e2e/framework-household-readiness.spec.ts", "covers": "Literal guided source amounts and owners, edit, cancel, discard, save, reload and two independent store orders."},
+        {"path": "e2e/u1b-low-input-forecast.spec.ts", "covers": "Non-unique receiving banks and optional starting assumptions without invented balances."}
+      ],
+      "gaps": ["GUIDED_DRAFT_TO_SUPPORTED_FORECAST_RECONCILIATION"]
+    },
+    {
+      "id": "zero-investments",
+      "owner": 120,
+      "requirements": ["PFA-UX-018–020"],
+      "evidence": [
+        {"path": "e2e/u1b-financial-charts.spec.ts", "covers": "Opening-only and genuine zero-investment chart states at both widths."},
+        {"path": "e2e/framework-household-readiness.spec.ts", "covers": "No investment holdings in either guided canonical export."}
+      ],
+      "gaps": []
+    },
+    {
+      "id": "zero-income",
+      "owner": 120,
+      "requirements": ["PFA-UX-014", "PFA-UX-016", "PFA-UX-019"],
+      "evidence": [
+        {"path": "e2e/framework-household-readiness.spec.ts", "covers": "Entered zero survives canonical export and is readable on the Income surface."}
+      ],
+      "gaps": ["EXPLICIT_ZERO_SOURCE_TO_WORKER_RECONCILIATION"]
+    },
+    {
+      "id": "future-start-income",
+      "owner": 120,
+      "requirements": ["PFA-DET-001–014", "PFA-UX-014", "PFA-UX-019"],
+      "evidence": [
+        {"path": "test/verticalSlice2.test.ts", "covers": "Dated start and end mechanics, including no income before the original start."},
+        {"path": "e2e/u1b-low-input-forecast.spec.ts", "covers": "Flagship future-start slice has zero posted before the salary starts and nonzero after."}
+      ],
+      "gaps": []
+    },
+    {
+      "id": "missing-income",
+      "owner": 120,
+      "requirements": ["PFA-UX-014", "PFA-UX-016", "PFA-UX-018–019"],
+      "evidence": [
+        {"path": "e2e/framework-household-readiness.spec.ts", "covers": "Missing mandatory amount blocks advancing the wizard before explicit zero is accepted."},
+        {"path": "e2e/u1b-planning-experience.spec.ts", "covers": "Missing forecast source is visible as uncomputed."}
+      ],
+      "gaps": []
+    },
+    {
+      "id": "source-qualified-s8-5a",
+      "owner": 331,
+      "requirements": ["PFA-DET-016–023"],
+      "evidence": [
+        {"path": "test/d2/integrated/jointHousehold/s8Five/witness.test.ts", "covers": "Independent exact-cent oracle, publisher originals, selected postings, issuer and BANK identities, claims, balances, rollback, compiled execution and portable/cold replay."},
+        {"path": "test/d2/integrated/jointHousehold/s8Five/sparseEvidence.test.ts", "covers": "Sparse/terminal omissions and source owner substitution."}
+      ],
+      "gaps": ["S8_5A_NORMAL_USER_BINDING_UNVERIFIED", "S8_5B_FINAL_COMPOSITION_OPEN_149"]
+    }
+  ],
+  "future_gate": {
+    "owner": 108,
+    "plan_dependency": 105,
+    "households": ["H01", "H02", "H03", "H04", "H05", "H06", "H07", "H08"],
+    "independently_saved_plans_per_household": 4,
+    "disposition": "REQUIRED_FOR_ALPHA_GATE"
+  },
+  "subjective_questions": [
+    "Could you tell when income is actually recorded, starts later, or is unavailable?",
+    "Could you reopen the saved household and find the same requested period and income source without coaching?"
+  ]
+}
