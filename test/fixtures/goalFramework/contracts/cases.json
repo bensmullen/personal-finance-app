@@ -1,0 +1,27 @@
+{
+  "unsafe_paths": [
+    "/tmp/file.ts",
+    "../file.ts",
+    "src/../file.ts",
+    "src//file.ts",
+    "./src/file.ts",
+    "src\\file.ts",
+    "src/%2e%2e/file.ts",
+    "src/.Git/config",
+    "src/a./file.ts",
+    "src/*.ts",
+    "src/**",
+    "src/nested/dir/**/file.ts",
+    ".codex/runtime/state.json",
+    "tools/codex/goal-framework/runtime/ledger.json",
+    ".pfm-preflight/result.json"
+  ],
+  "scope_alternatives": ["primary", "optional", "empty", "no_election", "fallback", "cached", "incomplete", "callback"],
+  "sizing": [
+    { "independentOutcome": false, "coherent": true, "relatedBatch": false, "risk": "simple", "expected": "reuse" },
+    { "independentOutcome": true, "coherent": true, "relatedBatch": false, "risk": "cross-cutting", "expected": "retain" },
+    { "independentOutcome": true, "coherent": false, "relatedBatch": false, "risk": "cross-cutting", "expected": "split" },
+    { "independentOutcome": true, "coherent": true, "relatedBatch": true, "risk": "simple", "expected": "batch" },
+    { "independentOutcome": true, "coherent": true, "relatedBatch": false, "risk": "simple", "expected": "retain" }
+  ]
+}
