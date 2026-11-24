@@ -5,7 +5,7 @@
   "authority": "Approved implementation plan; not a runtime activation or task write grant.",
   "progress_source": "Live original GitHub issues; exact PR/CI/artifact evidence; goal #362 phase summaries.",
   "baseline_commit": "528520738a46c8f4d117990e5c421908fcb47b8c",
-  "documents": ["README.md", "requirements.md", "interfaces.md", "verification-and-metrics.md"],
+  "documents": ["README.md", "requirements.md", "interfaces.md", "verification-and-metrics.md", "safety-and-rollout.md"],
   "requirements": ["GF-R01", "GF-R02", "GF-R03", "GF-R04", "GF-R05", "GF-R06", "GF-R07", "GF-R08", "GF-R09", "GF-R10", "GF-R11", "GF-R12", "GF-R13", "GF-R14", "GF-R15", "GF-R16", "GF-R17", "GF-R18", "GF-R19", "GF-R20", "GF-R21", "GF-R22", "GF-R23", "GF-R24"],
   "verification": [
     {"id": "GF-V01", "requirement": "GF-R01"},
@@ -50,5 +50,18 @@
     {"id": "GF-07", "issue": 369, "phase": "P3", "title": "Parallel orchestration pilot", "branch": "codex/goal-framework-07-orchestration", "depends_on": [368], "requirements": ["GF-R08", "GF-R09", "GF-R14", "GF-R21", "GF-R24"], "verification": ["GF-V08", "GF-V09", "GF-V14", "GF-V21", "GF-V24"], "dependency_policy": "locked"},
     {"id": "GF-08", "issue": 370, "phase": "P4", "title": "Delegated merge and UAT gates", "branch": "codex/goal-framework-08-merge", "depends_on": [369], "requirements": ["GF-R16", "GF-R18", "GF-R22", "GF-R23"], "verification": ["GF-V16", "GF-V18", "GF-V22", "GF-V23"], "dependency_policy": "locked"},
     {"id": "GF-09", "issue": 371, "phase": "P4", "title": "Optimization, mutation and final pilot", "branch": "codex/goal-framework-09-optimization", "depends_on": [369, 370], "requirements": ["GF-R17", "GF-R19", "GF-R20", "GF-R21", "GF-R22", "GF-R24"], "verification": ["GF-V17", "GF-V19", "GF-V20", "GF-V21", "GF-V22", "GF-V24"], "dependency_policy": "manifest_edit"}
+  ],
+  "delivery_waves": [[363], [367, 366], [365], [364], [368], [369], [370], [371]],
+  "audit_controls": [
+    {"id": "GF-A01", "issues": [363, 367, 368]},
+    {"id": "GF-A02", "issues": [365, 369]},
+    {"id": "GF-A03", "issues": [363, 365, 368, 370]},
+    {"id": "GF-A04", "issues": [366, 367, 368, 369, 371]},
+    {"id": "GF-A05", "issues": [364, 365]},
+    {"id": "GF-A06", "issues": [366, 370]},
+    {"id": "GF-A07", "issues": [363, 364, 365, 366, 367, 368, 369, 370, 371]},
+    {"id": "GF-A08", "issues": [366, 371]},
+    {"id": "GF-A09", "issues": [363, 365]},
+    {"id": "GF-A10", "issues": [364, 369, 371]}
   ]
 }
