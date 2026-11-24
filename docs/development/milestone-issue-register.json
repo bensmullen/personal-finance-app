@@ -84,7 +84,7 @@
       ]
     },
     "U1B_E": {
-      "stage": "U1B shared-chart polish and Planning sourced retirement/V6 integration",
+      "stage": "U1B shared-chart polish and Planning sourced V6 integration",
       "blocking_transition": "PR #269 / #187 may merge as a technical checkpoint after exact-head CI and audit, without closing final UX acceptance. Five-stage design-first review, production parity, D2 source/UI handshakes and final D1+D2 PM UAT remain under #120.",
       "required_issue_numbers": [
         252,
@@ -832,7 +832,8 @@
       "spec_requirement_ids": [
         "PFA-DET-015",
         "PFA-DET-020",
-        "PFA-DET-023"
+        "PFA-DET-023",
+        "PFA-TAX-015"
       ],
       "scope": "S1 source-qualified household BANK debit for VS2 recurring expense recognition and funded settlement, with actual member/run authority, source proof and no duplication; preserves legacy person route."
     },
