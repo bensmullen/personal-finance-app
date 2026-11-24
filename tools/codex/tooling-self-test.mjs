@@ -189,6 +189,35 @@ assert(
   "multiple task issue pointers must fail closed",
 );
 
+// Protect goal-framework authority and its verification from product/repair tasks.
+// These are admission negatives; the usual pre/post-tool checks use the same
+// CONTROL_PATHS classifier and must still enforce the saved per-task paths.
+for (const protectedPath of [
+  "docs/development/goal-framework/interfaces.md",
+  "docs/development/goal-framework/safety-and-rollout.md",
+  "docs/development/milestone-issue-register.json",
+  "docs/development/milestone-issue-policy.md",
+  "tools/roadmap/verify-issue-stage-register.mjs",
+  "tools/roadmap/goal-issue-metadata.mjs",
+  "test/goalFrameworkContracts.test.ts",
+  "test/goalFrameworkPlan.test.ts",
+  "test/fixtures/goalFramework/contracts/cases.json",
+  "test/goalIssueMetadata.test.ts",
+  "test/milestoneIssueRegister.test.ts",
+]) {
+  for (const taskKind of ["product", "repair"]) {
+    const deniedPrompt = prompt.replace("TASK_KIND: product", "TASK_KIND: " + taskKind)
+      .replace("- src/allowed.ts", "- " + protectedPath);
+    const attempt = hook("UserPromptSubmit", {
+      prompt: deniedPrompt,
+      turn_id: "framework-guard-" + taskKind + "-" + protectedPath,
+    });
+    assert(attempt?.decision === "block"
+      && String(attempt.reason ?? "").includes("control paths"),
+    taskKind + " must not authorize framework authority path: " + protectedPath);
+  }
+}
+
 const accepted = hook("UserPromptSubmit", { prompt });
 assert(
   String(accepted?.hookSpecificOutput?.additionalContext ?? "").includes("task authorization accepted"),
