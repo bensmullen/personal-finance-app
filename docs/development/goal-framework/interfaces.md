@@ -14,7 +14,7 @@ Keep each record bounded. Store a single immutable artifact plus verified refere
 
 Fields: `goal_issue`, `outcome`, `requirement_refs`, `approved_decisions`, `exclusions`, `decision_authority`, `phase_gates`, `budget_policy`, `concurrency_policy`, `merge_policy`, `uat_policy`, `completion_evidence`, and `approval`.
 
-Approval binds repository, goal revision/digest, PM identity, decision scope and timestamp. Revocation/new revision invalidates actions relying on superseded authority. Initial merge mode is manual. Goal approval never replaces per-task V3 authorization. A contained task inherits settled decisions; conflicting or unresolved material decisions stop the affected path.
+Approval binds repository, goal revision/digest, PM identity, decision scope and timestamp. Revocation/new revision invalidates actions relying on superseded authority. Initial merge mode is manual. Goal approval never replaces per-task V3 authorization. A contained task inherits settled decisions; conflicting or unresolved material decisions stop the affected path. A bounded goal outcome has a lightweight sizing/reuse rationale when nonobvious; this is not an additional approval.
 
 ## PFM_TASK_META_V1
 
@@ -26,7 +26,7 @@ Legacy register remains authoritative until GF-02 exports all obligations, prove
 
 ## SCOPE_CENSUS_V1
 
-Fields: `task_issue`, `baseline_sha`, `goal_revision`, `risk`, `rows`, `required_write_paths`, `read_only_exclusions`, `unresolved`, `review`.
+Fields: `task_issue`, `baseline_sha`, `goal_revision`, `risk`, `rows`, `required_write_paths`, `read_only_exclusions`, `unresolved`, `review`. Task complexity/cohort and one-line reuse/batch/split choice are optional planning/metric annotations, not machine write permissions or extra agent phases.
 
 Each row names an entry/guard/alternative; original source and run/as-of/cutoff authority; evaluator/selected writer; actual journal/claim/rollback; archive/replay; reference/application/worker/UI final observable boundary; path/symbol; proposed write ownership; and positive/negative test/evidence. Include empty/no-election/fallback/cached/incomplete paths and existing probes/fixtures where relevant. A short isolated task can have one row; cross-cutting work cannot declare completeness by listing one happy path. A file requiring protected framework ownership is a separate dependency, not a blanket product path.
 

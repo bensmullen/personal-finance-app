@@ -4,7 +4,7 @@ Authority: PM-approved direction tracked by #362; current runtime policy remains
 
 | ID | Required behavior and acceptance boundary | Primary package(s) | Verification |
 | --- | --- | --- | --- |
-| GF-R01 | Approved goal records repository, revision, authoritative requirements, exclusions, decision authority, budget and measurable completion. A goal is not a blanket coding grant. | GF-01 | GF-V01 |
+| GF-R01 | Approved goal records repository, revision, authoritative requirements, exclusions, decision authority, budget and measurable completion; right-size the goal around a coherent verifiable outcome, not an internal step or unbounded mandate. A goal is not a blanket coding grant. | GF-01 | GF-V01 |
 | GF-R02 | Issue metadata owns operational phase/gate/dependencies after lossless shadow-tested migration; labels are projections. Ordinary task assignment needs no PR; changed controlled commitments still do. | GF-02 | GF-V02 |
 | GF-R03 | Event/state changes are versioned and idempotent. Publish, verify, ready-to-merge, merged and accepted are distinct. Duplicate, late or lost acknowledgements cannot duplicate effects. | GF-01,03 | GF-V03 |
 | GF-R04 | Before cross-cutting writes, independently review source/evaluator → writer/journal → rollback/archive/replay → reference/app/worker/UI outward paths, optional/empty/fallback branches, fixtures and exclusions. Unknowns block only affected work. | GF-01,03 | GF-V04 |
@@ -22,12 +22,12 @@ Authority: PM-approved direction tracked by #362; current runtime policy remains
 | GF-R16 | Pre-UAT evidence includes real screenshots/interaction and independent semantic/visual review, no blocking discrepancy, exact candidate and fixture inventory. Actual required PM UAT remains a separate authenticated acceptance. | GF-04,08 | GF-V16 |
 | GF-R17 | Mutation testing is isolated, incremental/targeted and risk-triggered; broader release runs are budgeted. Classify survivors and coverage honestly; scores are not correctness. | GF-09 | GF-V17 |
 | GF-R18 | Eligible merges require approved tier, current exact-head/integration evidence, independent review and no PM/UAT blocker; conditional expected-head mutation and post-merge confirmation close races. | GF-08 | GF-V18 |
-| GF-R19 | Measure total usage, interventions, lead time, repairs, CI and safety by comparable cohorts with source/unit/coverage. Store compact references; no quadratic repetition of immutable payloads. | GF-05,09 | GF-V19 |
+| GF-R19 | Measure total usage, intervention, latency and CI/review/bootstrapping overhead separately for preclassified simple versus complex tasks and observed clean versus blocked/repaired outcomes. Preserve source/unit/coverage, including failed work; collect from existing events without extra routine agent turns. | GF-05,09 | GF-V19 |
 | GF-R20 | Identify recurring inefficiency from event deltas; bounded experiments require a comparison, stop/rollback and independent review. No self-weakening controls or automatic lesson promotion. | GF-09 | GF-V20 |
 | GF-R21 | Notify for actionable decisions, genuine UAT readiness, completion or serious failures; suppress unchanged noise. Continue independent approved work when PM is unavailable. | GF-07,09 | GF-V21 |
 | GF-R22 | Staged opt-in activation, revocation, kill switch, acknowledged safe stop and manual V3 fallback are proven. Planning approval alone activates nothing. | GF-06,08,09 | GF-V22 |
 | GF-R23 | Authenticate actors/events/approval and use least privilege. Issue/log text is untrusted data; hashes are change witnesses, not permission. Never persist credentials or real financial data in artifacts. | GF-01,02,03,06,08 | GF-V23 |
-| GF-R24 | Requirements → issues → PRs → checks/artifacts → phase exits remain traceable. Risk-adaptive APIV reuses settled alignment; task/PR count is not accepted goal completion. | GF-01,07,09 | GF-V24 |
+| GF-R24 | Requirements → issues → PRs → evidence → phase exits remain traceable. Risk-adaptive APIV reuses alignment and one inexpensive task/goal right-sizing decision (reuse, batch, split). For financial work favor semantically exact, materially useful forecast outputs over redundant full histories as higher-authority specs permit; PR count is not completion. | GF-01,07,09 | GF-V24 |
 
 ## Coverage of the original fourteen considerations
 
@@ -45,7 +45,7 @@ Authority: PM-approved direction tracked by #362; current runtime policy remains
 | 10 APIV | R01/R24: align/plan at goal and task risk level, independently verify |
 | 11 Borrowed framework practices | R09/R24: role separation, adaptive depth, durable handoffs; no wholesale third-party hierarchy |
 | 12 Dot context | R12/R23: GitHub authority and verified context, not memory correctness claims |
-| 13 Ideal issue size | R04/R05/R24: coherent verifiable PR outcome; internal steps do not require issues |
+| 13 Ideal issue size | R01/R04/R05/R19/R24: coherent verifiable PR; reuse/batch/split via minimal planning, evaluate measured simple/complex overhead |
 | 14 Delegated merges | R16/R18/R22: exact-head evidence, independent review, PM UAT and explicit activation |
 
 Additional approved requirements—safe parallel work, measured process correction, preimplementation path completeness and household readiness—are R08, R20, R04 and R15–16 respectively.

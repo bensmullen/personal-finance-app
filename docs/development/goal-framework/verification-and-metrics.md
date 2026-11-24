@@ -38,12 +38,12 @@ The plan checker must reject malformed mappings, unknown requirement/test IDs, m
 | GF-V16 | Candidate/fixture-pinned real screenshots/interaction and independent semantic/visual review before UAT; known defect, missing required household, no visual review or agent-generated PM acceptance denied. |
 | GF-V17 | Targeted mutation finds a deliberately missing negative; equivalent/invalid/time-out/uncovered mutants classified; no blanket score claim, secret exposure, canonical workspace mutation or ordinary-CI full sweep. |
 | GF-V18 | Eligible expected-head merge confirmed; new head/base, revoked review, self-review, missing CI, UAT pending, protection/permission change and lost acknowledgement prevent false merge/completion. |
-| GF-V19 | Comparable baseline/pilot units and coverage; unavailable data remains null; accepted outcome counted once; 1/10/100 event/record growth avoids repeated large immutable payloads. |
+| GF-V19 | Compare preclassified simple/standard/cross-cutting tasks independently from clean-first-pass/blocked-repair/cancelled outcomes; measure planning, scope, bootstrap, coding, CI, independent review and PM costs/latencies from existing evidence, including failed attempts. Missing stays null; no additional agent call to measure; accepted outcomes counted once and 1/10/100 records remain linear. |
 | GF-V20 | Bounded measured improvement and rollback; unchanged incident causes no repeated review, and self-modifying controls/automatic lesson promotion are denied. |
 | GF-V21 | Actionable PM decision/UAT/completion notice deduplicated; no-change quiet path uses no model; unavailable PM allows independent approved work, not invented semantics. |
 | GF-V22 | Disabled defaults, explicit activation, revocation/kill switch, acknowledged safe stop and manual V3 recovery proven; cloud loss cannot silently launch duplicate local writer. |
 | GF-V23 | Forged actor/event, issue/log prompt injection, arbitrary command/path, credentials in artifacts and checksum-as-authority denied; least-privilege reads and bounded safe output preserved. |
-| GF-V24 | Every requirement owns an issue and verification; phase closure requires actual accepted evidence. At least two coherent real supervised PR outcomes and final fault-injected pilot; no mock-only or task-count completion. |
+| GF-V24 | Test reuse of a tiny internal step, batching related fixes, allowing a small independent safety PR, splitting an unbounded mixed-authority goal and retaining a coherent cross-cutting financial issue. Higher-authority financial invariants remain exact while optional histories are deferred/aggregated. Requirements/phase exits still demand evidence, real supervised PRs and final pilot, never task counts. |
 
 These are minimum acceptance scenarios, not a mandate to duplicate expensive setup for each row. Group shared setup, separate independent failing assertions, and retain one holistic path (AL-004). Tests must preserve failure/timeout/artifact truth rather than convert incomplete work to green.
 
@@ -64,6 +64,13 @@ At each substantive audit write: verdict; accepted requirement IDs; outstanding 
 ## Metrics and baseline protocol
 
 Baseline starts NOT MEASURED. GF-05 instruments collection; before P3, capture up to five recent comparable accepted manual-V3 tasks where reliable evidence exists, plus prospective measurements when old telemetry is absent. Compare the first three to five pilot outcomes by risk/size class; report actual n, medians/ranges, coverage and paused/censored work. Small samples are directional evidence, not causal proof. No retrospective token estimates presented as observations.
+
+### Clean/complex overhead measurement (GF-05; GF-09 evaluates)
+
+Label **complexity before execution** as simple/local, standard/coherent or complex/cross-cutting (number of independent semantic authorities, layers, uncertainty and verification demands—not raw file count). Label **outcome afterward** as clean first-pass, blocked/repaired, or incomplete/cancelled. For each bucket, report the same existing-event costs and elapsed times: APIV/scope/issue preparation, bootstrap, model/implementation, CI, independent review and routine versus essential PM intervention. Compare clean-simple and clean-complex *added overhead* separately from complex failure/recovery savings and total accepted-capability cost. Include retries, rejected attempts, paused work, missing units and coverage, not just successes.
+
+Record a small matched baseline and later pilot cohorts with n, median/range and confounders; do not infer native token usage or PM minutes without observations. Reuse available GitHub/receipt timestamps and usage snapshots; **no extra per-task agent review, fresh CI run, or mandatory status PR merely for telemetry**. If a clean-task cohort measurably worsens without a compensating accepted-work benefit, evaluate bounded tuning/rollback rather than turning the metric into another PM approval gate.
+
 
 | ID | Definition / denominator | Source and interpretation |
 | --- | --- | --- |

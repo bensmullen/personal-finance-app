@@ -73,6 +73,13 @@ Owners: #363–#371. `delivery_waves` is the recommended dispatch PRIORITY, not 
 
 Use the same original issue for these acceptance checkpoints; no micro-issue or scope PR per step. Read-only discovery may run in parallel. Runtime adoption requires merged independently accepted prerequisites, real workspace readiness and finite budgets. Baseline/metric/household tools must remain useful with Dot unavailable; do not wait until P4 to learn whether bookkeeping and scope discovery improved. Keep mandatory tests independent from LLM cost, and record before/after evidence at each adopted increment. No activation just because a feature flag or issue is marked complete.
 
+### Size and economic-value guardrail (GF-A07)
+
+Right-size once at goal/task planning or material rescope: **reuse** tiny internal work in the original issue, **batch** related low-risk changes with one authority and review surface, **split** independent decisions/owners or unbounded acceptance. A coherent cross-cutting issue may legitimately need many exact paths after one bounded census. No extra agent, issue, PR or PM signoff for this ordinary choice; don't fragment tasks to reset cumulative budgets. Refine from GF-05 simple/complex clean/blocked overhead, not arbitrary size limits.
+
+Before making a financial forecast hot path store or recompute detailed proof/state, identify the user-material result, binding exact financial invariant, cheapest correct representation and actual expected resource impact. Existing [PFA-PERF-019–022](../../specs/capabilities/performance-and-execution.md) and [PFA-PROB-006/015](../../specs/capabilities/probabilistic-forecasting.md) govern bounded kernels/history and optional lazy detail. Preserve source-qualified postings, funding, tax, determinism and mandatory replay evidence; extra bookkeeping with no proven benefit is not itself a financial goal. Semantic changes require PM authority.
+
+
 ## GF-A08 — Household and mutation evidence must expose gaps
 
 Owners: #366, #371. Bind applicability to approved required capability, not the implementer's passing subset. Enumerate every applicable supported household/variant; zero discovered tests, missing required fixtures, xfail/quarantine, fixture-order leakage and unknown unsupported behavior cannot pass. Use fresh isolated household/plan stores and independently authored expected values. Prove the real compiled/worker/user path rather than injecting a successful forecast or deriving the oracle from the same calculation. Preserve one holistic journey and separate meaningful failures; inspect actual screenshots without treating screenshot capture as visual approval.
