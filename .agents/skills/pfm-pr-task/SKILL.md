@@ -100,6 +100,11 @@ conditions when useful. Their exact headings are not parser requirements.
   allowed for a new subtree.
 - Do not edit framework-control files from a product/repair task.
 - Do not install packages or switch package managers.
+- A separately approved read-only Node probe is available as the exact
+  `python3 tools/codex/node-environment-diagnostic.py` command on worktrees
+  containing the merged diagnostic guard. It does not require an active task,
+  perform verification, install packages, mutate task receipts or consume a
+  preflight attempt. Never use it as a substitute for CI or to rerun SKIP.
 - Optional bounded local verification: invoke exactly
   `python3 tools/codex/limited-local-verification-launcher.py` or append one
   directly affected tracked `test/name.test.ts`. This audited launcher finds
