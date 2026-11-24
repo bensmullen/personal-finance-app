@@ -1346,11 +1346,12 @@ const preparePreflightHookFixture = ({ startTask = true } = {}) => {
   const helper = 'tools/codex/limited-local-verification.mjs';
   const reporter = 'tools/codex/local-preflight-progress-reporter.mjs';
   const launcher = 'tools/codex/limited-local-verification-launcher.py';
+  const diagnostic = 'tools/codex/node-environment-diagnostic.py';
   const command = `node ${helper} test/affected.test.ts`;
   const launchCommand = `python3 ${launcher} test/affected.test.ts`;
   fs.mkdirSync(path.join(f.repository, 'tools/codex'), { recursive: true });
   fs.mkdirSync(path.join(f.repository, 'test'));
-  for (const file of [helper, reporter, launcher]) {
+  for (const file of [helper, reporter, launcher, diagnostic]) {
     fs.copyFileSync(path.join(root, file), path.join(f.repository, file));
   }
   fs.writeFileSync(path.join(f.repository, 'test/affected.test.ts'),
@@ -1382,6 +1383,55 @@ const preparePreflightHookFixture = ({ startTask = true } = {}) => {
   };
   return { f, helper, reporter, launcher, command, launchCommand, preflight, state, post };
 };
+// Exact read-only Node diagnosis needs neither a writer nor a test receipt.
+// It cannot modify task state or gain authority through a tampered script.
+{
+  const { f, diagnostic } = (() => {
+    const f = preparePreflightHookFixture({ startTask: false });
+    return { f: f.f, diagnostic: 'tools/codex/node-environment-diagnostic.py' };
+  })();
+  const cmd = 'python3 ' + diagnostic;
+  const pointer = path.join(f.repository, '.codex/runtime/latest-task.json');
+  const before = fs.readFileSync(pointer, 'utf8');
+  const request = command => f.invoke('PreToolUse', {
+    tool_name: 'Bash', tool_input: { command },
+  });
+  assert(JSON.stringify(request(cmd)) === '{}',
+    'trusted read-only Node diagnosis allowed without active authorization');
+  for (const command of [cmd + ' --probe', cmd + '; echo bypass',
+                         'bash -c "' + cmd + '"', cmd + '\ntrue',
+                         'NODE_OPTIONS=--import=bad ' + cmd]) {
+    assert(request(command).hookSpecificOutput?.permissionDecision === 'deny',
+      'diagnostic rejects every wrapper/flag or chained command');
+  }
+  const python = mustRun('python3', ['-c', 'import sys; print(sys.executable)']).stdout.trim();
+  const output = run(python, [path.join(f.repository, diagnostic)], { cwd: f.repository });
+  assert(output.status === 0 && output.stdout.startsWith('PFM_NODE_DIAGNOSTIC '),
+    'diagnostic runs safely without Node task receipt or tests');
+  const report = JSON.parse(output.stdout.slice('PFM_NODE_DIAGNOSTIC '.length));
+  assert(report.schema === 1 && Array.isArray(report.checks) &&
+    typeof report.node_on_path === 'boolean' &&
+    typeof report.typescript_present === 'boolean',
+    'diagnostic reports bounded typed, secret-free classifications');
+  assert(!output.stdout.includes(process.env.HOME || '\u0000') &&
+         !output.stdout.includes(f.repository) &&
+         !output.stdout.includes('PFM_PREFLIGHT_RESULT') &&
+         !output.stdout.includes('AUTHORIZATION_ID'),
+    'diagnostic never discloses home/worktree/secrets or fabricates a verification result');
+  assert(fs.readFileSync(pointer, 'utf8') === before,
+    'read-only diagnostics leave protected task pointer unchanged');
+  fs.appendFileSync(path.join(f.repository, diagnostic), '\n# unmerged diagnostic tamper\n');
+  assert(request(cmd).hookSpecificOutput?.permissionDecision === 'deny',
+    'task-modified diagnostic must fail closed');
+}
+{
+  const { f, launcher } = preparePreflightHookFixture({ startTask: false });
+  const command = 'python3 tools/codex/node-environment-diagnostic.py';
+  fs.appendFileSync(path.join(f.repository, launcher), '\n# unmerged launcher tamper\n');
+  assert(f.invoke('PreToolUse', { tool_name: 'Bash', tool_input: { command } })
+    .hookSpecificOutput?.permissionDecision === 'deny',
+    'diagnostic must not import modified launcher code');
+}
 // A sparse PATH cannot prevent the hook from reserving the trusted launcher,
 // but the direct Node command should fail clearly before any reservation.
 {
