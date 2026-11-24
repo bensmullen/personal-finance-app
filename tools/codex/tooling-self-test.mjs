@@ -204,6 +204,12 @@ for (const protectedPath of [
   "test/fixtures/goalFramework/contracts/cases.json",
   "test/goalIssueMetadata.test.ts",
   "test/milestoneIssueRegister.test.ts",
+  // On typical macOS volumes these spellings can address the same files.
+  "docs/development/GOAL-FRAMEWORK/interfaces.md",
+  "docs/development/MILESTONE-ISSUE-REGISTER.json",
+  "TOOLS/ROADMAP/goal-issue-metadata.mjs",
+  "test/goalframeworkcontracts.test.ts",
+  "agents.md",
 ]) {
   for (const taskKind of ["product", "repair"]) {
     const deniedPrompt = prompt.replace("TASK_KIND: product", "TASK_KIND: " + taskKind)

@@ -676,8 +676,10 @@ def allowed(path, patterns):
 
 
 def is_control_path(path):
-    path = normalize(path)
-    return any(path == item.rstrip("/") or path.startswith(item) for item in CONTROL_PATHS)
+    # Worktrees can live on case-insensitive macOS volumes. Compare protected
+    # control names without case while keeping the stored path unchanged.
+    path = normalize(path).casefold()
+    return any(path == item.rstrip("/").casefold() or path.startswith(item.casefold()) for item in CONTROL_PATHS)
 
 
 def validate_task(prompt):
