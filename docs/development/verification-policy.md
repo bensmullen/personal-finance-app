@@ -37,7 +37,10 @@ retry is permitted after process-level or individual Vitest-case TIMEOUT, SKIP, 
 any interrupted/unrecorded execution. The hook reserves each attempt BEFORE
 the sandboxed command runs; an unobserved outcome is INCOMPLETE, not a license
 to retry. The sandboxed helper may write only ignored `.pfm-preflight/`
-diagnostic logs and case-level progress. The separate PostToolUse hook seals
+diagnostic logs and progress. The private progress stream records both
+compiler phases and the unit phase with monotonic elapsed times, alongside
+append-only case events. The runner log has a 1 MiB aggregate cap per
+attempt. The separate PostToolUse hook seals
 the host-returned outcome in protected, hash-bound `.codex/runtime/` state;
 local diagnostic files are never acceptance or authorization receipts. No
 flags, wrappers, shell chaining, arbitrary test selection, installers or
@@ -61,7 +64,8 @@ Codex push/COMPLETE until an authorized correction retry yields PASS or a
 genuine environment SKIP. Do not deliberately skip a known failure. Missing
 Node/npm/node_modules, unavailable writable diagnostics, spawn error or helper/API
 incompatibility is SKIP/unverified. Bounded execution timeout is explicitly
-TIMEOUT/INCOMPLETE; missing host evidence is INCOMPLETE. Neither constitutes
+TIMEOUT/INCOMPLETE. A signal-interrupted child or missing host evidence is
+INCOMPLETE. Neither constitutes
 an assertion PASS/FAIL or by itself prevents publication. Each started and
 completed Vitest case has an append-only diagnostic event; a process kill keeps
 already-written case outcomes but never satisfies full-file acceptance.

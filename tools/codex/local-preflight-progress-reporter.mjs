@@ -2,21 +2,34 @@
 // A completed case is appended immediately. An interrupted file never becomes
 // PASS merely because some earlier cases finished. Do not record assertions,
 // fixture values, paths to private inputs, or stack traces.
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, constants } from 'node:fs';
 import { createHash } from 'node:crypto';
 
 const progress = process.env.PFM_PREFLIGHT_PROGRESS;
 const MAX_EVENTS = 4096;
 let events = 0;
+const overflowStatuses = new Set();
+
+function append(event) {
+  appendFileSync(progress, JSON.stringify(event) + '\n', {
+    flag: constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW | constants.O_NONBLOCK | constants.O_CREAT,
+    mode: 0o600,
+  });
+}
 
 function record(phase, testCase, status) {
-  if (!progress || events >= MAX_EVENTS) return;
-  events += 1;
+  if (!progress) return;
+  if (++events > MAX_EVENTS) {
+    if (events === MAX_EVENTS + 1) append({ phase: 'case-limit' });
+    if (phase === 'end' && ['failed', 'timed_out'].includes(status) && !overflowStatuses.has(status)) {
+      overflowStatuses.add(status);
+      append({ phase: 'case-overflow-outcome', status });
+    }
+    return;
+  }
   // Keep identity stable without writing test/fixture content into diagnostics.
   const id = createHash('sha256').update(String(testCase.id ?? testCase.name ?? '')).digest('hex').slice(0, 16);
-  appendFileSync(progress, JSON.stringify({
-    phase, id, ...(status === undefined ? {} : { status }),
-  }) + '\n');
+  append({ phase, id, ...(status === undefined ? {} : { status }) });
 }
 
 export default class LocalPreflightProgressReporter {

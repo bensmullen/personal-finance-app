@@ -17,6 +17,7 @@ const run = (command, args = [], options = {}) =>
     cwd: options.cwd ?? root,
     encoding: "utf8",
     input: options.input,
+    timeout: options.timeout,
     env: { ...process.env, ...(options.env ?? {}) },
   });
 
@@ -1210,6 +1211,12 @@ process.exit(${failure === 'unit' || failure.startsWith('unit-') ? 1 : 0});`);
   assert(outcome.timeoutObserved === failure.startsWith('unit-'),
     'case timeout is explicit even when mixed with a separate assertion FAIL');
   const log = fs.readFileSync(path.join(directory, outcome.log), 'utf8');
+  const stages = fs.readFileSync(path.join(directory, outcome.progress), 'utf8').trim().split('\n')
+    .map(JSON.parse).filter(event => event.phase === 'stage-end');
+  assert(stages.map(event => event.stage).join(',') === (failure === 'typecheck'
+    ? 'typescript' : 'typescript,typescript-next,unit'), 'completed phase inventory follows the actual execution');
+  assert(stages.every(event => Number.isSafeInteger(event.elapsed_ms) && event.elapsed_ms >= 0),
+    'phase durations use bounded monotonic elapsed milliseconds');
   assert(log.includes('tsc --noEmit'), 'first complete project typecheck');
   assert(log.includes('tsc -p tsconfig.next.json') === (failure !== 'typecheck'), 'second project checked after first passes');
   assert(log.includes('unit run test/affected.test.ts') === (failure !== 'typecheck'), 'unit only after full typecheck success');
@@ -1221,6 +1228,69 @@ process.exit(${failure === 'unit' || failure.startsWith('unit-') ? 1 : 0});`);
     'test/affected.test.ts'], { cwd: directory });
   assert(repeated.status === 0 && repeated.stdout.includes('SKIP') && repeated.stdout.includes('no tests executed'),
     'the same reserved helper invocation cannot execute tests twice');
+}
+// Only these synthetic child processes see short timer deadlines. Check the
+// actual budgets passed to the timer independently from the test acceleration.
+for (const scenario of ['first-timeout', 'second-timeout', 'unit-timeout', 'unit-mixed-timeout', 'unit-interrupted']) {
+  const directory = path.join(temp, `phase-deadline-${scenario}`);
+  for (const sub of ['.codex/runtime', 'node_modules/typescript/bin', 'node_modules/vitest']) {
+    fs.mkdirSync(path.join(directory, sub), { recursive: true });
+  }
+  fs.writeFileSync(path.join(directory, 'timers.mjs'), `
+import { appendFileSync } from 'node:fs';
+const original = globalThis.setTimeout;
+globalThis.setTimeout = (callback, delay, ...args) => {
+  if (delay > 25_000 && delay <= 60_000) {
+    appendFileSync('timers.jsonl', JSON.stringify(delay) + '\\n');
+    delay = 1500;
+  }
+  return original(callback, delay, ...args);
+};
+`);
+  fs.writeFileSync(path.join(directory, 'package.json'), JSON.stringify({
+    scripts: { typecheck: 'tsc --noEmit && tsc -p tsconfig.next.json' },
+  }));
+  fs.writeFileSync(path.join(directory, 'node_modules/typescript/bin/tsc'), `
+const first = process.argv[2] === '--noEmit';
+if (first ? ${scenario === 'first-timeout'} : ${scenario === 'second-timeout'}) setInterval(() => {}, 100);
+else process.stdout.write('x'.repeat(600_000));
+`);
+  fs.writeFileSync(path.join(directory, 'node_modules/vitest/vitest.mjs'), `
+import { appendFileSync } from 'node:fs';
+appendFileSync(process.env.PFM_PREFLIGHT_PROGRESS, [
+  { phase: 'end', id: 'one', status: '${scenario === 'unit-mixed-timeout' ? 'failed' : 'passed'}' },
+  { phase: 'start', id: 'two' },
+].map(event => JSON.stringify(event) + '\\n').join(''));
+if (${scenario === 'unit-interrupted'}) process.kill(process.pid, 'SIGTERM');
+else setInterval(() => {}, 100);
+`);
+  const data = JSON.stringify({ ACTIVE: true, WORKTREE: directory, AUTHORIZATION_ID: 'phase-deadline',
+    PREFLIGHT: { count: 1, test: 'test/affected.test.ts', patch: 'a'.repeat(64), nonce: 'b'.repeat(32) } });
+  fs.writeFileSync(path.join(directory, '.codex/runtime/owner.json'), data);
+  fs.writeFileSync(path.join(directory, '.codex/runtime/latest-task.json'), JSON.stringify({
+    path: 'owner.json', sha256: createHash('sha256').update(data).digest('hex'),
+  }));
+  const executed = run(process.execPath, ['--import', path.join(directory, 'timers.mjs'),
+    path.join(root, 'tools/codex/limited-local-verification.mjs'), 'test/affected.test.ts'],
+  { cwd: directory, timeout: 8000 });
+  const report = JSON.parse(executed.stdout.split('PFM_PREFLIGHT_RESULT ')[1]?.trim() ?? 'null');
+  const expected = scenario === 'unit-interrupted' ? 'INCOMPLETE'
+    : scenario === 'unit-mixed-timeout' ? 'FAIL' : 'TIMEOUT';
+  assert(report?.status === expected && report.timeoutObserved === (expected !== 'INCOMPLETE'),
+    `truthful process outcome for ${scenario}: ${executed.stdout.slice(0, 600)} ${executed.stderr.slice(0, 600)}`);
+  const timers = fs.readFileSync(path.join(directory, 'timers.jsonl'), 'utf8').trim().split('\n').map(Number);
+  const phaseCount = scenario === 'first-timeout' ? 1 : scenario === 'second-timeout' ? 2 : 3;
+  assert(timers.length === phaseCount && timers[0] <= 60_000
+    && (phaseCount < 2 || timers[1] < timers[0]) && (phaseCount < 3 || timers[2] <= 30_000),
+  'compiler phases share a deadline, and the single unit has 30 seconds');
+  const events = fs.readFileSync(path.join(directory, report.progress), 'utf8').trim().split('\n').map(JSON.parse);
+  const stages = events.filter(event => event.phase.startsWith('stage-'));
+  assert(stages.length === phaseCount * 2 &&
+    stages.at(-1).status === (expected === 'FAIL' ? 'TIMEOUT' : expected), 'no later phase or automatic retry');
+  assert(phaseCount < 3 || (events.some(event => event.phase === 'end' && event.id === 'one')
+    && events.some(event => event.phase === 'start' && event.id === 'two')
+    && !events.some(event => event.phase === 'end' && event.id === 'two')), 'preserves partial unit progress');
+  assert(fs.statSync(path.join(directory, report.log)).size <= 1024 * 1024, 'one aggregate log ceiling per attempt');
 }
 // A malformed sandbox-writable directory is nonexecuting SKIP, not a test FAIL.
 {
@@ -1320,6 +1390,14 @@ process.exit(${failure === 'unit' || failure.startsWith('unit-') ? 1 : 0});`);
     events[2].phase === 'start' && events[4].status === 'timed_out' &&
     !events.some(e => e.id === events[2].id && e.phase === 'end'),
     'completed tests survive interruption, while test-case timeouts remain incomplete');
+  for (let index = 0; index < 4096; index += 1) reporter.onTestCaseReady(pending);
+  reporter.onTestCaseResult(timedOut);
+  reporter.onTestCaseResult({ id: 'over-limit-failure', result: () => ({ state: 'failed' }) });
+  reporter.onTestCaseResult(timedOut);
+  const overflow = fs.readFileSync(progress, 'utf8').trim().split('\n').map(JSON.parse);
+  assert(overflow.length === 4099 && overflow.slice(-3).map(event => event.phase).join(',') ===
+    'case-limit,case-overflow-outcome,case-overflow-outcome',
+  'bounded progress still records mixed failure and timeout beyond its case inventory cap');
 }
 
 // A foreign active session is never assumed interrupted, even with clean Git.
@@ -1666,6 +1744,8 @@ const advanceSyntheticVerifierMain = (f, id) => {
   assert(JSON.stringify(preflight(command)) === '{}', 'new local attempt admitted');
   post('FAIL');
   assert(state().PREFLIGHT.result.status === 'FAIL', 'observed FAIL protected by hook');
+  post('PASS');
+  assert(state().PREFLIGHT.result.status === 'FAIL', 'repeated callback cannot replace a sealed FAIL');
   const push = f.invoke('PreToolUse', { tool_name: 'Bash',
     tool_input: { command: 'git push origin codex/policy-self-test' } });
   assert(push.hookSpecificOutput?.permissionDecisionReason.includes('LOCAL_PREFLIGHT_FAILED'),
@@ -1679,7 +1759,10 @@ const advanceSyntheticVerifierMain = (f, id) => {
     .hookSpecificOutput?.permissionDecisionReason.includes('LOCAL_PREFLIGHT_FAILED'),
     'sandbox-writable diagnostic file cannot forge a protected PASS');
   f.dirty();
+  const stale = state().PREFLIGHT;
   assert(JSON.stringify(preflight(command)) === '{}', 'one changed-patch FAIL correction retry allowed');
+  post('PASS', { attempt: stale.count, patch: stale.patch, nonce: stale.nonce });
+  assert(state().PREFLIGHT.result.status === 'INCOMPLETE', 'earlier attempt callback cannot seal a new patch');
   post('TIMEOUT');
   assert(state().PREFLIGHT.result.status === 'TIMEOUT' && state().PREFLIGHT.prior_failure === true,
     'timeout does not erase an independently observed prior FAIL');
@@ -1690,6 +1773,22 @@ const advanceSyntheticVerifierMain = (f, id) => {
   f.dirty();
   assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny',
     'timed out local test may never trigger another local retry');
+}
+{
+  const { f, command, preflight, state, post } = preparePreflightHookFixture();
+  f.claim(); f.dirty();
+  assert(JSON.stringify(preflight(command)) === '{}', 'new local attempt admitted');
+  post('FAIL');
+  f.dirty();
+  assert(JSON.stringify(preflight(command)) === '{}', 'changed-patch correction is admitted once');
+  post('INCOMPLETE');
+  assert(state().PREFLIGHT.result.status === 'INCOMPLETE' && state().PREFLIGHT.prior_failure,
+    'a signal-interrupted correction cannot clear an observed FAIL');
+  assert(f.invoke('PreToolUse', { tool_name: 'Bash',
+    tool_input: { command: 'git push origin codex/policy-self-test' } })
+    .hookSpecificOutput?.permissionDecisionReason.includes('LOCAL_PREFLIGHT_FAILED'),
+  'incomplete correction blocks ordinary publication');
+  assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'incomplete correction cannot retry');
 }
 {
   const { f, command, preflight, state, post } = preparePreflightHookFixture();
