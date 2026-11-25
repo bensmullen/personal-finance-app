@@ -233,6 +233,7 @@ describe("read-only issue pagination", () => {
     return readIssueInventory({ token: "read-only-test", request: (url: string, options: RequestInit) => {
       expect(options.method).toBe("GET");
       expect(options.redirect).toBe("error");
+      expect(new Headers(options.headers).get("X-GitHub-Api-Version")).toBe("2022-11-28");
       expect(url).toBe(`${endpoint}?state=all&sort=created&direction=asc&per_page=50&page=${++page}`);
       return respond(page);
     } });
@@ -252,6 +253,19 @@ describe("read-only issue pagination", () => {
       expect(JSON.stringify(result.pagination)).not.toContain(source);
     },
   );
+
+  it("accepts the observed GitHub Link with both a numbered page and a forward cursor", async () => {
+    const link = '<https://api.github.com/repositories/1343958499/issues?state=all&sort=created&direction=asc&per_page=50&page=2&after=Y3Vyc29yOnYyOpLPAAABoP_BOADPAAAAAVLq-Wk%3D>; rel="next"';
+    const result = await read(page => page === 1
+      ? Response.json(fullPage(1), { headers: { link } })
+      : Response.json([issue(51)]));
+    expect(result.observations.size).toBe(51);
+    expect(result.pagination).toEqual({ pages: [
+      { page: 1, count: 50, continuation: "next_cursor" },
+      { page: 2, count: 1, continuation: "short_terminal" },
+    ], provider_count: 51, issue_count: 51, inventory_sha256: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    expect(JSON.stringify(result.pagination)).not.toContain("Y3Vyc29yOnYyOpLPAAABoP_BOADPAAAAAVLq-Wk");
+  });
 
   it("requires an empty numbered probe for a full page without next", async () => {
     const result = await read(page => Response.json(page === 1 ? fullPage(1) : []));
@@ -286,7 +300,19 @@ describe("read-only issue pagination", () => {
     next(`${endpoint}?page=2#fragment`),
     next(`${endpoint}?page=3`),
     next(`${endpoint}?page=2&page=2`),
-    next(`${endpoint}?page=2&after=opaque`),
+    next(`${endpoint}?page=3&after=opaque`),
+    next(`${endpoint}?page=0&after=opaque`),
+    next(`${endpoint}?page=9007199254740992&after=opaque`),
+    next(`${endpoint}?page=2&after=opaque&after=other`),
+    next(`${endpoint}?page=2&after=opaque&cursor=other`),
+    next(`${endpoint}?page=2&after=opaque&before=other`),
+    next(`${endpoint}?page=2&after=`),
+    next(`${endpoint}?page=2&after=opaque%20cursor`),
+    next(`${endpoint}?page=2&after=%00`),
+    next(`${endpoint}?page=2&after=%FF`),
+    next(`${endpoint}?sort=created`),
+    next(`${endpoint}?page=2&after=opaque&state=open`),
+    next(`${host}/repositories/1343958500/issues?page=2&after=opaque`),
     next(`${endpoint}?page=2&state=open`),
     next(`${endpoint}?page=2&per_page=100`),
     next(`${endpoint}?page=2&since=2026-11-25`),
@@ -295,6 +321,12 @@ describe("read-only issue pagination", () => {
     `<${endpoint}?page=2>; rel="next prev"`,
   ])("rejects incompatible or ambiguous Link evidence (%s)", async link => {
     await expect(read(() => Response.json(fullPage(1), { headers: { link } }))).rejects.toThrow("issue pagination");
+  });
+
+  it("rejects a repeated cursor across successive valid next page numbers", async () => {
+    await expect(read(page => Response.json(fullPage(page), {
+      headers: { link: next(`${numericEndpoint}?page=${page + 1}&after=opaque`) },
+    }))).rejects.toThrow("Unexpected issue pagination target on page 2");
   });
 
   it("rejects a repeated cursor and stops at the page and byte limits", async () => {

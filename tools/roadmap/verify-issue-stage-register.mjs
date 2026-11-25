@@ -57,12 +57,10 @@ function continuation(header, page, seenCursors) {
   if (!next) return null;
   const number = next.get("page");
   const cursors = [next.get("after"), next.get("cursor")].filter(value => value !== null);
-  check(!next.has("before") && cursors.length + Number(number !== null) === 1, unexpected);
-  if (number !== null) {
-    check(Number(number) === page + 1, unexpected);
-    return "next_numbered";
-  }
+  check(!next.has("before") && cursors.length <= 1 && (number !== null || cursors.length === 1), unexpected);
+  if (number !== null) check(Number(number) === page + 1, unexpected);
   const [cursor] = cursors;
+  if (cursor === undefined) return "next_numbered";
   check(cursor.length > 0 && !/[\s\p{Cc}\uFFFD]/u.test(cursor) && !seenCursors.has(cursor), unexpected);
   seenCursors.add(cursor);
   return "next_cursor";
