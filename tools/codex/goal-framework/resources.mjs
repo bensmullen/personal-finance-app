@@ -16,6 +16,9 @@ const poolFields = ['account_scope', 'pool_id', 'unit'];
 const actualFields = ['model', 'reasoning', 'surface', 'runtime'];
 const taskFields = ['repository', 'goal_issue', 'goal_revision', 'goal_control_digest',
   'task_issue', 'task_revision', 'lineage_id'];
+const goalBudgetFields = ['account_ceiling', 'goal_ceiling', 'execution_deadline', 'max_model_calls', 'max_continuations'];
+const taskBudgetFields = ['task_ceiling'];
+const ledgerPayloadBytes = 128 * 1024;
 const version = 'PFM_RESOURCE_LEDGER_V1';
 
 export function requireResource(condition, code) {
@@ -69,6 +72,14 @@ function actualProfile(actual) {
     && actualFields.every((key) => typeof actual[key] === 'string' && identifier.test(actual[key])), 'ACTUAL_PROFILE');
 }
 
+function reasonCode(reason, required, code) {
+  requireResource(reason == null ? !required : typeof reason === 'string' && identifier.test(reason), code);
+}
+
+function checkExpectedKeys(value, keys, code) {
+  requireResource(value && Object.keys(value).every((key) => keys.includes(key)), code);
+}
+
 function selectProfile(registry, reference, reservation, operation, verify) {
   resourceRef(reference);
   requireResource(registry.schema === 'PFM_RESOURCE_PROFILES_V1' && Array.isArray(registry.profiles)
@@ -97,11 +108,15 @@ function syncDirectory(directory) {
   }
 }
 
-function publish(directory, name, value, fault) {
+function encodeEntry(value) {
+  return canonicalJson(value, ledgerPayloadBytes) + '\n';
+}
+
+function publish(directory, name, encoded, fault) {
   const temporary = join(directory, '.pending');
   const descriptor = openSync(temporary, 'wx', 0o600);
   try {
-    writeFileSync(descriptor, canonicalJson(value) + '\n');
+    writeFileSync(descriptor, encoded);
     fault?.('before-file-sync');
     fsyncSync(descriptor);
   } finally {
@@ -115,10 +130,10 @@ function publish(directory, name, value, fault) {
 function readEntry(directory, name) {
   const path = join(directory, name);
   const stat = lstatSync(path);
-  requireResource(stat.isFile() && stat.size <= 128 * 1024 + 1, 'LEDGER_FILE');
+  requireResource(stat.isFile() && stat.size <= ledgerPayloadBytes + 1, 'LEDGER_FILE');
   const raw = readFileSync(path, 'utf8');
   const value = JSON.parse(raw);
-  requireResource(raw === canonicalJson(value) + '\n', 'LEDGER_FILE');
+  requireResource(raw === encodeEntry(value), 'LEDGER_FILE');
   return value;
 }
 
@@ -127,6 +142,7 @@ const fileName = (sequence) => String(sequence).padStart(12, '0') + '.json';
 function replay(directory, header) {
   const names = readdirSync(directory).filter((name) => name !== 'header.json' && name !== '.lock').sort();
   const state = { runs: new Map(), nativeRuns: new Set(), pools: new Map(), observations: new Map(),
+    goalBudgets: new Map(), taskBudgets: new Map(),
     eventDigests: new Map(), usageDigests: new Map(), sequence: 0, last: digest(header), now: resourceTime(header.created_at) };
   for (const name of names) {
     const sequence = state.sequence + 1;
@@ -142,11 +158,49 @@ function replay(directory, header) {
   return state;
 }
 
+function budgetScopes(state, run) {
+  return [
+    { scope: 'goal', budgets: state.goalBudgets, key: run.goal_key, fields: goalBudgetFields },
+    { scope: 'task', budgets: state.taskBudgets,
+      key: digest([run.goal_key, run.reservation.lineage_id]), fields: taskBudgetFields },
+  ];
+}
+
+function checkBudgetRevision(state, run, evidence, verify) {
+  const { reservation } = run;
+  const revised = [];
+  for (const { scope, budgets, key, fields } of budgetScopes(state, run)) {
+    const prior = budgets.get(key);
+    if (!prior || fieldsMatch(prior.limits, reservation.limits, fields)) continue;
+    const scopedReservations = [...state.runs.values()]
+      .filter((item) => item.goal_key === run.goal_key && (scope === 'goal' || item.reservation.lineage_id === reservation.lineage_id))
+      .map((item) => item.reservation);
+    const newGoalControl = reservation.goal_issue === prior.goal_issue && reservation.goal_revision > prior.goal_revision
+      && reservation.goal_control_digest !== prior.goal_control_digest
+      && scopedReservations.every((item) => item.goal_issue !== reservation.goal_issue
+        || item.goal_revision < reservation.goal_revision && item.goal_control_digest !== reservation.goal_control_digest);
+    const newTaskControl = reservation.task_issue === prior.task_issue && reservation.task_revision > prior.task_revision
+      && scopedReservations.every((item) => item.task_issue !== reservation.task_issue || item.task_revision < reservation.task_revision);
+    requireResource(evidence != null && reservation.repository === prior.repository
+      && (newGoalControl || scope === 'task' && newTaskControl), 'BUDGET_REVISION_REQUIRED');
+    resourceRef(evidence);
+    resourceAttest(verify, 'resource_budget_revision', { evidence, scope, goal_key: run.goal_key, prior, reservation });
+    revised.push(scope);
+  }
+  return revised;
+}
+
 function applyEvent(state, event, at) {
   const { kind, id, data } = event;
   state.eventDigests.set(id, { kind, input_digest: event.input_digest });
   if (kind === 'snapshot') {
-    state.pools.set(data.pool_id, data);
+    const prior = state.pools.get(data.pool_id);
+    // Derive the bound from the original reports, including older journal entries.
+    const resetBound = prior && data.usable && data.account_epoch > prior.account_epoch;
+    const previous = resetBound ? null : prior?.remaining ?? null;
+    const reported = data.quality === 'observed' ? data.reported_remaining : null;
+    const remaining = previous === null ? reported : Math.min(previous, reported ?? previous);
+    state.pools.set(data.pool_id, { ...data, remaining });
   } else if (kind === 'observation') {
     const { usage, cumulative_key, billed } = data;
     state.usageDigests.set(digest([usage.repository, usage.id, usage.revision]), event.input_digest);
@@ -154,18 +208,25 @@ function applyEvent(state, event, at) {
     state.runs.get(usage.run_id).observed = data.observed;
   } else if (kind === 'reserve') {
     state.runs.set(data.reservation.id, { ...data, status: 'reserved', native: null, final: null, observed: 0 });
+    for (const { scope, budgets, key } of budgetScopes(state, data)) {
+      if (!budgets.has(key) || data.revised_budget_scopes?.includes(scope)) budgets.set(key, data.reservation);
+    }
   } else {
     const run = state.runs.get(data.reservation_id);
     if (kind === 'intent') run.status = 'ambiguous';
     if (kind === 'started') {
       state.nativeRuns.add(data.native_run_id);
-      Object.assign(run, { status: data.matches_profile && !data.keep_quarantined ? 'started' : 'stop_requested',
-        native: data.native_run_id, actual: data.actual });
+      if (run.status !== 'terminal') {
+        run.status = data.matches_profile && !data.keep_quarantined ? 'started' : 'stop_requested';
+      }
+      Object.assign(run, { native: data.native_run_id, actual: data.actual,
+        matches_profile: data.matches_profile, start_acknowledged: true });
     }
     if (kind === 'stop') run.status = 'stop_requested';
     if (kind === 'terminal') {
       if (data.native_run_id !== null) state.nativeRuns.add(data.native_run_id);
-      Object.assign(run, { status: 'terminal', native: data.native_run_id, actual: data.actual ?? run.actual ?? null });
+      Object.assign(run, { status: 'terminal', native: data.native_run_id, outcome: data.outcome,
+        actual: data.actual ?? run.actual ?? null, matches_profile: data.matches_profile ?? run.matches_profile ?? null });
     }
     if (kind === 'settle' && run.final !== data.billed) {
       run.final = data.billed;
@@ -194,7 +255,8 @@ function checkCapacity(state, run, policy, now, exclude = null) {
   requireResource(goal.every((item) => fieldsMatch(item.reservation.limits, limits, poolFields)), 'GOAL_POOL_CHANGED');
   const task = goal.filter((item) => item.reservation.lineage_id === reservation.lineage_id);
   const active = runs.filter((item) => item.status !== 'terminal');
-  const quota = fresh ? Number(BigInt(snapshot.remaining) * BigInt(100 - policy.headroom_percent) / 100n) : pool.ceiling;
+  const remaining = snapshot?.remaining ?? pool.ceiling;
+  const quota = Number(BigInt(remaining) * BigInt(100 - policy.headroom_percent) / 100n);
   const sameEpoch = (item) => item.reservation.limits.account_epoch === limits.account_epoch;
   // Charge the whole epoch conservatively against remaining. Carry unsettled
   // or delayed prior-epoch charges until their coverage is independently established.
@@ -271,6 +333,9 @@ export function openResourceLedger({ directory, ledgerId, initialize = false, po
   const lock = join(directory, '.lock');
   const identity = { schema: version, ledger_id: ledgerId, policy_digest: digest(policy) };
   if (initialize) {
+    const created_at = clock();
+    resourceTime(created_at);
+    const encoded = encodeEntry({ ...identity, created_at });
     mkdirSync(lock, { mode: 0o700 });
     syncDirectory(directory);
     if (readdirSync(directory).length !== 1) {
@@ -278,9 +343,7 @@ export function openResourceLedger({ directory, ledgerId, initialize = false, po
       syncDirectory(directory);
       throw new Error('LEDGER_ALREADY_INITIALIZED');
     }
-    const created_at = clock();
-    resourceTime(created_at);
-    publish(directory, 'header.json', { ...identity, created_at }, fault);
+    publish(directory, 'header.json', encoded, fault);
     rmdirSync(lock);
     syncDirectory(directory);
   }
@@ -302,8 +365,9 @@ export function openResourceLedger({ directory, ledgerId, initialize = false, po
       if (!event?.kind) return event;
       const entry = { sequence: state.sequence + 1, previous: state.last, at, event };
       const record = { ...entry, hash: digest(entry) };
+      const encoded = encodeEntry(record);
       release = false;
-      publish(directory, fileName(entry.sequence), record, fault);
+      publish(directory, fileName(entry.sequence), encoded, fault);
       release = true;
       return { disposition: 'committed', reference: { id: event.id, digest: record.hash } };
     } finally {
@@ -331,16 +395,27 @@ export function openResourceLedger({ directory, ledgerId, initialize = false, po
   }
 
   function checkAdmission(run, now) {
-    selectProfile(registry, run.reservation.runtime_profile_ref, run.reservation, run.operation, verify);
+    const profile = selectProfile(registry, run.reservation.runtime_profile_ref, run.reservation, run.operation, verify);
     resourceAttest(verify, 'resource_reservation_authority', run);
     resourceAttest(verify, 'resource_mode', run);
     if (!run.pilot) resourceAttest(verify, 'native_resource_enforcement', run);
     resourceAttest(verify, 'foreground_capacity', { host: run.host, now });
+    return profile;
+  }
+
+  function profileMatch(run, actual) {
+    if (run.expected_actual) return fieldsMatch(actual, run.expected_actual, actualFields);
+    const reference = run.reservation.runtime_profile_ref;
+    const profile = registry.profiles.find((item) => item.id === reference.id);
+    return profile && digest(profile) === reference.digest ? fieldsMatch(actual, profile, actualFields) : null;
   }
 
   return {
     snapshot(id, input) {
       return submit('snapshot', id, input, (state, now, data) => {
+        checkExpectedKeys(data, [...poolFields, 'account_epoch', 'source', 'observed_at', 'reset_at',
+          'evidence', 'quality', 'coverage', 'remaining', 'reason'], 'QUOTA_SNAPSHOT');
+        reasonCode(data.reason, data.quality === 'unknown', 'QUOTA_SNAPSHOT');
         const pool = policy.pools.find((item) => fieldsMatch(item, data, poolFields));
         resourceRef(data.evidence);
         const observed = resourceTime(data.observed_at);
@@ -348,10 +423,10 @@ export function openResourceLedger({ directory, ledgerId, initialize = false, po
           && typeof data.source === 'string' && identifier.test(data.source)
           && observed <= now && ['observed', 'estimated', 'unknown'].includes(data.quality)
           && ['complete', 'partial', 'unknown'].includes(data.coverage)
-          && (data.quality === 'unknown' ? data.remaining === null && identifier.test(data.reason ?? '') : counter(data.remaining)),
+          && (data.quality === 'unknown' ? data.remaining === null : counter(data.remaining)),
         'QUOTA_SNAPSHOT');
         const prior = state.pools.get(data.pool_id);
-        const rollover = prior && data.account_epoch > prior.account_epoch;
+        const rollover = data.account_epoch > (prior?.account_epoch ?? pool.initial_epoch);
         requireResource(!prior || (observed > resourceTime(prior.observed_at) && data.account_epoch >= prior.account_epoch
           && (rollover ? prior.reset_at !== null && observed >= resourceTime(prior.reset_at)
             : data.reset_at === prior.reset_at)), 'STALE_QUOTA');
@@ -359,13 +434,17 @@ export function openResourceLedger({ directory, ledgerId, initialize = false, po
         requireResource(reset === null || reset > observed, 'QUOTA_RESET');
         resourceAttest(verify, 'account_pool_snapshot', { snapshot: data, previous: prior ?? null });
         const valid = data.quality === 'observed' && data.coverage === 'complete' && reset !== null;
+        if (rollover) {
+          requireResource(valid, 'QUOTA_ROLLOVER_COVERAGE');
+          resourceAttest(verify, 'account_pool_rollover', { snapshot: data, previous: prior ?? null,
+            initial_epoch: pool.initial_epoch });
+        }
         // An unknown/degraded report freezes this epoch until an authenticated rollover.
         const usable = valid && (!prior || rollover || prior.usable);
-        const remaining = usable && prior && !rollover ? Math.min(prior.remaining, data.remaining) : data.remaining;
         return { pool_id: data.pool_id, account_scope: data.account_scope, unit: data.unit, account_epoch: data.account_epoch, source: data.source,
           observed_at: data.observed_at, reset_at: data.reset_at, evidence: data.evidence, quality: data.quality,
-          epoch_start: rollover ? prior.reset_at : prior?.epoch_start ?? null,
-          coverage: data.coverage, remaining, reported_remaining: data.remaining, reason: data.reason ?? null, usable };
+          epoch_start: rollover ? prior?.reset_at ?? null : prior?.epoch_start ?? null,
+          coverage: data.coverage, reported_remaining: data.remaining, reason: data.reason ?? null, usable };
       });
     },
     reserve(id, input) {
@@ -398,10 +477,13 @@ export function openResourceLedger({ directory, ledgerId, initialize = false, po
           }
         }
         const run = { reservation, operation, attempt, pilot, host, parent, fence, goal_key, final: null, observed: 0 };
-        checkAdmission(run, now);
+        const profile = checkAdmission(run, now);
+        const revised = checkBudgetRevision(state, run, data.budget_revision, verify);
         const carries = checkCapacity(state, run, policy, now);
         return { reservation: validateRecord({ ...reservation, carries }, 'BUDGET_RESERVATION_V1'),
-          operation, attempt, pilot, host, parent, fence, goal_key };
+          operation, attempt, pilot, host, parent, fence, goal_key,
+          expected_actual: Object.fromEntries(actualFields.map((key) => [key, profile[key]])),
+          ...(revised.length ? { budget_revision: data.budget_revision, revised_budget_scopes: revised } : {}) };
       });
     },
     // Persist intent before making a native call. A duplicate is reconciliation
@@ -411,6 +493,7 @@ export function openResourceLedger({ directory, ledgerId, initialize = false, po
         const run = state.runs.get(reservationId);
         requireResource(run?.status === 'reserved' && now < resourceTime(run.reservation.expires_at), 'START_INELIGIBLE');
         checkAdmission(run, now);
+        checkBudgetRevision(state, run, null, verify);
         checkCapacity(state, run, policy, now, reservationId);
         return data;
       });
@@ -418,17 +501,16 @@ export function openResourceLedger({ directory, ledgerId, initialize = false, po
     started(id, input) {
       return submit('started', id, input, (state, now, data) => {
         const run = state.runs.get(data.reservation_id);
-        requireResource(['ambiguous', 'stop_requested'].includes(run?.status) && run.native === null
-          && typeof data.native_run_id === 'string'
-          && identifier.test(data.native_run_id) && !state.nativeRuns.has(data.native_run_id), 'START_ACK');
-        const profile = registry.profiles.find((item) => item.id === run.reservation.runtime_profile_ref.id);
+        requireResource(run && !run.start_acknowledged && typeof data.native_run_id === 'string'
+          && identifier.test(data.native_run_id) && (run.status === 'terminal' ? run.native === data.native_run_id
+            : ['ambiguous', 'stop_requested'].includes(run.status) && run.native === null
+              && !state.nativeRuns.has(data.native_run_id)), 'START_ACK');
         actualProfile(data.actual);
-        const matches_profile = Boolean(profile && digest(profile) === run.reservation.runtime_profile_ref.digest
-          && fieldsMatch(data.actual, profile, actualFields));
+        requireResource(!run.actual || fieldsMatch(data.actual, run.actual, actualFields), 'ACTUAL_PROFILE');
         resourceRef(data.evidence);
         resourceAttest(verify, 'resource_start_ack', { data, run, now });
         return { reservation_id: data.reservation_id, native_run_id: data.native_run_id,
-          actual: data.actual, matches_profile, keep_quarantined: run.status === 'stop_requested'
+          actual: data.actual, matches_profile: profileMatch(run, data.actual), keep_quarantined: run.status === 'stop_requested'
             || now >= resourceTime(run.reservation.expires_at), evidence: data.evidence };
       });
     },
@@ -459,12 +541,16 @@ export function openResourceLedger({ directory, ledgerId, initialize = false, po
             && (!run.actual || fieldsMatch(data.actual, run.actual, actualFields)), 'ACTUAL_PROFILE');
         }
         return { reservation_id: data.reservation_id, native_run_id: data.native_run_id, outcome: data.outcome,
-          actual: run.actual ? null : data.actual ?? null, evidence: data.evidence };
+          actual: run.actual ? null : data.actual ?? null,
+          matches_profile: data.actual == null ? null : profileMatch(run, data.actual), evidence: data.evidence };
       });
     },
     observe(id, input) {
       return submit('observation', id, input, (state, now, data, inputDigest) => {
+        checkExpectedKeys(data, ['usage', 'canonical_billing', 'reason'], 'USAGE_BINDING');
         const usage = validateRecord(data.usage, 'USAGE_OBSERVATION_V1');
+        reasonCode(data.reason, usage.value === null, 'USAGE_BINDING');
+        requireResource(!Object.hasOwn(data, 'canonical_billing') || typeof data.canonical_billing === 'boolean', 'USAGE_BINDING');
         const previous = state.usageDigests.get(digest([usage.repository, usage.id, usage.revision]));
         if (previous) {
           requireResource(previous === inputDigest, 'USAGE_ID_CONFLICT');
@@ -473,8 +559,8 @@ export function openResourceLedger({ directory, ledgerId, initialize = false, po
         const run = state.runs.get(usage.run_id);
         requireResource(run && fieldsMatch(usage, run.reservation, taskFields)
           && usage.account_scope === run.reservation.limits.account_scope
-          && resourceTime(usage.observed_at) <= now && resourceTime(usage.observed_at) >= resourceTime(run.reservation.created_at)
-          && (usage.value !== null || typeof data.reason === 'string' && identifier.test(data.reason)), 'USAGE_BINDING');
+          && resourceTime(usage.observed_at) <= now && resourceTime(usage.observed_at) >= resourceTime(run.reservation.created_at),
+        'USAGE_BINDING');
         resourceAttest(verify, 'resource_usage_observation', { usage, run, reason: data.reason ?? null });
         // Billing observations are canonical cumulative run totals. Other sources
         // are preserved as evidence without adding overlapping usage counters.
@@ -504,8 +590,10 @@ export function openResourceLedger({ directory, ledgerId, initialize = false, po
       return transaction((state) => {
         const run = state.runs.get(reservationId);
         requireResource(run, 'UNKNOWN_RESERVATION');
+        const actual_profile_status = run.outcome === 'not_started' ? 'not_started'
+          : run.matches_profile === true ? 'matches' : run.matches_profile === false ? 'mismatch' : 'unknown';
         return { reservation: run.reservation, status: run.status, native_run_id: run.native,
-          actual: run.actual ?? null, billed: run.final, liability: liability(run) };
+          actual: run.actual ?? null, actual_profile_status, billed: run.final, liability: liability(run) };
       });
     },
     summary() {

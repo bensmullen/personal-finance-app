@@ -45,7 +45,7 @@ function ledgerFixture(options: { fault?: (phase: string) => void; verify?: (bou
   const input = { directory, ledgerId: "fixture-ledger", policy, registry, verify, ...options, clock: () => now };
   return {
     directory, ledger: openResourceLedger({ ...input, fault: undefined, initialize: true }),
-    reopen: () => openResourceLedger(input),
+    reopen: (overrides: { registry?: typeof registry; policy?: typeof policy } = {}) => openResourceLedger({ ...input, ...overrides }),
     time: (minutes: number) => { now = at(minutes); },
   };
 }
@@ -149,6 +149,57 @@ describe("shared resource ledger", () => {
     expect(ledger.reserve("replaced", replacement).disposition).toBe("committed");
   });
 
+  it("keeps a known zero after staleness and a low bound after degraded or unknown telemetry", () => {
+    const exhausted = ledgerFixture();
+    exhausted.ledger.snapshot("zero", quota(0, 1, 1, 70));
+    exhausted.time(32);
+    expect(exhausted.reopen().summary().pools[0].provider_remaining).toBeNull();
+    expect(() => exhausted.reopen().reserve("pilot", {
+      ...reservation("a", 1, 1, { expires: 40 }), pilot: true,
+    })).toThrow("BUDGET_EXHAUSTED");
+
+    const low = ledgerFixture();
+    low.ledger.snapshot("low", quota(6));
+    low.time(2);
+    low.ledger.snapshot("partial", { ...quota(85, 2), coverage: "partial" });
+    low.time(3);
+    low.ledger.snapshot("missing", quota(null, 3));
+    low.time(4);
+    low.ledger.snapshot("estimated", { ...quota(90, 4), quality: "estimated" });
+    expect(low.reopen().summary().pools[0].provider_remaining).toBeNull();
+    expect(() => low.reopen().reserve("pilot-too-high", {
+      ...reservation("b", 2, 3), pilot: true,
+    })).toThrow("BUDGET_EXHAUSTED");
+    expect(low.reopen().reserve("pilot-fits", { ...reservation("b", 2, 2), pilot: true }).disposition).toBe("committed");
+  });
+
+  it("authenticates account rollover and carries unsettled, then late, old-epoch bills", () => {
+    let allowRollover = false;
+    const f = ledgerFixture({ verify: (boundary) => boundary !== "account_pool_rollover" || allowRollover });
+    const { ledger } = f;
+    const old = reservation("old");
+    ledger.snapshot("original", quota(30));
+    ledger.reserve("reserve-old", old);
+    ledger.begin("begin-old", "old");
+    ledger.terminal("stop-old", stopped("old"));
+    f.time(2);
+    ledger.snapshot("exhausted", quota(0, 2));
+    f.time(21);
+    expect(() => ledger.snapshot("rollover", quota(15, 21, 2, 40))).toThrow("account_pool_rollover");
+    allowRollover = true;
+    expect(() => ledger.snapshot("unknown-rollover", quota(null, 21, 2, 40))).toThrow("QUOTA_ROLLOVER_COVERAGE");
+    ledger.snapshot("rollover", quota(15, 21, 2, 40)); // 12 after headroom
+    const next = reservation("next", 2, 4, { epoch: 2, expires: 30 });
+    expect(() => f.reopen().reserve("reserve-next", next)).toThrow("BUDGET_EXHAUSTED");
+    ledger.settle("final-old", { ...stopped("old"), billed: 1 });
+    ledger.reserve("reserve-next", next);
+    expect(ledger.lookup("next").reservation.carries.account_liability).toBe(1);
+    f.time(22);
+    ledger.observe("late-old", usage(old, 7, 22));
+    expect(() => f.reopen().begin("begin-next", "next")).toThrow("BUDGET_EXHAUSTED");
+    expect(ledger.lookup("old")).toMatchObject({ liability: 7, billed: 1, status: "terminal" });
+  });
+
   it("quarantines lost starts and cancellation through late usage and idempotent settlement", () => {
     const f = ledgerFixture();
     const { ledger } = f;
@@ -178,6 +229,36 @@ describe("shared resource ledger", () => {
     expect(() => ledger.settle("regression", { ...settlement, billed: 10 })).toThrow("SETTLEMENT_BINDING");
     expect(ledger.lookup("a").liability).toBe(12);
     expect(ledger.summary().pools[0].lifetime_liability).toBe(19);
+  });
+
+  it("reconciles configuration after terminal proof without reopening the fence or settling the bill", () => {
+    const f = ledgerFixture();
+    const { ledger } = f;
+    ledger.snapshot("quota", quota(100));
+    ledger.reserve("reserve", reservation("a"));
+    ledger.begin("intent", "a");
+    ledger.terminal("finished", stopped("a"));
+    expect(f.reopen().lookup("a")).toMatchObject({
+      status: "terminal", actual: null, actual_profile_status: "unknown", liability: 7, billed: null,
+    });
+    ledger.reserve("same-fence", reservation("b"));
+    expect(ledger.lookup("b").reservation.carries.goal_liability).toBe(7);
+    expect(() => ledger.started("wrong-run", { ...acknowledge("a"), native_run_id: "other" })).toThrow("START_ACK");
+    const late = { ...acknowledge("a"), actual: { ...actual, reasoning: "unexpected" } };
+    const noInstalledProfile = f.reopen({ registry: shippedRegistry });
+    expect(noInstalledProfile.started("late-ack", late).disposition).toBe("committed");
+    expect(noInstalledProfile.started("late-ack", late).disposition).toBe("duplicate");
+    expect(ledger.lookup("a")).toMatchObject({
+      status: "terminal", actual: late.actual, actual_profile_status: "mismatch", liability: 7, billed: null,
+    });
+    ledger.settle("billing", { ...stopped("a"), billed: 4 });
+    expect(ledger.lookup("a")).toMatchObject({ actual_profile_status: "mismatch", liability: 4, billed: 4 });
+    ledger.begin("intent-b", "b");
+    ledger.terminal("finished-b", { ...stopped("b"), actual });
+    expect(ledger.lookup("b")).toMatchObject({ actual_profile_status: "matches", actual, billed: null });
+    expect(() => ledger.started("conflicting-ack", { ...acknowledge("b"), actual: late.actual })).toThrow("ACTUAL_PROFILE");
+    ledger.started("matching-ack", acknowledge("b"));
+    expect(f.reopen().lookup("b")).toMatchObject({ status: "terminal", actual_profile_status: "matches", liability: 7 });
   });
 
   it("reserves nested agents and host resources independently and requires a stopped child", () => {
@@ -249,6 +330,82 @@ describe("shared resource ledger", () => {
     })).toThrow("CALL_EXHAUSTED");
   });
 
+  it("pins cumulative budgets across sessions and issues and carries spend into an authenticated revision", () => {
+    const alternate = { ...profile, id: "different-profile", reasoning: "alternate-effort" };
+    let allowRevision = false;
+    const f = ledgerFixture({ registry: { ...registry, profiles: [profile, alternate] },
+      verify: (boundary) => boundary !== "resource_budget_revision" || allowRevision });
+    const original = reservation("a", 1, 3, { goalCeiling: 12, deadline: 20, continuations: 1 });
+    const originalLimits = { ...original.reservation.limits, task_ceiling: 9, max_model_calls: 2, max_continuations: 1 };
+    original.reservation.limits = originalLimits;
+    f.ledger.snapshot("quota", quota(100));
+    f.ledger.reserve("original", original);
+    f.ledger.terminal("stopped", noStart("a"));
+    const fresh = reservation("fresh", 1, 2, { issue: 95, profile: alternate });
+    fresh.reservation.producer = { ...producer, session: "fresh-thread" };
+    fresh.reservation.revision = 2; // Observation revision leaves operative control intact.
+    for (const delta of [
+      { goal_ceiling: 20 }, { task_ceiling: 12 }, { execution_deadline: at(100) },
+      { max_model_calls: 8 }, { max_continuations: 4 },
+    ]) {
+      fresh.reservation.limits = { ...originalLimits, ...delta };
+      expect(() => f.reopen().reserve("fresh", { ...fresh, budget_revision: ref("status-only") })).toThrow("BUDGET_REVISION_REQUIRED");
+    }
+    fresh.reservation.limits = originalLimits;
+    expect(() => f.reopen().reserve("fresh", {
+      ...fresh, reservation: { ...fresh.reservation, estimated_ceiling: 3 },
+    })).toThrow("BUDGET_EXHAUSTED");
+    expect(() => f.reopen().reserve("fresh", {
+      ...fresh, reservation: { ...fresh.reservation, max_admitted_continuations: 1 },
+    })).toThrow("CALL_EXHAUSTED");
+
+    const revised = reservation("revised", 1, 4);
+    revised.reservation.goal_revision = 2;
+    revised.reservation.goal_control_digest = digest("revised-goal-control");
+    revised.reservation.limits = { ...originalLimits, goal_ceiling: 20, task_ceiling: 16 };
+    expect(() => f.reopen().reserve("revised", revised)).toThrow("BUDGET_REVISION_REQUIRED");
+    const approved = { ...revised, budget_revision: ref("approved-revision") };
+    expect(() => f.reopen().reserve("revised", approved)).toThrow("resource_budget_revision");
+    allowRevision = true;
+    expect(f.reopen().reserve("revised", approved).disposition).toBe("committed");
+    expect(f.reopen().lookup("revised").reservation.carries)
+      .toMatchObject({ goal_liability: 5, task_liability: 5, model_calls: 1, continuations: 1 });
+    expect(() => f.reopen().reserve("old-budget", fresh)).toThrow("BUDGET_REVISION_REQUIRED");
+    f.ledger.terminal("revised-no-start", noStart("revised"));
+    expect(() => f.reopen().reserve("extra-call", {
+      ...approved, reservation: { ...revised.reservation, id: "extra-call", estimated_ceiling: 1 },
+    })).toThrow("CALL_EXHAUSTED");
+  });
+
+  it("binds the cumulative repair caps to the ledger policy", () => {
+    const f = ledgerFixture({ policy: { ...policy, task_calls: { ...policy.task_calls, repairs: 1 } } });
+    f.ledger.snapshot("quota", quota(100));
+    f.ledger.reserve("first", { ...reservation("a"), attempt: "repair" });
+    f.ledger.terminal("no-start", noStart("a"));
+    expect(() => f.reopen().reserve("new-thread", { ...reservation("b", 1, 5, { issue: 90 }), attempt: "repair" }))
+      .toThrow("REPAIR_EXHAUSTED");
+    expect(() => f.reopen({ policy }).summary()).toThrow("LEDGER_IDENTITY");
+  });
+
+  it("rejects malformed and oversized input without leaving an unreadable journal or lock", () => {
+    const f = ledgerFixture();
+    const run = reservation("a");
+    const huge = "é".repeat(70_000);
+    expect(() => f.ledger.snapshot("quota", { ...quota(100), reason: huge })).toThrow("JSON_BOUND");
+    expect(() => f.ledger.snapshot("quota", { ...quota(100), reason: 12 })).toThrow("QUOTA_SNAPSHOT");
+    expect(() => f.ledger.snapshot("quota", { ...quota(100), payload: "unexpected" })).toThrow("QUOTA_SNAPSHOT");
+    f.ledger.snapshot("quota", quota(100));
+    f.ledger.reserve("reserve", run);
+    expect(() => f.ledger.observe("usage", { ...usage(run, 2), reason: huge })).toThrow("JSON_BOUND");
+    expect(() => f.ledger.observe("usage", { ...usage(run, 2), reason: "x".repeat(97) })).toThrow("USAGE_BINDING");
+    expect(() => f.ledger.observe("usage", { ...usage(run, 2), payload: huge })).toThrow("JSON_BOUND");
+    expect(() => f.ledger.observe("usage", { ...usage(run, 2), payload: "unexpected" })).toThrow("USAGE_BINDING");
+    expect(f.reopen().summary().records).toBe(2);
+    expect(f.reopen().observe("usage", usage(run, 2)).disposition).toBe("committed");
+    expect(f.reopen().summary().records).toBe(3);
+    expect(f.reopen().lookup("a").liability).toBe(7);
+  });
+
   it.each(cases.storage_faults as string[])("preserves quarantine on persistence failure at %s", (phase) => {
     const f = ledgerFixture({ fault: (current) => {
       if (current === phase) throw Object.assign(new Error("disk-full"), { code: "ENOSPC" });
@@ -274,8 +431,12 @@ describe("shared resource ledger", () => {
         sizes.set(index, bytes);
       }
     }
-    expect(sizes.get(100)).toBeLessThan(11 * (sizes.get(10) ?? 0));
-    expect(sizes.get(10)).toBeLessThan(11 * (sizes.get(1) ?? 0));
+    const one = sizes.get(1);
+    const ten = sizes.get(10);
+    const hundred = sizes.get(100);
+    if (one === undefined || ten === undefined || hundred === undefined) throw new Error("Missing journal growth sample");
+    expect(hundred).toBeLessThan(11 * ten);
+    expect(ten).toBeLessThan(11 * one);
     expect(f.ledger.summary().records).toBe(100);
     writeFileSync(join(f.directory, "000000000100.json"), "{");
     expect(() => f.reopen().summary()).toThrow();
@@ -347,14 +508,19 @@ describe("checkpoint and observed context pressure", () => {
       loadLive: () => ({ receipt, current: { ...current, required_artifacts: [evidence] } }),
       verify, compaction: { kind: "deterministic" },
     });
-    const sizes = (cases.sizes as number[]).map((size) => Array.from({ length: size }, (_, index) => {
+    const sizeFor = (size: number) => Array.from({ length: size }, (_, index) => {
       const payload = canonicalJson(handoff(index));
       expect(payload).not.toContain("fixture-private-history");
       return Buffer.byteLength(payload);
-    }).reduce((sum, bytes) => sum + bytes, 0));
-    expect(sizes[2]).toBeLessThan(11 * sizes[1]);
-    expect(sizes[1]).toBeLessThan(11 * sizes[0]);
-    expect(sizes[2] + Buffer.byteLength(artifact)).toBeLessThan(100 * Buffer.byteLength(artifact));
+    }).reduce((sum, bytes) => sum + bytes, 0);
+    const sizes = new Map((cases.sizes as number[]).map((size) => [size, sizeFor(size)] as const));
+    const one = sizes.get(1);
+    const ten = sizes.get(10);
+    const hundred = sizes.get(100);
+    if (one === undefined || ten === undefined || hundred === undefined) throw new Error("Missing handoff growth sample");
+    expect(hundred).toBeLessThan(11 * ten);
+    expect(ten).toBeLessThan(11 * one);
+    expect(hundred + Buffer.byteLength(artifact)).toBeLessThan(100 * Buffer.byteLength(artifact));
   });
 });
 
@@ -377,16 +543,27 @@ describe("manual V3 baseline", () => {
     const input = { records, metrics, dataset: cases.dataset, window: { start: at(0), end: at(10) }, verify };
     const result = baselineReport(input);
     expect(result).toMatchObject({ dataset: "synthetic", n: 5, accepted: 4 });
-    const find = (complexity: string, outcome: string) => result.cohorts.find(
-      (cohort: { complexity: string; outcome: string }) => cohort.complexity === complexity && cohort.outcome === outcome,
-    );
-    expect(find("simple", "clean-first-pass").metrics[0]).toMatchObject({ median: 1, range: [0, 2], denominator: 2 });
-    expect(find("cross-cutting", "clean-first-pass").metrics[0]).toMatchObject({ median: null, missing: 1 });
-    expect(find("cross-cutting", "blocked-repaired").metrics[0]).toMatchObject({ median: 50 });
-    expect(find("standard", "incomplete")).toMatchObject({ n: 1, accepted: 0 });
+    const cohortFor = (complexity: string, outcome: string) => {
+      const cohort = result.cohorts.find(
+        (entry: { complexity: string; outcome: string }) => entry.complexity === complexity && entry.outcome === outcome,
+      );
+      if (cohort === undefined) throw new Error("Missing baseline cohort " + complexity + "/" + outcome);
+      return cohort;
+    };
+    const scopeMetric = (complexity: string, outcome: string) => {
+      const metric = cohortFor(complexity, outcome).metrics[0];
+      if (metric === undefined || metric.metric !== "apiv-scope") throw new Error("Missing APIV/scope baseline metric");
+      return metric;
+    };
+    expect(scopeMetric("simple", "clean-first-pass")).toMatchObject({ median: 1, range: [0, 2], denominator: 2 });
+    expect(scopeMetric("cross-cutting", "clean-first-pass")).toMatchObject({ median: null, missing: 1 });
+    expect(scopeMetric("cross-cutting", "blocked-repaired")).toMatchObject({ median: 50 });
+    expect(cohortFor("standard", "incomplete")).toMatchObject({ n: 1, accepted: 0 });
     expect(baselineReport({ ...input, dataset: "manual-v3", records: [] })).toMatchObject({ n: 0, status: "not-measured" });
     expect(() => baselineReport({ ...input, records: [{ ...records[0], classified_at: at(2) }] })).toThrow("BASELINE_TASK");
-    expect(() => baselineReport({ ...input, records: [records[0], { ...records[1], acceptance: records[0].acceptance }] }))
+    const [first, second] = records;
+    if (first === undefined || second === undefined) throw new Error("Missing baseline acceptance fixtures");
+    expect(() => baselineReport({ ...input, records: [first, { ...second, acceptance: first.acceptance }] }))
       .toThrow("BASELINE_ACCEPTANCE");
   });
 });
