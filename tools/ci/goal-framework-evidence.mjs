@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { open, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { crc32, inflateRawSync } from 'node:zlib';
-import { digest, validateRecord } from '../codex/goal-framework/contracts.mjs';
+import { digest, inspectV3Body, validateRecord } from '../codex/goal-framework/contracts.mjs';
 import { root, validatePartition } from './plan-test-shards.mjs';
 import { playwrightResults, validatePlaywright, validateVitest } from './collect-test-durations.mjs';
 
@@ -20,6 +20,7 @@ const otherManualTitles = new Set(['performance', 'forecast-scaling', 'stochasti
   .map((profile) => 'engineering-validation / ' + profile));
 const limits = Object.freeze({
   requests: 240, deadlineMs: 90_000, apiBytes: 16 * 1024 ** 2,
+  jobLogBytes: 4 * 1024 ** 2, totalJobLogBytes: 32 * 1024 ** 2,
   archiveBytes: 16 * 1024 ** 2, totalArchiveBytes: 64 * 1024 ** 2,
   unpackedBytes: 32 * 1024 ** 2, totalUnpackedBytes: 128 * 1024 ** 2,
   files: 128, fileBytes: 8 * 1024 ** 2, retentionMs: 30 * 86_400_000,
@@ -27,6 +28,9 @@ const limits = Object.freeze({
 const bytesDigest = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const positive = (value) => Number.isSafeInteger(value) && value > 0;
 const codeOf = (error) => error instanceof EvidenceError ? error.message : 'PROVIDER_UNAVAILABLE';
+function attested(verify, boundary, binding) {
+  try { return verify?.(boundary, binding) === true; } catch { return false; }
+}
 class EvidenceError extends Error {}
 function requireEvidence(condition, code) {
   if (!condition) throw new EvidenceError(code);
@@ -76,7 +80,8 @@ function validateZipExtras(zip, start, length) {
 
 // Parse in memory. GitHub ZIP files may use a data descriptor. Central and
 // local metadata must describe one contiguous, single-disk archive.
-export function inspectEvidenceZip(zip, maxUnpacked = limits.unpackedBytes, observeJson = () => {}) {
+export function inspectEvidenceZip(zip, maxUnpacked = limits.unpackedBytes, observeJson = () => {},
+  observeFile = () => {}, reserveUnpacked = () => {}) {
   const end = zip.length - 22;
   requireEvidence(end >= 0 && zip.length <= limits.archiveBytes, 'ZIP_SIZE');
   const u16 = (at) => zip.readUInt16LE(at);
@@ -135,6 +140,7 @@ export function inspectEvidenceZip(zip, maxUnpacked = limits.unpackedBytes, obse
     nextOffset = entry.nextOffset;
   }
   requireEvidence(nextOffset === start, 'ZIP_OVERLAP_OR_GAP');
+  reserveUnpacked(unpacked);
   const files = entries.map(({ name, body, compressed, size, method, crc }) => {
     const payload = zip.subarray(body, body + compressed);
     let decoded;
@@ -149,12 +155,13 @@ export function inspectEvidenceZip(zip, maxUnpacked = limits.unpackedBytes, obse
     }
     requireEvidence(decoded.length === size && crc32(decoded) === crc, 'ZIP_INTEGRITY');
     if (name.toLowerCase().endsWith('.json')) observeJson(name, parseEvidenceJson(decoded));
+    observeFile(name, decoded);
     return { name, size, digest: bytesDigest(decoded) };
   });
   return { files, unpacked };
 }
 
-async function readBounded(response, maxBytes) {
+async function readBounded(response, maxBytes, charge) {
   const length = response.headers.get('content-length');
   if (length !== null && (!/^\d+$/.test(length) || Number(length) > maxBytes)) {
     await response.body?.cancel();
@@ -169,6 +176,7 @@ async function readBounded(response, maxBytes) {
       const { done, value } = await reader.read();
       if (done) return Buffer.concat(chunks, total);
       total += value.byteLength;
+      charge(value.byteLength);
       requireEvidence(total <= maxBytes, 'DOWNLOAD_LIMIT');
       chunks.push(value);
     }
@@ -189,7 +197,7 @@ export function githubEvidenceProvider(token, fetcher = fetch) {
   requireEvidence(typeof token === 'string' && token.length > 0 && !/\s/.test(token), 'GITHUB_TOKEN_REQUIRED');
   const root = '/repos/' + repository;
   const signal = AbortSignal.timeout(limits.deadlineMs);
-  let requests = 0, apiBytes = 0, archiveBytes = 0;
+  let requests = 0, apiBytes = 0, archiveBytes = 0, logBytes = 0;
   async function request(url, authenticated) {
     requireEvidence(!signal.aborted && ++requests <= limits.requests, 'REQUEST_LIMIT');
     return fetcher(url, {
@@ -207,8 +215,8 @@ export function githubEvidenceProvider(token, fetcher = fetch) {
       await response.body?.cancel();
       throw new EvidenceError('GITHUB_RESPONSE');
     }
-    const bytes = await readBounded(response, Math.min(2 * 1024 ** 2, limits.apiBytes - apiBytes));
-    apiBytes += bytes.length;
+    const bytes = await readBounded(response, Math.min(2 * 1024 ** 2, limits.apiBytes - apiBytes),
+      (size) => { apiBytes += size; });
     return parseEvidenceJson(bytes);
   }
   async function list(route, field) {
@@ -226,30 +234,41 @@ export function githubEvidenceProvider(token, fetcher = fetch) {
     }
     throw new EvidenceError('PAGE_LIMIT');
   }
+  async function download(route, maxBytes, charge) {
+    const response = await request(endpoint(route), true);
+    await response.body?.cancel();
+    requireEvidence(response.status === 302, 'ARTIFACT_REDIRECT');
+    const blob = await request(storageUrl(response.headers.get('location')), false);
+    if (!blob.ok) {
+      await blob.body?.cancel();
+      throw new EvidenceError('ARTIFACT_DOWNLOAD');
+    }
+    return readBounded(blob, maxBytes, charge);
+  }
   return {
     json, list,
     async download(id) {
       requireEvidence(positive(id), 'ARTIFACT_ID');
-      const response = await request(endpoint('/actions/artifacts/' + id + '/zip'), true);
-      await response.body?.cancel();
-      requireEvidence(response.status === 302, 'ARTIFACT_REDIRECT');
-      const blob = await request(storageUrl(response.headers.get('location')), false);
-      if (!blob.ok) {
-        await blob.body?.cancel();
-        throw new EvidenceError('ARTIFACT_DOWNLOAD');
-      }
-      const bytes = await readBounded(blob, Math.min(limits.archiveBytes, limits.totalArchiveBytes - archiveBytes));
-      archiveBytes += bytes.length;
-      return bytes;
+      return download('/actions/artifacts/' + id + '/zip',
+        Math.min(limits.archiveBytes, limits.totalArchiveBytes - archiveBytes), (size) => { archiveBytes += size; });
     },
-    measurements: () => ({ requests, api_bytes: apiBytes, archive_bytes: archiveBytes }),
+    async jobLog(id) {
+      requireEvidence(positive(id), 'JOB_ID');
+      return download('/actions/jobs/' + id + '/logs',
+        Math.min(limits.jobLogBytes, limits.totalJobLogBytes - logBytes), (size) => { logBytes += size; });
+    },
+    measurements: () => ({ requests, api_bytes: apiBytes, archive_bytes: archiveBytes, job_log_bytes: logBytes }),
   };
 }
 
 const unique = (values) => new Set(values).size === values.length;
 const knownFields = (value, fields) => value !== null && typeof value === 'object' &&
   !Array.isArray(value) && Object.keys(value).every((key) => fields.includes(key));
-const safeJob = (name) => typeof name === 'string' && /^[A-Za-z0-9 ()_./-]{1,96}$/.test(name);
+const skippedMatrixNames = new Map(['unit', 'e2e'].flatMap((kind, index) =>
+  [kind, kind + ' (shard /' + (index + 3) + ')', kind + ' (shard ${{ matrix.shard }}/' + (index + 3) + ')']
+    .map((name) => [name, kind])));
+const safeJob = (name) => typeof name === 'string' && (/^[A-Za-z0-9 ()_./-]{1,96}$/.test(name) ||
+  skippedMatrixNames.has(name));
 const revisions = ['goal_issue', 'goal_revision', 'task_issue', 'task_revision'];
 const identityPaths = [
   'package-lock.json', 'playwright.config.ts', 'tools/ci/verification-plan.mjs',
@@ -276,8 +295,10 @@ function validateSelection(input) {
     sha.test(candidate.merge_candidate_sha) && candidate.base_sha !== candidate.head_sha, 'CANDIDATE_IDENTITY');
   requireEvidence(Array.isArray(workflows) && workflows.length > 0 && workflows.length <= 2 &&
     unique(workflows.map(({ path }) => path)) && unique(workflows.map(({ id }) => id)) &&
-    workflows.every((workflow) => knownFields(workflow, ['id', 'path', 'digest']) &&
-      positive(workflow.id) && workflowEvents.has(workflow.path) && hash.test(workflow.digest)), 'WORKFLOW_PIN');
+    workflows.every((workflow) => knownFields(workflow, ['id', 'path', 'digest', 'ref']) &&
+      positive(workflow.id) && workflowEvents.has(workflow.path) && hash.test(workflow.digest) &&
+      (workflowEvents.get(workflow.path) === 'workflow_dispatch' ?
+        safePath(workflow.ref) && /^refs\/(heads|tags)\//.test(workflow.ref) : workflow.ref === undefined)), 'WORKFLOW_PIN');
   requireEvidence(Array.isArray(plan) && plan.length > 0 && plan.length <= 24 &&
     plan.some(({ required }) => required === true) &&
     unique(plan.map(({ id }) => id)) && unique(plan.map(({ workflow, job }) => workflow + ':' + job)) &&
@@ -302,6 +323,7 @@ function validateSelection(input) {
       requireEvidence(new Set(shards.map(({ selection }) => selection)).size <= 1, 'PARTIAL_SHARD_PLAN');
     }
     for (const check of selected) {
+      requireEvidence(check.selection === 'excluded' || check.required, 'SELECTED_GATE_REQUIRED');
       const shard = check.job.match(shardJob);
       if (shard && check.selection === 'selected') {
         requireEvidence(check.required && check.artifact_required &&
@@ -309,14 +331,14 @@ function validateSelection(input) {
         'SHARD_ARTIFACT_PLAN');
       }
       if (check.job === 'household-readiness') {
-        requireEvidence(check.artifact_required && check.artifact === 'household-readiness-{run}-{attempt}' &&
+        requireEvidence(check.id === 'household-readiness' && check.artifact_required && check.artifact === 'household-readiness-{run}-{attempt}' &&
           ['inventory.json', 'report.json', 'resources.json', 'resources.txt', 'guided-desktop.png',
             'guided-mobile-200.png', 'guided-trace.zip'].every((file) => check.files?.includes(file)),
         'HOUSEHOLD_ARTIFACT_PLAN');
       }
     }
   }
-  requireEvidence(Array.isArray(inputs) && inputs.length >= identityPaths.length && inputs.length <= 24 &&
+  requireEvidence(Array.isArray(inputs) && inputs.length >= identityPaths.length && inputs.length <= 32 &&
     unique(inputs.map(({ path }) => path)) && identityPaths.every((path) => inputs.some((pin) => pin.path === path)) &&
     inputs.every((pin) => knownFields(pin, ['path', 'digest']) && safePath(pin.path) && hash.test(pin.digest)), 'INPUT_PINS');
 }
@@ -340,15 +362,21 @@ async function exactPull(provider, candidate) {
     pr.base.repo?.full_name === repository && positive(pr.base.repo.id) &&
     pr.head?.repo?.id === pr.base.repo.id && pr.head.sha === candidate.head_sha &&
     pr.base.sha === candidate.base_sha && pr.merge_commit_sha === candidate.merge_candidate_sha, 'STALE_CANDIDATE');
-  return pr.base.repo.id;
+  requireEvidence(typeof pr.head.ref === 'string' && safePath(pr.head.ref), 'PR_HEAD_REF');
+  return { repoId: pr.base.repo.id, branch: pr.head.ref };
 }
 
-async function currentIssues(provider, task) {
+async function currentIssues(provider, task, branch) {
   const goal = await provider.json('/issues/' + task.goal_issue);
   const issue = await provider.json('/issues/' + task.task_issue);
   requireEvidence(goal.number === task.goal_issue && goal.state === 'open' && !goal.pull_request &&
     issue.number === task.task_issue && issue.state === 'open' && !issue.pull_request &&
-    typeof issue.body === 'string' && bytesDigest(issue.body) === task.issue_body_digest, 'STALE_TASK_AUTHORITY');
+    typeof goal.body === 'string' && typeof issue.body === 'string' &&
+    bytesDigest(issue.body) === task.issue_body_digest, 'STALE_TASK_AUTHORITY');
+  let grant;
+  try { grant = inspectV3Body(issue.body); } catch { throw new EvidenceError('INVALID_SAVED_V3'); }
+  requireEvidence(grant.branch === branch, 'TASK_TARGET_BRANCH');
+  return { goal_issue_body_digest: bytesDigest(goal.body), target_branch: branch };
 }
 
 async function pinContents(provider, commit, { path, digest: expected }) {
@@ -368,7 +396,7 @@ function knownOtherPull(run, candidate) {
 async function runInventory(provider, workflow, candidate) {
   const base = '/actions/workflows/' + workflow.id + '/runs';
   const event = workflowEvents.get(workflow.path);
-  const heads = event === 'pull_request' ? [candidate.head_sha, candidate.merge_candidate_sha] : [candidate.merge_candidate_sha];
+  const heads = [event === 'pull_request' ? candidate.head_sha : candidate.merge_candidate_sha];
   const runs = new Map();
   for (const head of heads) {
     const found = await provider.list(base + '?event=' + event + '&head_sha=' + head, 'workflow_runs');
@@ -385,16 +413,53 @@ async function runInventory(provider, workflow, candidate) {
   return [...runs.values()].sort((a, b) => a.id - b.id);
 }
 
-function validateRun(run, original, workflow, repoId) {
+function validateRun(run, original, workflow, candidate, pull) {
+  const { repoId, branch } = pull;
   requireEvidence(run.id === original.id && positive(run.run_attempt) && run.run_attempt <= 8 &&
     run.workflow_id === workflow.id && run.path === workflow.path &&
-    run.event === workflowEvents.get(workflow.path) && run.head_sha === original.head_sha &&
-    (run.event !== 'workflow_dispatch' || run.display_title === householdRunTitle) &&
+    run.event === workflowEvents.get(workflow.path) && run.check_suite_id === original.check_suite_id &&
     run.repository?.id === repoId && run.head_repository?.id === repoId &&
     positive(run.check_suite_id), 'RUN_PROVENANCE');
+  if (run.event === 'pull_request') {
+    const associations = run.pull_requests;
+    requireEvidence(run.head_sha === candidate.head_sha && run.head_branch === branch &&
+      Array.isArray(associations) && associations.length === 1 &&
+      associations[0].number === candidate.pr && associations[0].head?.sha === candidate.head_sha &&
+      associations[0].head.ref === branch && associations[0].head.repo?.id === repoId &&
+      associations[0].base?.sha === candidate.base_sha && associations[0].base.ref === 'main' &&
+      associations[0].base.repo?.id === repoId, 'RUN_PR_ASSOCIATION');
+  } else {
+    requireEvidence(run.head_sha === candidate.merge_candidate_sha && run.display_title === householdRunTitle &&
+      run.head_branch === workflow.ref.replace(/^refs\/(heads|tags)\//, ''), 'RUN_DISPATCH_REF');
+  }
 }
 
-function inspectTestEvidence(check, json, candidate, run, evidencePaths) {
+const caseKey = (path, title) => digest([path, title]);
+const inventoryDigest = (ids) => bytesDigest(JSON.stringify([...ids].sort()));
+
+function unitFailureLog(bytes) {
+  const failures = new Map();
+  if (!bytes || bytes.length === limits.fileBytes) return failures;
+  let key;
+  let reporterFailures = false;
+  for (const line of bytes.toString('utf8').replace(/\x1b\[[0-9;]*m/g, '').split(/\r?\n/)) {
+    if (/^\s*⎯+ Failed Tests \d+ ⎯+\s*$/.test(line)) reporterFailures = true;
+    if (!reporterFailures) continue;
+    const header = /^\s*FAIL\s+(test\/[^ >]+)\s+>\s+(.+?)\s*$/.exec(line);
+    if (header && header[2].length <= 512 && failures.size < 256) {
+      key = caseKey(header[1], header[2].split(' > ').join(' › '));
+      failures.set(key, failures.has(key) ? 'INCOMPLETE' : 'FAIL');
+    } else if (key) {
+      if (/^Error: Test timed out in [1-9]\d{0,7}ms\.?$/.test(line.trim()) && failures.get(key) === 'FAIL') {
+        failures.set(key, 'TIMEOUT');
+      }
+      if (line.trim()) key = undefined;
+    }
+  }
+  return failures;
+}
+
+function inspectTestEvidence(check, json, runnerLog, candidate, run, witnesses, ref) {
   const shard = check.job.match(shardJob);
   const manual = check.job === 'household-readiness';
   if (!shard && !manual) return {};
@@ -402,17 +467,20 @@ function inspectTestEvidence(check, json, candidate, run, evidencePaths) {
   const execution = json.get('execution.json');
   let selected;
   let assignment_digest;
+  let ordinary_inventory;
   if (shard) {
     const [, kind, index, count] = shard;
     const proof = json.get('assignment.json');
     requireEvidence(proof?.schema === 1 && proof.sha === candidate.merge_candidate_sha &&
       proof.kind === kind && proof.count === Number(count) && proof.shards?.length === Number(count) &&
-      execution?.sha === candidate.merge_candidate_sha && execution.kind === kind &&
+      execution?.schema === 1 && execution.sha === candidate.merge_candidate_sha && execution.kind === kind &&
       String(execution.runAttempt) === String(run.run_attempt), 'SHARD_IDENTITY');
     try { validatePartition(proof.inventory, proof.shards); } catch { throw new EvidenceError('SHARD_INVENTORY'); }
     selected = proof.shards[Number(index) - 1];
     requireEvidence(selected.length > 0, 'EMPTY_SHARD');
     assignment_digest = bytesDigest(JSON.stringify({ inventory: proof.inventory, shards: proof.shards }));
+    if (kind === 'e2e') ordinary_inventory = { count: proof.inventory.length,
+      digest: inventoryDigest(proof.inventory.map(({ id }) => id)) };
   }
   const failures = [];
   const retain = (id, attempt, status) => {
@@ -420,7 +488,7 @@ function inspectTestEvidence(check, json, candidate, run, evidencePaths) {
     failures.push({ test_digest: bytesDigest(id), attempt, outcome: status });
   };
   let valid;
-  let witnessPaths;
+  const cases = [];
   if (shard?.[1] === 'unit') {
     const hostedRoot = '/home/runner/work/personal-finance-app/personal-finance-app/';
     const files = report?.testResults ?? [];
@@ -430,11 +498,21 @@ function inspectTestEvidence(check, json, candidate, run, evidencePaths) {
       file.name = root + '/' + file.name.slice(hostedRoot.length);
     }
     valid = validateVitest(report, selected);
-    witnessPaths = files.map((file) => file.name.slice(root.length + 1));
+    const logged = unitFailureLog(runnerLog);
     for (const file of report?.testResults ?? []) {
       for (const test of file.assertionResults ?? []) {
-        if (test.status !== 'passed') retain(String(test.fullName), 0,
-          ['pending', 'todo', 'skipped'].includes(test.status) ? 'SKIP' : 'FAIL');
+        const path = file.name.slice(root.length + 1);
+        const titles = [...(test.ancestorTitles ?? []), test.title];
+        requireEvidence(titles.length <= 12 && titles.every((title) => typeof title === 'string' && title.length <= 512),
+          'UNIT_CASE_IDENTITY');
+        const key = caseKey(path, titles.join(' › '));
+        cases.push({ key, id: path + ' › ' + titles.join(' › ') });
+        if (test.status !== 'passed') {
+          const sanitized = test.failureMessages?.every((message) => message === 'STACK_TRACE_ERROR');
+          const status = ['pending', 'todo', 'skipped'].includes(test.status) ? 'SKIP' :
+            logged.get(key) ?? (sanitized && test.failureMessages?.length ? 'INCOMPLETE' : 'FAIL');
+          retain(key, 0, status);
+        }
       }
     }
   } else {
@@ -447,8 +525,10 @@ function inspectTestEvidence(check, json, candidate, run, evidencePaths) {
     if (report?.config) report.config.rootDir = root + '/e2e';
     valid = validatePlaywright(report, selected);
     const tests = playwrightResults(report);
-    witnessPaths = tests.map(({ id }) => id.replace(/^\[[^\]]+\] › /, '').split(':')[0]);
     for (const { id, test } of tests) {
+      const identity = /^(?:\[[^\]]+\] › )?([^:]+):\d+:\d+ › (.+)$/.exec(id);
+      requireEvidence(identity && identity[2].length <= 512, 'BROWSER_CASE_IDENTITY');
+      cases.push({ key: caseKey(identity[1], identity[2]), id });
       if (test.expectedStatus !== 'passed' || !test.results?.length) retain(id, 0, 'SKIP');
       for (const result of test.results ?? []) {
         if (result.status !== 'passed') retain(id, result.retry,
@@ -458,24 +538,33 @@ function inspectTestEvidence(check, json, candidate, run, evidencePaths) {
     if (manual) {
       const inventory = json.get('inventory.json');
       requireEvidence(inventory?.sha === candidate.merge_candidate_sha &&
-        String(inventory.attempt) === String(run.run_attempt) && Array.isArray(inventory.manual), 'MANUAL_INVENTORY');
-      requireEvidence(inventory.manual.length > 0 && unique(inventory.manual) &&
+        String(inventory.attempt) === String(run.run_attempt) && String(inventory.run_id) === String(run.id) &&
+        inventory.ref === ref && inventory.ordinary_count === 174 && hash.test(inventory.ordinary_digest) &&
+        inventory.ux_count > inventory.ordinary_count && hash.test(inventory.ux_digest) &&
+        Array.isArray(inventory.manual), 'MANUAL_INVENTORY');
+      requireEvidence(inventory.manual.length === 4 && unique(inventory.manual) &&
         tests.length === inventory.manual.length && tests.every(({ id }) => inventory.manual.includes(id)) &&
-        inventory.manual.every((id) => id.startsWith('e2e/framework-household-readiness.spec.ts:')), 'MANUAL_TEST_COVERAGE');
+        cases.every(({ key, id }) => id.startsWith(manualFile) && witnesses.has(key)), 'MANUAL_TEST_COVERAGE');
+      ordinary_inventory = { count: inventory.ordinary_count, digest: inventory.ordinary_digest };
     }
   }
   const result = worst(failures.map(({ outcome: status }) => status));
   const hasFailures = failures.length > 0;
   const passed = valid && (!shard || (execution.status === 'passed' && execution.reportValid === true &&
     execution.exit === 0 && execution.signal === null && execution.context === null));
+  const matched = cases.filter(({ key }) => witnesses.has(key));
+  requireEvidence(unique(matched.map(({ key }) => key)), 'AMBIGUOUS_WITNESS_CASE');
   return {
     ...(assignment_digest ? { assignment_digest } : {}), failures,
-    witness_paths: passed && !hasFailures ? [...new Set(witnessPaths.filter((path) => evidencePaths.has(path)))].sort() : [],
-    outcome: hasFailures ? result : passed ? 'PASS' : execution?.context === 'deadline-exceeded' ? 'TIMEOUT' : 'INCOMPLETE',
+    ...(ordinary_inventory ? { ordinary_inventory } : {}),
+    ...(execution?.context === 'deadline-exceeded' ? { runner_outcome: 'TIMEOUT' } : {}),
+    witness_cases: passed && !hasFailures ? matched.map(({ key, id }) => ({ key, test_digest: bytesDigest(id) })) : [],
+    outcome: execution?.context === 'deadline-exceeded' ? worst(['TIMEOUT', ...(hasFailures ? [result] : [])]) :
+      hasFailures ? result : passed ? 'PASS' : 'INCOMPLETE',
   };
 }
 
-async function artifactEvidence(provider, artifacts, name, run, repoId, now, budget, check, candidate, evidencePaths) {
+async function artifactEvidence(provider, artifacts, name, run, repoId, now, budget, check, candidate, witnesses, ref) {
   const matching = artifacts.filter((artifact) => artifact.name === name);
   requireEvidence(matching.length === 1, 'ARTIFACT_MISSING_OR_DUPLICATE');
   const artifact = matching[0];
@@ -491,21 +580,64 @@ async function artifactEvidence(provider, artifacts, name, run, repoId, now, bud
   requireEvidence(zip.length === artifact.size_in_bytes && artifact.digest === 'sha256:' + checksum, 'ARTIFACT_DIGEST');
   const wanted = new Set(['execution.json', 'assignment.json', 'report.json', 'inventory.json', 'resources.json']);
   const json = new Map();
+  let runnerLog;
   const { files, unpacked } = inspectEvidenceZip(zip, Math.min(budget.remaining, limits.unpackedBytes), (path, data) => {
     if (wanted.has(path)) json.set(path, data);
-  });
-  budget.remaining -= unpacked;
-  requireEvidence((check.files ?? []).every((path) => files.some(({ name, size }) => name === path && size > 0)),
-    'ARTIFACT_FILE_MISSING');
-  const tests = inspectTestEvidence(check, json, candidate, run, evidencePaths);
+  }, (path, bytes) => {
+    if (path === 'runner.log' && check.job.startsWith('unit (shard ')) runnerLog = bytes;
+  }, (size) => { budget.remaining -= size; });
+  const tests = inspectTestEvidence(check, json, runnerLog, candidate, run, witnesses, ref);
+  const missing = (check.files ?? []).filter((path) => !files.some(({ name, size }) => name === path && size > 0));
   return {
     id: 'github-artifact:' + artifact.id, digest: checksum, expires_at: artifact.expires_at,
     bytes: zip.length, unpacked_bytes: unpacked, file_count: files.length,
     files: files.filter((file) => check.files?.includes(file.name)), ...tests,
+    ...(missing.length ? { missing_files: missing, outcome: worst([tests.outcome, 'INCOMPLETE']) } : {}),
   };
 }
 
-async function jobObservation(provider, job, run, candidate, repoId) {
+async function checkoutObservation(provider, job, steps, candidate) {
+  const name = job.name === 'test' ? 'Checkout shard evidence verifier' : 'Run actions/checkout@v4';
+  const checkout = steps.filter((step) => step.name === name);
+  const started = Date.parse(checkout[0]?.started_at);
+  const ended = Date.parse(checkout[0]?.completed_at);
+  requireEvidence(checkout.length === 1 && outcome(checkout[0]) === 'PASS' &&
+    Number.isFinite(started) && ended >= started, 'CHECKOUT_STEP');
+  if (job.name === 'test' && outcome(job) === 'PASS') {
+    const verification = steps.filter((step) => step.name === 'Require exact-head successful receipts from every selected child');
+    requireEvidence(verification.length === 1 && verification[0].number > checkout[0].number &&
+      outcome(verification[0]) === 'PASS', 'AGGREGATE_SHARD_VERIFICATION');
+  }
+  const bytes = await provider.jobLog(job.id);
+  requireEvidence(Buffer.isBuffer(bytes) && bytes.length <= limits.jobLogBytes, 'JOB_LOG_LIMIT');
+  // The reviewed workflows run checkout before any candidate code. For the
+  // aggregate, only the pinned inline gate precedes checkout. Ignore the
+  // rest of the job, where tests and application code control stdout.
+  let marker = 0;
+  let command = false;
+  const commits = [];
+  for (const line of bytes.toString('utf8').split('\n')) {
+    const match = /^(\S{20,40}) (.*)\r?$/.exec(line);
+    if (!match) continue;
+    const time = Date.parse(match[1]);
+    const message = match[2].trimEnd();
+    if (message.startsWith('##[group]Run ')) {
+      if (marker === 1 && message !== '##[group]Run actions/checkout@v4') break;
+      if (job.name === 'test' && marker === 0 && message === '##[group]Run test "$PLAN" = success') continue;
+      requireEvidence(message === '##[group]Run actions/checkout@v4' &&
+        time >= started && time < ended + 1000, 'CHECKOUT_LOG_STEP');
+      marker++;
+    }
+    if (marker !== 1) continue;
+    if (!(time >= started && time < ended + 1000)) continue;
+    if (command && sha.test(message)) commits.push(message);
+    command = message === '[command]/usr/bin/git log -1 --format=%H';
+  }
+  requireEvidence(marker === 1 && commits.length === 1 && commits[0] === candidate.merge_candidate_sha, 'CHECKOUT_CANDIDATE');
+  return { step: checkout[0].number, sha: commits[0], log_digest: bytesDigest(bytes) };
+}
+
+async function jobObservation(provider, job, run, candidate) {
   requireEvidence(positive(job.id) && job.run_id === run.id && job.run_attempt === run.run_attempt &&
     job.head_sha === run.head_sha && safeJob(job.name), 'JOB_PROVENANCE');
   // Derive the fixed endpoint from the only accepted URL shape.
@@ -513,32 +645,43 @@ async function jobObservation(provider, job, run, candidate, repoId) {
     job.check_run_url.match(/^https:\/\/api\.github\.com\/repos\/bensmullen\/personal-finance-app\/check-runs\/([1-9][0-9]*)$/);
   requireEvidence(check && positive(Number(check[1])), 'CHECK_ADDRESS');
   const record = await provider.json('/check-runs/' + check[1]);
+  const details = 'https://github.com/' + repository + '/actions/runs/' + run.id + '/job/' + job.id;
   requireEvidence(record.id === Number(check[1]) && record.name === job.name &&
     record.app?.id === 15368 && record.app.slug === 'github-actions' &&
-    record.check_suite?.id === run.check_suite_id && record.head_sha === candidate.merge_candidate_sha &&
-    record.status === job.status && record.conclusion === job.conclusion && run.repository.id === repoId, 'CHECK_PROVENANCE');
+    record.check_suite?.id === run.check_suite_id && record.head_sha === run.head_sha &&
+    [details, details + '?pr=' + candidate.pr].includes(record.details_url) &&
+    record.status === job.status && record.conclusion === job.conclusion, 'CHECK_PROVENANCE');
   const steps = job.steps ?? [];
   requireEvidence(Array.isArray(steps) && steps.length <= 64 && unique(steps.map(({ number }) => number)) &&
     steps.every(({ number }) => positive(number)), 'JOB_STEPS');
   let status = outcome(job);
   const adverse = steps.filter((step) => !['PASS', 'SKIP'].includes(outcome(step)));
   if (status === 'PASS' && adverse.length) status = worst(adverse.map(outcome));
-  return {
+  const observation = {
     id: job.id, check_run_id: record.id, outcome: status, conclusion: job.conclusion ?? null,
     steps: adverse.map((step) => ({ number: step.number, outcome: outcome(step) })),
   };
+  if (status !== 'SKIP') {
+    try {
+      observation.checkout = await checkoutObservation(provider, job, steps, candidate);
+    } catch (error) {
+      observation.checkout_issue = codeOf(error);
+      if (status === 'PASS') observation.outcome = 'INCOMPLETE';
+    }
+  }
+  return observation;
 }
 
-async function inspectRun(provider, original, workflow, planned, candidate, repoId, now, budget, evidencePaths) {
+async function inspectRun(provider, original, workflow, planned, candidate, pull, now, budget, witnesses) {
   const root = '/actions/runs/' + original.id;
-  validateRun(original, original, workflow, repoId);
+  validateRun(original, original, workflow, candidate, pull);
   const attempts = [];
   const issues = [];
   for (let number = 1; number <= original.run_attempt; number++) {
     try {
       const route = root + '/attempts/' + number;
       const attempt = await provider.json(route);
-      validateRun(attempt, original, workflow, repoId);
+      validateRun(attempt, original, workflow, candidate, pull);
       requireEvidence(attempt.run_attempt === number, 'ATTEMPT_IDENTITY');
       const jobs = await provider.list(route + '/jobs', 'jobs');
       requireEvidence(unique(jobs.map(({ id }) => id)) && unique(jobs.map(({ name }) => name)), 'DUPLICATE_JOB');
@@ -550,14 +693,13 @@ async function inspectRun(provider, original, workflow, planned, candidate, repo
   }
   try {
     const latest = await provider.json(root);
-    validateRun(latest, original, workflow, repoId);
+    validateRun(latest, original, workflow, candidate, pull);
     requireEvidence(latest.run_attempt === original.run_attempt && latest.status === original.status &&
       latest.conclusion === original.conclusion, 'RUN_CHANGED');
   } catch (error) {
     issues.push({ code: codeOf(error) });
   }
   const results = [];
-  const observed = new Set();
   let artifacts;
   for (const { attempt, jobs } of attempts) {
     const attemptOutcome = outcome(attempt);
@@ -565,18 +707,18 @@ async function inspectRun(provider, original, workflow, planned, candidate, repo
     const entries = [];
     for (const job of jobs) {
       const selected = planned.find(({ job: name }) => name === job.name);
-      const skippedMatrix = ['unit', 'e2e'].includes(job.name) && outcome(job) === 'SKIP' &&
-        planned.filter((check) => check.job.startsWith(job.name + ' (shard ')).every(({ selection }) => selection === 'excluded');
+      const matrix = skippedMatrixNames.get(job.name);
+      const skippedMatrix = workflowEvents.get(workflow.path) === 'pull_request' && matrix && outcome(job) === 'SKIP' &&
+        planned.filter((check) => check.job.startsWith(matrix + ' (shard ')).every(({ selection }) => selection === 'excluded');
       if (!selected && !skippedMatrix) issues.push({ attempt: attempt.run_attempt, code: 'UNPLANNED_JOB', job_id: job.id });
       let result;
       try {
-        result = await jobObservation(provider, job, attempt, candidate, repoId);
+        result = await jobObservation(provider, job, attempt, candidate);
       } catch (error) {
         result = { id: job.id, outcome: 'INCOMPLETE', code: codeOf(error) };
         issues.push({ attempt: attempt.run_attempt, code: 'UNAUTHENTICATED_JOB', job_id: job.id });
       }
       if (selected) {
-        observed.add(selected.id);
         if (selected.selection === 'excluded' && result.outcome !== 'SKIP') {
           issues.push({ attempt: attempt.run_attempt, code: 'EXCLUDED_JOB_EXECUTED', check: selected.id });
         }
@@ -588,20 +730,27 @@ async function inspectRun(provider, original, workflow, planned, candidate, repo
             artifacts ??= await provider.list(root + '/artifacts', 'artifacts');
             requireEvidence(unique(artifacts.map(({ id }) => id)), 'DUPLICATE_ARTIFACT_ID');
             const name = selected.artifact.replace('{run}', String(attempt.id)).replace('{attempt}', String(attempt.run_attempt));
-            result.artifact = await artifactEvidence(provider, artifacts, name, attempt, repoId, now, budget, selected, candidate, evidencePaths);
-            if (result.artifact.outcome) result.outcome = worst([result.outcome, result.artifact.outcome]);
+            result.artifact = await artifactEvidence(provider, artifacts, name, attempt, pull.repoId, now, budget,
+              selected, candidate, witnesses, workflow.ref);
+            if (result.artifact.outcome) {
+              const observed = result.artifact.outcome;
+              result.outcome = result.checkout && result.conclusion === 'failure' && observed === 'TIMEOUT' ?
+                'TIMEOUT' : worst([result.outcome, observed]);
+            }
           } catch (error) {
             result.artifact_issue = codeOf(error);
             if (result.outcome === 'PASS') result.outcome = 'INCOMPLETE';
           }
         }
       }
-      entries.push({ check: selected?.id ?? null, ...result });
+      entries.push({ check: selected?.id ?? null, ...(matrix ? { matrix } : {}), ...result });
+    }
+    for (const check of planned) {
+      if (check.selection === 'selected' && !entries.some((job) => job.check === check.id)) {
+        issues.push({ attempt: attempt.run_attempt, code: 'MISSING_JOB', check: check.id });
+      }
     }
     results.push({ number: attempt.run_attempt, outcome: attemptOutcome, jobs: entries });
-  }
-  for (const check of planned) {
-    if (check.selection === 'selected' && !observed.has(check.id)) issues.push({ code: 'MISSING_JOB', check: check.id });
   }
   for (const kind of ['unit', 'e2e']) {
     const assignments = results.flatMap(({ jobs }) => jobs.filter(({ check }) =>
@@ -609,22 +758,29 @@ async function inspectRun(provider, original, workflow, planned, candidate, repo
       .map(({ artifact }) => artifact?.assignment_digest).filter(Boolean);
     if (new Set(assignments).size > 1) issues.push({ code: 'SHARD_ASSIGNMENT_DRIFT', kind });
   }
-  return { id: original.id, workflow_id: workflow.id, attempts: results, issues };
+  return { id: original.id, workflow_id: workflow.id, event: original.event, head_sha: original.head_sha,
+    check_suite_id: original.check_suite_id, attempts: results, issues };
 }
 
 // The selection is an operator-owned input. Provider data alone never grants
 // task, plan, workflow-pin or reviewer authority.
-export async function collectGoalEvidence(input, provider, now = Date.now()) {
+export async function collectGoalEvidence(input, provider, now = Date.now(), verify) {
   validateSelection(input);
   const { task, candidate, plan, workflows, inputs, implementer } = input;
   const runs = [];
   const issues = [];
-  const evidencePaths = new Set();
+  const witnesses = new Set();
   const budget = { remaining: limits.totalUnpackedBytes };
+  let control = null;
   try {
     requireEvidence(Number.isFinite(now), 'OBSERVATION_TIME');
-    const repoId = await exactPull(provider, candidate);
-    await currentIssues(provider, task);
+    const pull = await exactPull(provider, candidate);
+    const authority = await currentIssues(provider, task, pull.branch);
+    control = authority;
+    const authenticate = (live) => attested(verify, 'live_selected_evidence_plan', {
+      task, candidate, plan, workflows, inputs, implementer, ...live, now: new Date(now).toISOString(),
+    });
+    if (!authenticate(authority)) issues.push({ code: 'UNVERIFIED_LIVE_EVIDENCE_PLAN' });
     const integration = candidate.merge_candidate_sha;
     const commit = await provider.json('/commits/' + integration);
     requireEvidence(commit.sha === integration && commit.parents?.length === 2 &&
@@ -633,7 +789,11 @@ export async function collectGoalEvidence(input, provider, now = Date.now()) {
       const bytes = await pinContents(provider, integration, pin);
       if (pin.path === registryPath) {
         const registry = readHouseholdRegistry(bytes);
-        for (const entry of registry.applicable) for (const evidence of entry.evidence) evidencePaths.add(evidence.path);
+        for (const entry of registry.applicable) for (const evidence of entry.evidence) {
+          requireEvidence([evidence.path, ...evidence.fixtures, evidence.oracle].every((path) =>
+            inputs.some((pin) => pin.path === path)), 'UNPINNED_HOUSEHOLD_CASE_INPUT');
+          for (const title of evidence.cases) witnesses.add(caseKey(evidence.path, title));
+        }
       }
     }
     for (const workflow of workflows) {
@@ -645,7 +805,7 @@ export async function collectGoalEvidence(input, provider, now = Date.now()) {
         const originals = await runInventory(provider, workflow, candidate);
         for (const original of originals) {
           try {
-            const result = await inspectRun(provider, original, workflow, planned, candidate, repoId, now, budget, evidencePaths);
+            const result = await inspectRun(provider, original, workflow, planned, candidate, pull, now, budget, witnesses);
             if (result) runs.push(result);
           } catch (error) {
             issues.push({ workflow: workflow.id, run: original.id, code: codeOf(error) });
@@ -658,8 +818,12 @@ export async function collectGoalEvidence(input, provider, now = Date.now()) {
         issues.push({ workflow: workflow.id, code: codeOf(error) });
       }
     }
-    requireEvidence(await exactPull(provider, candidate) === repoId, 'STALE_CANDIDATE');
-    await currentIssues(provider, task);
+    requireEvidence(digest(await exactPull(provider, candidate)) === digest(pull), 'STALE_CANDIDATE');
+    const rechecked = await currentIssues(provider, task, pull.branch);
+    control = rechecked;
+    if (!authenticate(rechecked) && !issues.some(({ code }) => code === 'UNVERIFIED_LIVE_EVIDENCE_PLAN')) {
+      issues.push({ code: 'UNVERIFIED_LIVE_EVIDENCE_PLAN' });
+    }
   } catch (error) {
     issues.push({ code: codeOf(error) });
   }
@@ -678,12 +842,24 @@ export async function collectGoalEvidence(input, provider, now = Date.now()) {
       artifacts: latest?.artifact ? [{ id: latest.artifact.id, digest: latest.artifact.digest }] : [],
     };
   });
-  const complete = issues.length === 0 && runs.every((run) => run.issues.length === 0) &&
-    checks.every((check) => check.required ? check.outcome === 'PASS' : ['PASS', 'NOT_APPLICABLE'].includes(check.outcome));
+  const workflowComplete = (event) => {
+    const workflow = workflows.find(({ path }) => workflowEvents.get(path) === event);
+    return Boolean(workflow && !issues.some(({ workflow: id }) => id === undefined || id === workflow.id) &&
+      runs.some(({ workflow_id }) => workflow_id === workflow.id) &&
+      runs.filter(({ workflow_id }) => workflow_id === workflow.id).every((run) => run.issues.length === 0) &&
+      checks.filter((_, index) => plan[index].workflow === workflow.id)
+        .every((check) => check.required ? check.outcome === 'PASS' : check.outcome === 'NOT_APPLICABLE'));
+  };
+  const browserInventories = runs.flatMap(({ attempts }) => attempts.flatMap(({ jobs }) =>
+    jobs.filter(({ outcome, artifact }) => outcome === 'PASS' && artifact?.ordinary_inventory)
+      .map(({ artifact }) => digest(artifact.ordinary_inventory))));
+  if (new Set(browserInventories).size > 1) issues.push({ code: 'BROWSER_DISCOVERY_ASSIGNMENT_MISMATCH' });
+  const ordinary_complete = workflowComplete('pull_request');
+  const complete = ordinary_complete && (!workflows.some(({ ref }) => ref) || workflowComplete('workflow_dispatch'));
   return {
     task, candidate, implementer, observed_at: Number.isFinite(now) ? new Date(now).toISOString() : null,
     selection_digest: digest({ task, candidate, workflows, inputs, implementer }),
-    inputs, workflows, checks, runs, issues, complete,
+    control, inputs, workflows, plan, checks, runs, issues, ordinary_complete, complete,
     resources: { ...provider.measurements?.(), unpacked_bytes: limits.totalUnpackedBytes - budget.remaining },
   };
 }
@@ -712,12 +888,17 @@ const registryPath = 'docs/development/goal-framework/households.json';
 
 function readHouseholdRegistry(bytes) {
   const registry = parseEvidenceJson(bytes);
-  requireEvidence(registry.schema === 'GF04_HOUSEHOLDS_V1' && Array.isArray(registry.applicable) &&
+  const gapsValid = (gaps) => Array.isArray(gaps) && gaps.length <= 12 && gaps.every((gap) => identifier.test(gap));
+  requireEvidence(registry.schema === 'GF04_HOUSEHOLDS_V1' && registry.revision === 2 && Array.isArray(registry.applicable) &&
     registry.applicable.length === householdCases.length && householdCases.every((key) =>
       registry.applicable.some(({ id }) => id === key)) &&
-    registry.applicable.every(({ gaps, owner, evidence }) => Array.isArray(gaps) && gaps.length <= 12 &&
-      gaps.every((gap) => identifier.test(gap)) && positive(owner) && Array.isArray(evidence) &&
-      evidence.length > 0 && evidence.length <= 12 && evidence.every(({ path }) => safePath(path))) &&
+    registry.applicable.every(({ gaps, unsupported, owner, evidence }) =>
+      gapsValid(gaps) && gapsValid(unsupported) && positive(owner) && Array.isArray(evidence) &&
+      evidence.length > 0 && evidence.length <= 12 && evidence.every(({ path, fixtures, oracle, kind, cases }) =>
+        safePath(path) && safePath(oracle) && Array.isArray(fixtures) && fixtures.length > 0 && fixtures.length <= 12 &&
+        unique(fixtures) && fixtures.every(safePath) && ['reconciliation', 'refusal'].includes(kind) &&
+        Array.isArray(cases) && cases.length > 0 && cases.length <= 16 && unique(cases) &&
+        cases.every((title) => typeof title === 'string' && title.length > 0 && title.length <= 512))) &&
     registry.future_gate?.owner === 108 && registry.future_gate.independently_saved_plans_per_household === 4 &&
     JSON.stringify(registry.future_gate.households) === JSON.stringify(Array.from({ length: 8 }, (_, i) => 'H0' + (i + 1))),
   'HOUSEHOLD_REGISTRY');
@@ -726,7 +907,7 @@ function readHouseholdRegistry(bytes) {
 
 // The collector only describes provider observations. A trusted coordinator
 // authenticates independent reviews at this boundary, using its own authority.
-export function householdReadiness({ collection, registryBytes, reviews = {}, verify }) {
+export function householdReadiness({ collection, registryBytes, reviews = {}, verify, now = Date.now() }) {
   const registry = readHouseholdRegistry(registryBytes);
   const registry_digest = bytesDigest(registryBytes);
   const pinned = collection.inputs.some(({ path, digest: pin }) => path === registryPath && pin === registry_digest);
@@ -736,30 +917,51 @@ export function householdReadiness({ collection, registryBytes, reviews = {}, ve
   const manualArtifact = household?.outcome === 'PASS' ? household.artifacts[0] ?? null : null;
   const jobArtifacts = collection.runs.flatMap(({ attempts }) => attempts.flatMap(({ jobs }) =>
     jobs.filter(({ outcome: status, artifact }) => status === 'PASS' && artifact).map(({ artifact }) => artifact)));
-  const paths = new Set(jobArtifacts.flatMap((artifact) => artifact.witness_paths ?? []));
+  const caseIds = new Set(jobArtifacts.flatMap((artifact) => artifact.witness_cases ?? []).map(({ key }) => key));
   const captures = jobArtifacts.find((artifact) => artifact.id === manualArtifact?.id)?.files ?? [];
   if (!pinned || !collection.complete) blockers.push('EXACT_CANDIDATE_EVIDENCE_MISSING');
+  if (!collection.ordinary_complete) blockers.push('REQUIRED_ORDINARY_EVIDENCE_MISSING');
   if (!manualArtifact) blockers.push('MANUAL_BROWSER_ARTIFACT_MISSING');
-  const applicable = registry.applicable.map(({ id, owner, gaps, evidence: expected }) =>
-    ({ id, owner, gaps, missing_evidence: expected.map(({ path }) => path).filter((path) => !paths.has(path)) }));
-  for (const { id, gaps } of applicable) {
-    if (gaps.length) blockers.push(...gaps.map((gap) => id + ':' + gap));
+  const observed = Date.parse(collection.observed_at);
+  const expires = Math.min(...jobArtifacts.map((artifact) => Date.parse(artifact.expires_at)));
+  const fresh = Number.isFinite(now) && observed <= now && now < expires;
+  if (!fresh) blockers.push('COLLECTION_STALE_OR_EXPIRED');
+  const case_inventory_digest = digest({
+    registry_digest, inputs: collection.inputs, households: registry.applicable.map(({ id, evidence }) =>
+      ({ id, cases: evidence.flatMap(({ path, cases }) => cases.map((title) => caseKey(path, title))) })),
+  });
+  const applicable = registry.applicable.map(({ id, owner, gaps, unsupported, evidence: expected }) =>
+    ({ id, owner, gaps, unsupported, missing_evidence: expected.flatMap(({ path, cases }) =>
+      cases.filter((title) => !caseIds.has(caseKey(path, title))).map((title) => ({ path, title }))) }));
+  for (const { id, gaps, unsupported } of applicable) {
+    blockers.push(...[...gaps, ...unsupported].map((gap) => id + ':' + gap));
   }
   if (applicable.some(({ missing_evidence }) => missing_evidence.length)) blockers.push('APPLICABLE_TEST_EVIDENCE_MISSING');
+  const { runs, ...summary } = collection;
+  const collection_digest = digest({
+    ...summary, runs: runs.map(({ attempts, issues, ...run }) => digest({
+      ...run, issues_digest: bytesDigest(JSON.stringify(issues)),
+      attempts: attempts.map(({ jobs, ...attempt }) => digest({ ...attempt, jobs: jobs.map(digest) })),
+    })),
+  });
   const binding = {
     task: collection.task, candidate: collection.candidate, selection_digest: collection.selection_digest,
-    registry_digest, applicable, evidence, browser_artifact: manualArtifact, captures,
+    collection_digest, case_inventory_digest, registry_digest, applicable, evidence, browser_artifact: manualArtifact, captures,
   };
   const accepted = {};
   for (const kind of ['semantic', 'visual']) {
     const review = reviews[kind];
     const independent = typeof review?.actor === 'string' && typeof review?.session === 'string' &&
+      identifier.test(review.actor) && identifier.test(review.session) &&
       review.actor !== collection.implementer.actor && review.session !== collection.implementer.session;
     const coversInventory = Array.isArray(review?.households) && review.households.length === householdCases.length &&
       householdCases.every((id) => review.households.includes(id));
-    const authentic = pinned && collection.complete && manualArtifact && independent && coversInventory &&
+    const created = Date.parse(review?.created_at), reviewExpires = Date.parse(review?.expires_at);
+    const authentic = pinned && collection.complete && manualArtifact && fresh && independent && coversInventory &&
+      observed <= created && created <= now && now < reviewExpires && reviewExpires <= expires &&
+      review.collection_digest === collection_digest && review.case_inventory_digest === case_inventory_digest &&
       ['approved', 'changes_required'].includes(review.disposition) &&
-      typeof verify === 'function' && verify('independent_' + kind + '_review', { binding, review }) === true;
+      attested(verify, 'independent_' + kind + '_review', { binding, review, now: new Date(now).toISOString() });
     accepted[kind] = authentic ? review.disposition : 'pending';
     if (accepted[kind] !== 'approved') blockers.push('INDEPENDENT_' + kind.toUpperCase() + '_REVIEW_MISSING_OR_BLOCKING');
   }
@@ -809,8 +1011,8 @@ export function browserInventory(ordinary, manual, ux) {
     optIn.every((id) => !id.includes(manualFile)) &&
     optIn.some((id) => id.startsWith(uxFile)) &&
     JSON.stringify(optIn.filter((id) => !id.startsWith(uxFile))) === JSON.stringify(normal), 'BROWSER_INVENTORY_ROUTING');
-  return { ordinary_count: normal.length, ordinary_digest: bytesDigest(JSON.stringify(normal)),
-    ux_count: optIn.length, ux_digest: bytesDigest(JSON.stringify(optIn)), manual: profile };
+  return { ordinary_count: normal.length, ordinary_digest: inventoryDigest(normal),
+    ux_count: optIn.length, ux_digest: inventoryDigest(optIn), manual: profile };
 }
 
 async function main(args) {
@@ -818,7 +1020,8 @@ async function main(args) {
     const [, normal, manual, ux, output] = args;
     const values = await Promise.all([normal, manual, ux].map(async (file) => parseEvidenceJson(await readInput(file))));
     await writeFile(output, JSON.stringify({
-      sha: process.env.GITHUB_SHA, attempt: process.env.GITHUB_RUN_ATTEMPT, ...browserInventory(...values),
+      sha: process.env.GITHUB_SHA, attempt: process.env.GITHUB_RUN_ATTEMPT, run_id: process.env.GITHUB_RUN_ID,
+      ref: process.env.GITHUB_REF, ...browserInventory(...values),
     }));
     return;
   }

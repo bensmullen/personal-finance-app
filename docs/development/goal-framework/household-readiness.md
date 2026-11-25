@@ -12,11 +12,10 @@ four independently saved plans per household under #105.
 Run the collector once from a trusted, reviewed tooling checkout outside the
 Codex implementation turn. Use a read-only GitHub credential for Actions,
 checks, issues, contents and pull requests. Obtain the open PR, current base and
-provider merge commit from GitHub. The collector rechecks the PR after
-collection, verifies the live V3 issue digest and proves the merge commit's
-ordered parents. A newer candidate
-requires its own collection and review. The latest commit on a feature branch
-is insufficient if the integration check applies to different bytes.
+provider merge commit from GitHub. The collector rechecks the PR and live
+issues after collection, parses the saved V3 grant, checks its target branch,
+and proves the merge commit's ordered parents. A newer candidate requires its
+own collection and review.
 
 Prepare a trusted selection JSON with the following fields. Pin raw Git blob
 SHA-256 digests from independently reviewed artifacts and the exact candidate.
@@ -30,8 +29,8 @@ from the selection.
 | `task` | Repository, `goal_issue`, `goal_revision`, `goal_control_digest`, `task_issue`, `task_revision` and saved `issue_body_digest`. |
 | `implementer` | Trusted `actor` and `session` for independence checks. |
 | `candidate` | PR number, `head_sha`, `base_sha`, `merge_candidate_sha` and `verification_plan_digest` using the GF-01 canonical digest of the ordered plan. |
-| `workflows` | GitHub workflow numeric `id`, repository `path` and trusted raw-byte `digest` for the ordinary and/or manual workflow. |
-| `inputs` | Candidate `path` and raw-byte `digest` for the lockfile, Playwright config, router, shard planner, diagnostic reporter and quiet wrappers, registry, manual spec, guided inputs and S8-5A oracle. Include any additional source or configuration material to the particular decision. |
+| `workflows` | GitHub workflow numeric `id`, repository `path` and trusted raw-byte `digest` for the ordinary and manual workflows. Use a fully qualified integration `ref` for the manual workflow. |
+| `inputs` | Candidate `path` and raw-byte `digest` for the lockfile, Playwright config, router, shard planner, diagnostic reporter and quiet wrappers, registry and all tests, fixtures and oracle paths named by the registry. Include any additional source or configuration material to the particular decision. |
 | `plan` | One row per workflow job, keyed by globally unique `id`, with numeric `workflow`, exact `job` name, `selection` (`selected` or `excluded`), `required` and `artifact_required`. Specify the exact `artifact` name and optionally required `files` when an artifact is required. |
 
 The ordinary inventory is verification-plan, spec, architecture, codex-tooling,
@@ -46,32 +45,48 @@ The selected manual row uses ID `household-readiness` and artifact
 failure observation.
 
 `node tools/ci/goal-framework-evidence.mjs collect TRUSTED_SELECTION.json docs/development/goal-framework/households.json`
-writes the compact collection and `UAT_READINESS_V1` to standard output.
-Complete provider observations also include a pending `VERIFICATION_EVIDENCE_V1`
-draft compatible with GF-01. Exit
-status 2 is the refusal or pending-review outcome. The CLI has no authenticated
-review channel. A trusted coordinator can call `householdReadiness` with
-independently authenticated semantic and visual reviews. Each review binds
-the complete candidate, current collection, registry, every applicable household
-and corresponding artifact references. PM acceptance is a separate
-authenticated decision.
+writes a diagnostic collection and `UAT_READINESS_V1` to standard output with
+exit status 2. A trusted coordinator calls
+`collectGoalEvidence(input, provider, now, verify)` with the GF-01 verifier
+boundary. At `live_selected_evidence_plan`, verify the exact independently
+reviewed selection against current goal approval, live goal and task controls,
+the saved V3 issue and branch, the candidate, workflow and input pins,
+implementer and currently authorized reviewer. The binding includes the live
+goal issue body digest for comparison with the host's own authority. Only the
+trusted host can supply `verify` and determine freshness and revocation.
+Authenticated complete ordinary observations can produce a pending
+`VERIFICATION_EVIDENCE_V1` draft. Manual-only observations cannot satisfy
+ordinary verification.
 
-GitHub must authenticate the selected job through its Actions check suite at
-the exact integration SHA. A job with the right title, or a success JSON
-downloaded without the correct provider record and archive digest, cannot close
-the check. If GitHub only exposes a PR-head check with no integration-bound
-check, record the integration evidence as incomplete. Older shard names can be
+The coordinator supplies independently authenticated semantic and visual
+attestations to `householdReadiness`. Each attestation names the complete
+collection and case/oracle inventory digests, applicable household IDs,
+reviewer actor/session, disposition, creation time and expiration. The
+trusted verifier checks the authenticated review event, current authority and
+revocation at review time. Expired artifacts or attestations block readiness.
+PM acceptance requires its own authenticated decision.
+
+GitHub ordinary PR checks attach to the source head. Authenticate the exact
+PR/repository/head/base association, workflow, attempt, job and GitHub Actions
+check suite there. Separately verify the tested merge SHA from the job's
+pinned checkout step in a bounded provider log. For the aggregate `test` job,
+also require its successful shard receipt verification step. Manual runs bind
+the integration ref and SHA through the run, checkout and profile inventory.
+The job title and artifact success JSON cannot establish these identities.
+Older shard names can be
 overwritten on reruns. Their historical attempt association is unknown and
 blocks reuse. The collector retains every provider attempt and bounded
-test-level failures or retries it can verify. Later green results do not clear
-earlier defects or failure evidence. Candidate changes, uncertain pagination
+test-level failures or retries it can verify. For a sanitized Vitest failure,
+the artifact's bounded runner log can corroborate a timeout on the same
+case. An ambiguous test diagnosis stays incomplete. Later green results do
+not clear earlier defects or failure evidence. Candidate changes, uncertain pagination
 and missing, expired or over-budget data require a new determination by the
 reviewer. Collection never dispatches or polls a job.
 
 The collector retains compact run, check, disposition, checksum, capture and
-expiration metadata. It follows one allowlisted HTTPS storage redirect without
+expiration metadata. It follows one allowlisted HTTPS storage redirect per download without
 forwarding GitHub credentials. It bounds requests, compressed bytes, inflated
-files and total inflated bytes. It rejects unsafe ZIP paths and file types,
+files, total inflated bytes and per-job and total job-log bytes. It rejects unsafe ZIP paths and file types,
 ambiguous ZIP metadata, invalid checksums and duplicate JSON keys. It does not
 extract archives to disk. Nested Playwright traces are opaque attachments
 bound by checksum for independent review. Keep durable acceptance attestations
@@ -87,7 +102,8 @@ ref resolves that ref's commit and can provide diagnostic evidence. Only a run
 at the integration SHA satisfies exact-candidate collection.
 
 The workflow first compares ordinary discovery, exclusive household discovery
-and the existing UX opt-in. Ordinary tests retain their existing identities.
+and the existing UX opt-in. The collector compares the 174 ordinary discovery
+identities with selected ordinary E2E shard assignments when both are present.
 The four normal-user cases use one Chromium worker and no Playwright retries.
 They cover initialization, exact input/export amounts, accessible income
 navigation, keyboard entry, edit/cancel/discard, saved reload on desktop,
@@ -112,21 +128,26 @@ runner cost.
 
 ## Baseline readiness observation
 
-The implementation worktree began at
-`b9bd4024f42792da13d4e8ab25c3cdb42250e5c0`. At that exact checkout, source
-inspection identified the merged S8-5A witness from PR #361 and the ordinary
-browser evidence definitions listed in the registry. The task hooks supplied
-the live V3 authorization and blocked direct GitHub CLI evidence reads.
-The baseline therefore has no authenticated PR integration candidate, artifact
-IDs, runtime measurements or independent visual review available to this turn.
-Its pre-UAT disposition is **NOT_READY**. The tracked definitions establish
-which evidence to request and which gaps to report.
+The #366 reviewer checkpoint for PR #377 recorded source head
+`597549c44bad439248904c244619ef8007babef2`, base
+`b9bd4024f42792da13d4e8ab25c3cdb42250e5c0` and tested merge
+`d0de28ab1b4686f855c717c5c1fb7dfd6d698834`. Ordinary CI run
+45504302187 attempt 1 passed the aggregate and all selected gates. The
+reviewer matched the seven diagnostic ZIP digests and counted 3,908 unit
+tests and 174 browser cases with zero skips or retries. GitHub exposed the
+checks on the source head and the checkout and shard receipts on the tested
+merge. The checkpoint has no manual Chromium artifacts, measurements or
+independent visual disposition. Its pre-UAT disposition is **NOT_READY**.
+The repaired candidate needs its own exact observations and reviews.
 
 The outstanding product boundaries include readable V6 retirement income
 sources and guided source-to-forecast proof under #120, and end-to-end
 source-qualified application composition under #149. The test-only #331
 witness supports the original issuer, exact posting and replay boundaries in
-its declared scope. Screenshots require independent review in the real
+its declared scope. The applicability registry pins exact case identities,
+fixture paths and independent assertion sources. Refusal cases document
+blocked or uncomputed behavior. They cannot fill missing reconciliation
+or unsupported capability. Screenshots require independent review in the real
 application against the approved visual target, along with the remaining
 financial discrepancies. PM questions become eligible after those reviews
 and required capability coverage are complete.
