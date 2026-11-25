@@ -9,6 +9,7 @@ const { canonicalJson, digest, goalControlDigest, inspectV3Body } = await load("
 const { censusBoundaries } = await load("schemas/v1");
 const { levelOneBody, pinnedV3Parser, sha256 } = await load("authorization");
 const { openLifecycle } = await load("lifecycle");
+const { openResourceLedger } = await load("resources");
 const { inspectWorkspace, resolveScopedPaths } = await load("workspace");
 
 const repository = "fixture/pfm";
@@ -28,6 +29,12 @@ const decision = { id: "settled-definition", domain: "financial", digest: digest
 const limits = { pool_id: "fixture-pool", account_scope: "fixture-account", unit: "messages", account_epoch: 1,
   account_ceiling: 100, goal_ceiling: 40, task_ceiling: 20, max_model_calls: 8, max_continuations: 5,
   execution_deadline: at(100), cleanup_reserve: 2 };
+const pool = { pool_id: limits.pool_id, account_scope: limits.account_scope, unit: limits.unit };
+const hostEstimate = { cpu_millicores: 100, memory_mib: 128, processes: 1, disk_mib: 10, ci_minutes: 0, test_slots: 0 };
+const actual = { model: "fixture-model", reasoning: "fixture-effort", surface: "local", runtime: "fixture-runtime" };
+const profile = { ...actual, id: "fixture-profile", status: "verified", evidence: ref("runtime-probe"),
+  max_risk: "cross-cutting", financial_review: true, operations: ["implementation"] };
+const registry = { ...JSON.parse(readFileSync(new URL("../tools/codex/goal-framework/profiles.json", import.meta.url), "utf8")), profiles: [profile] };
 const root = readFileSync(new URL("../.codex/hooks/pfm-policy.py", import.meta.url), "utf8");
 const roots: string[] = [];
 
@@ -52,7 +59,7 @@ function envelope(schema: string, id = schema.toLowerCase()) {
   return { schema, repository, id, revision: 1, created_at: at(0), producer, references: [] };
 }
 
-function fixture() {
+function fixture({ realResources = false } = {}) {
   const journal = temporary();
   const firstDirectory = temporary();
   const otherDirectory = temporary();
@@ -60,34 +67,61 @@ function fixture() {
   let phaseFault: string | null = null;
   const denied = new Set<string>();
   const humanEvents = new Set<string>();
-  const verify = (boundary: string, value: unknown) => !denied.has(boundary)
-    && (boundary !== "human_approval" || humanEvents.has(digest(value)));
+  const runBindings = new Map<string, string>();
+  const runBinding = (budget: ReturnType<typeof ref>, fence: number, directory: string, environment: string,
+    owner: string, authorizationId: string) => digest([budget, fence, directory, environment, owner, authorizationId]);
+  const verify = (boundary: string, value: unknown) => {
+    if (denied.has(boundary)) return false;
+    if (boundary === "human_approval") return humanEvents.has(digest(value));
+    if (realResources && boundary === "lifecycle_active_run_binding") {
+      const { task, workspace, run } = value as { task: { budget: ReturnType<typeof ref>; fence: number };
+        workspace: { directory: string; environment: string; owner: string; authorization_id: string };
+        run: { native_run_id: string } };
+      return runBindings.get(run.native_run_id) === runBinding(task.budget, task.fence, workspace.directory,
+        workspace.environment, workspace.owner, workspace.authorization_id);
+    }
+    return true;
+  };
   const parseSaved = (issue: { body: string }) => ({ ...inspectV3Body(issue.body),
     parser_revision: "c".repeat(40), parser_digest: sha256(root) });
   const resourceRuns = new Map<string, unknown>();
+  const resourceLedger = realResources ? openResourceLedger({ directory: temporary(), ledgerId: "fixture-resources",
+    initialize: true, verify, clock: () => now, registry, policy: {
+      pools: [{ ...pool, ceiling: 100, pilot_ceiling: 20, initial_epoch: 1 }], snapshot_max_age_ms: 90 * 60_000,
+      pilot_max_ms: 120 * 60_000,
+      host: { cpu_millicores: 1000, memory_mib: 1024, processes: 8, disk_mib: 100, ci_minutes: 0, test_slots: 0 },
+      goal_calls: { calls: 8, continuations: 5, repairs: 2 }, task_calls: { calls: 8, continuations: 5, repairs: 2 },
+    } }) : null;
+  resourceLedger?.snapshot("available", { ...pool, account_epoch: 1, source: "fixture-counter", observed_at: now,
+    reset_at: at(90), evidence: ref("quota"), quality: "observed", coverage: "complete", remaining: 100 });
   const options = { directory: journal, ledgerId: "fixture-lifecycle", verify, parseSaved,
-    resources: { lookup: (id: string) => resourceRuns.get(id) }, consumedNonces: new Set<string>(), clock: () => now };
+    resources: resourceLedger ?? { lookup: (id: string) => resourceRuns.get(id) }, consumedNonces: new Set<string>(), clock: () => now };
   const ledger = openLifecycle({ ...options, initialize: true });
   const reopen = () => openLifecycle({ ...options, fault: (phase: string) => {
     if (phase === phaseFault) throw Object.assign(new Error("simulated disk-full"), { code: "ENOSPC" });
   } });
-  const goalControl = { ...envelope("PFM_GOAL_V1"), goal_issue: 362, control_revision: 1, observation_revision: 0,
-    outcome: "One reviewable lifecycle result.", requirement_refs: ["GF-R07"], approved_decisions: [decision], exclusions: [],
-    decision_authority: { financial: "pm", product: "pm", privacy: "pm", security: "pm", release: "pm", uat: "pm", activation: "pm", implementation: "task" },
-    phase_gates: { alignment: "aligned", planning: "planned", implementation: "written", verification: "checked" },
-    budget_policy: limits, concurrency_policy: { implementation_writers: 2, read_only_workers: 2, review_backlog: 2 },
-    merge_policy: { tier: "manual" }, uat_policy: "not_required", completion_evidence: ["review"], approval: ref("pending") };
-  const goalKeys = { goal_issue: 362, goal_revision: 1, goal_control_digest: goalControlDigest(goalControl) };
-  const approval = { ...envelope("PFM_APPROVAL_V1"), ...goalKeys,
-    producer: { role: "pm", actor: "operator", session: "human-session" }, purpose: "goal", merge_tier: "manual",
-    decision_scope: ["product", "financial"], candidate_digest: null, task_issue: null, task_revision: null,
-    criteria: [], channel: "human-approval", nonce: "approval", expires_at: at(90) };
-  humanEvents.add(digest(approval));
-  const goal = { ...goalControl, approval: recordRef(approval) };
+  function goalAuthority(goal_issue: number, reviewLimit: number) {
+    const goalControl = { ...envelope("PFM_GOAL_V1"), goal_issue, control_revision: 1, observation_revision: 0,
+      outcome: "One reviewable lifecycle result.", requirement_refs: ["GF-R07"], approved_decisions: [decision], exclusions: [],
+      decision_authority: { financial: "pm", product: "pm", privacy: "pm", security: "pm", release: "pm", uat: "pm", activation: "pm", implementation: "task" },
+      phase_gates: { alignment: "aligned", planning: "planned", implementation: "written", verification: "checked" },
+      budget_policy: limits, concurrency_policy: { implementation_writers: 2, read_only_workers: 2, review_backlog: reviewLimit },
+      merge_policy: { tier: "manual" }, uat_policy: "not_required", completion_evidence: ["review"], approval: ref("pending") };
+    const goalKeys = { goal_issue, goal_revision: 1, goal_control_digest: goalControlDigest(goalControl) };
+    const approval = { ...envelope("PFM_APPROVAL_V1"), ...goalKeys,
+      producer: { role: "pm", actor: "operator", session: "human-session" }, purpose: "goal", merge_tier: "manual",
+      decision_scope: ["product", "financial"], candidate_digest: null, task_issue: null, task_revision: null,
+      criteria: [], channel: "human-approval", nonce: `approval-${goal_issue}`, expires_at: at(90) };
+    humanEvents.add(digest(approval));
+    return { goalKeys, approval, goal: { ...goalControl, approval: recordRef(approval) } };
+  }
+  const goalByTask = new Map<number, ReturnType<typeof goalAuthority>["goalKeys"]>();
 
   function prepare({ issueNumber = 365, fence = 1, directory = firstDirectory, environment = "local",
     target = branch, base = head, paths = [primary], issueBody = body(paths, target), taskRevision = 1,
-    upstream = true, resource = "shared-register", attempt = "initial" } = {}) {
+    upstream = true, resource = "shared-register", attempt = "initial", goalIssue = 362, reviewLimit = 2, expires = 40 } = {}) {
+    const { goalKeys, goal, approval } = goalAuthority(goalIssue, reviewLimit);
+    goalByTask.set(issueNumber, goalKeys);
     const issue = { repository, number: issueNumber, body: issueBody, kind: "issue", state: "open", evidence: ref("saved-issue") };
     const bodyDigest = sha256(issueBody);
     const workspace = { ...envelope("WORKSPACE_RECEIPT_V1"), task_issue: issueNumber, directory, environment,
@@ -109,19 +143,39 @@ function fixture() {
     const lineage_id = `lineage-${issueNumber}`;
     const reservation = { ...envelope("BUDGET_RESERVATION_V1", `reservation-${fence}`), ...goalKeys,
       task_issue: issueNumber, task_revision: taskRevision, lineage_id, limits, risk: "cross-cutting",
-      runtime_profile_ref: ref("profile"), estimated_ceiling: 2,
+      runtime_profile_ref: realResources ? recordRef(profile) : ref("profile"), estimated_ceiling: 2,
       carries: { account_liability: 0, goal_liability: 0, task_liability: 0, model_calls: 0, continuations: 0 },
-      max_admitted_model_calls: 1, max_admitted_continuations: 0, expires_at: at(40),
+      max_admitted_model_calls: 1, max_admitted_continuations: 0, expires_at: at(expires),
       state: "reserved", native_run_id: null, terminal_ack: null };
-    resourceRuns.set(reservation.id, { reservation, status: "reserved" });
+    let budget = recordRef(reservation);
+    if (resourceLedger) {
+      resourceLedger.reserve(`reserve-${fence}`, { reservation, operation: "implementation", attempt, pilot: true,
+        host: hostEstimate, fence: `writer-${fence}`, goal_key: `goal-${goalIssue}`, parent: null });
+      budget = recordRef(resourceLedger.lookup(reservation.id).reservation);
+    } else {
+      resourceRuns.set(reservation.id, { reservation, status: "reserved" });
+    }
     return { issue, goal, approval, workspace, observation, remote, census, routes, lineage_id, resource, attempt,
-      task_revision: taskRevision, budget: recordRef(reservation), audit: ref("full-audit"),
+      task_revision: taskRevision, budget, audit: ref("full-audit"),
       alignment: { approved_goal_revision: 1, goal_control_digest: goalKeys.goal_control_digest, decisions: [decision],
         unresolved: [], risk: "cross-cutting", independentOutcome: true, coherent: true, relatedBatch: false } };
   }
 
+  function started(input: ReturnType<typeof prepare>) {
+    const native_run_id = `native-${input.budget.id}`;
+    if (resourceLedger) {
+      const { writer_fence, directory, environment, receipt_owner } = input.workspace;
+      runBindings.set(native_run_id, runBinding(input.budget, writer_fence, directory, environment, receipt_owner,
+        input.observation.receipt.authorization_id));
+    } else {
+      const run = resourceRuns.get(input.budget.id) as { reservation: unknown };
+      resourceRuns.set(input.budget.id, { ...run, status: "started", native_run_id, actual_profile_status: "matches" });
+    }
+    return { ...input, native_run_id };
+  }
+
   function event(kind: string, id: string, expected_revision: number, input: unknown, task_issue = 365, head_sha = head) {
-    return { event_id: id, source: "fixture-provider", repository, goal_issue: 362, goal_revision: 1, task_issue,
+    return { event_id: id, source: "fixture-provider", repository, goal_issue: goalByTask.get(task_issue)?.goal_issue ?? 362, goal_revision: 1, task_issue,
       expected_revision, head_sha, kind, observed_at: now, payload_ref: { id: `payload-${id}`, digest: sha256(canonicalJson(input, 1024 * 1024)) } };
   }
 
@@ -131,7 +185,7 @@ function fixture() {
 
   function claimed(input = prepare()) {
     submit("prepare", "prepare", 0, input);
-    submit("claim", "claim", 1, input);
+    submit("claim", "claim", 1, started(input));
     return input;
   }
 
@@ -140,7 +194,7 @@ function fixture() {
   ) {
     const { workspace, terminal } = input;
     const current_context = { settled_decisions: [decision], unresolved_criteria: ["independent-review"], blockers: [] };
-    const context_checkpoint = { ...envelope("CONTEXT_CHECKPOINT_V1"), ...goalKeys, ...current_context,
+    const context_checkpoint = { ...envelope("CONTEXT_CHECKPOINT_V1"), ...goalByTask.get(workspace.task_issue), ...current_context,
       task_issue: workspace.task_issue, task_revision: taskRevision, lineage_id: `lineage-${workspace.task_issue}`,
       branch: workspace.branch, head_sha: workspace.head_sha, workspace_receipt_ref: recordRef(workspace),
       artifacts: [ref("retained-checkpoint")], stopped_writer_ack: terminal, next_action: "review" };
@@ -156,11 +210,147 @@ function fixture() {
     return stop;
   }
 
-  return { journal, ledger, prepare, claimed, closeUnpublished, withContext, event, submit, reopen, denied, otherDirectory,
+  function publication(input: ReturnType<typeof prepare>, intent_id: string) {
+    const fence = input.workspace.writer_fence;
+    const observation = { ...input.observation, head: nextHead, paths: [primary] };
+    const candidate = { candidate: true, head_sha: nextHead, fence, authorization_id: input.observation.receipt.authorization_id,
+      evidence: ref("candidate"), observation: { ...observation, receipt: { ...observation.receipt, status: "active" } } };
+    const result = withContext({ intent_id, outcome: "applied", fence, evidence: ref("found-remote-head"), terminal: ref("owner-stop"),
+      workspace: { ...input.workspace, head_sha: nextHead, upstream_head_sha: nextHead }, remote: { ...input.remote, head: nextHead },
+      observation: { ...observation, upstream_head: nextHead, receipt: { ...observation.receipt, status: "closed" } } });
+    return { candidate, result };
+  }
+
+  return { journal, ledger, resourceLedger, prepare, started, claimed, closeUnpublished, withContext, publication, event, submit, reopen, denied, otherDirectory,
     fault: (phase: string | null) => { phaseFault = phase; }, time: (minutes: number) => { now = at(minutes); } };
 }
 
 describe("GF-V03, GF-V04, GF-V07 and GF-V23: supervised lifecycle", () => {
+  it("reserves prospective outcomes across goals and retains both slots through publication and journal replay", () => {
+    const f = fixture();
+    const a = f.prepare();
+    const b = f.prepare({ issueNumber: 366, fence: 2, target: "codex/second", resource: "second" });
+    const c = f.prepare({ issueNumber: 367, fence: 3, target: "codex/third", resource: "third", goalIssue: 363 });
+    f.submit("prepare", "a", 0, a);
+    f.submit("prepare", "b", 0, b, 366);
+    f.submit("prepare", "c", 0, c, 367);
+    f.submit("claim", "writer-a", 1, f.started(a));
+    f.submit("claim", "writer-b", 1, f.started(b), 366);
+    const first = f.publication(a, "push-a");
+    const second = f.publication(b, "push-b");
+    f.submit("begin-checkpoint", "push-a", 2, first.candidate);
+    f.submit("reconcile", "published-a", 3, first.result);
+    const third = f.started(c);
+    const claim = f.event("claim", "writer-c", 1, third, 367);
+    expect(() => f.reopen().submit(claim, third)).toThrow("REVIEW_BACKLOG");
+    expect(f.submit("begin-checkpoint", "push-b", 2, second.candidate, 366).phase).toBe("checkpoint-pending");
+    expect(() => f.reopen().submit(claim, third)).toThrow("REVIEW_BACKLOG");
+    expect(f.submit("reconcile", "published-b", 3, second.result, 366).phase).toBe("published");
+    expect(() => f.reopen().submit(claim, third)).toThrow("REVIEW_BACKLOG");
+    const review = { outcome: "review-recorded", evidence: ref("independent-review") };
+    f.denied.add("independent_lifecycle_review");
+    expect(() => f.submit("review-disposition", "review-a", 4, review, 365, nextHead)).toThrow("independent_lifecycle_review");
+    f.denied.delete("independent_lifecycle_review");
+    f.submit("review-disposition", "review-a", 4, review, 365, nextHead);
+    expect(f.reopen().submit(claim, third).phase).toBe("claimed");
+    expect(f.reopen().submit(claim, third)).toEqual({ disposition: "duplicate", revision: 2, permit: null });
+  });
+
+  it("applies a one-slot goal limit without blocking another goal from using the spare slot", () => {
+    const f = fixture();
+    const a = f.prepare({ reviewLimit: 1 });
+    const b = f.prepare({ issueNumber: 366, fence: 2, target: "codex/second", resource: "second", reviewLimit: 1 });
+    const c = f.prepare({ issueNumber: 367, fence: 3, target: "codex/third", resource: "third", goalIssue: 363 });
+    f.submit("prepare", "a", 0, a);
+    f.submit("prepare", "b", 0, b, 366);
+    f.submit("claim", "writer-a", 1, f.started(a));
+    const second = f.started(b);
+    expect(() => f.submit("claim", "writer-b", 1, second, 366)).toThrow("REVIEW_BACKLOG");
+    const first = f.publication(a, "push-a");
+    f.submit("begin-checkpoint", "push-a", 2, first.candidate);
+    f.submit("reconcile", "published-a", 3, first.result);
+    expect(() => f.submit("claim", "writer-b", 1, second, 366)).toThrow("REVIEW_BACKLOG");
+    f.submit("prepare", "c", 0, c, 367);
+    expect(f.submit("claim", "writer-c", 1, f.started(c), 367).phase).toBe("claimed");
+    f.submit("review-disposition", "review-a", 4, { outcome: "review-recorded", evidence: ref("review") }, 365, nextHead);
+    expect(f.submit("claim", "writer-b", 1, second, 366).phase).toBe("claimed");
+  });
+
+  it("requires a matching authenticated GF-05 start and retains ownership and liability through stop and reconciliation", () => {
+    const f = fixture({ realResources: true });
+    const resources = f.resourceLedger;
+    const input = f.prepare();
+    f.submit("prepare", "prepare", 0, input);
+    const started = f.started(input);
+    const run = { reservation_id: input.budget.id, native_run_id: started.native_run_id, actual, evidence: ref("start") };
+    const claim = f.event("claim", "first-mutation", 1, started);
+    expect(() => f.ledger.submit(claim, started)).toThrow("LIFECYCLE_ACTIVE_RUN");
+    expect(resources.begin("launch-intent", run.reservation_id).disposition).toBe("committed");
+    expect(resources.begin("launch-intent", run.reservation_id).disposition).toBe("duplicate");
+    expect(resources.lookup(run.reservation_id).status).toBe("ambiguous");
+    expect(() => f.reopen().submit(claim, started)).toThrow("LIFECYCLE_ACTIVE_RUN");
+    f.denied.add("resource_start_ack");
+    expect(() => resources.started("started", run)).toThrow("resource_start_ack");
+    f.denied.delete("resource_start_ack");
+    resources.started("started", run);
+    expect(resources.started("started", run).disposition).toBe("duplicate");
+    expect(() => f.submit("claim", "wrong-run", 1, { ...started, native_run_id: "different-run" })).toThrow("LIFECYCLE_ACTIVE_RUN");
+    expect(() => f.submit("claim", "wrong-budget", 1, { ...started, budget: ref("different-budget") })).toThrow("LIFECYCLE_RESERVATION");
+    expect(() => f.submit("claim", "wrong-session", 1, { ...started, observation: { ...input.observation,
+      receipt: { ...input.observation.receipt, authorization_id: "different-session" } } })).toThrow("lifecycle_active_run_binding");
+    expect(f.ledger.submit(claim, started)).toMatchObject({ phase: "claimed", revision: 2 });
+    expect(f.reopen().submit(claim, started)).toEqual({ disposition: "duplicate", revision: 2, permit: null });
+    const writer = { repository, issue: 365, fence: 1, authorization_id: "grant-1", native_run_id: run.native_run_id,
+      paths: [primary], evidence: ref("scoped-mutation") };
+    expect(f.reopen().assertWriter(writer)).toBe(true);
+    expect(() => f.ledger.assertWriter({ ...writer, native_run_id: "different-run" })).toThrow("STALE_WRITER_RUN");
+    expect(() => f.ledger.assertWriter({ ...writer, paths: [sibling] })).toThrow("WRITER_SCOPE");
+    f.denied.add("live_budget_reservation");
+    expect(() => f.ledger.assertWriter(writer)).toThrow("live_budget_reservation");
+    f.denied.delete("live_budget_reservation");
+    f.denied.add("lifecycle_active_run_binding");
+    expect(() => f.ledger.assertWriter(writer)).toThrow("lifecycle_active_run_binding");
+    f.denied.delete("lifecycle_active_run_binding");
+
+    const mismatch = f.prepare({ issueNumber: 366, fence: 2, target: "codex/mismatch", resource: "mismatch" });
+    f.submit("prepare", "prepare-mismatch", 0, mismatch, 366);
+    const mismatched = f.started(mismatch);
+    resources.begin("begin-mismatch", mismatch.budget.id);
+    resources.started("start-mismatch", { ...run, reservation_id: mismatch.budget.id, native_run_id: mismatched.native_run_id,
+      actual: { ...actual, model: "different-model" } });
+    expect(resources.lookup(mismatch.budget.id)).toMatchObject({ status: "stop_requested", actual_profile_status: "mismatch" });
+    expect(() => f.submit("claim", "mismatch", 1, mismatched, 366)).toThrow("LIFECYCLE_ACTIVE_RUN");
+
+    const expiring = f.prepare({ issueNumber: 367, fence: 3, target: "codex/expiring", resource: "expiring", expires: 4 });
+    f.submit("prepare", "prepare-expiring", 0, expiring, 367);
+    const expiringRun = f.started(expiring);
+    resources.begin("begin-expiring", expiring.budget.id);
+    resources.started("start-expiring", { ...run, reservation_id: expiring.budget.id, native_run_id: expiringRun.native_run_id });
+    f.time(4);
+    expect(resources.lookup(expiring.budget.id).status).toBe("started");
+    expect(() => f.submit("claim", "expired", 1, expiringRun, 367)).toThrow("LIFECYCLE_RESERVATION");
+
+    resources.requestStop("request-stop", run.reservation_id);
+    expect(() => f.ledger.assertWriter(writer)).toThrow("LIFECYCLE_ACTIVE_RUN");
+    expect(f.ledger.inspect(repository, 365)).toMatchObject({ phase: "claimed", budget: input.budget, fence: 1 });
+    const terminal = { reservation_id: run.reservation_id, native_run_id: run.native_run_id, outcome: "stopped", evidence: ref("native-stop") };
+    resources.terminal("terminal", terminal);
+    expect(() => f.ledger.assertWriter(writer)).toThrow("LIFECYCLE_ACTIVE_RUN");
+    const publication = f.publication(input, "push");
+    f.submit("begin-checkpoint", "push", 2, publication.candidate);
+    const reconcile = f.event("reconcile", "late-publication", 3, publication.result);
+    expect(f.reopen().submit(reconcile, publication.result).phase).toBe("published");
+    expect(f.reopen().submit(reconcile, publication.result)).toEqual({ disposition: "duplicate", revision: 4, permit: null });
+    expect(f.reopen().submit(claim, started).permit).toBeNull();
+    expect(() => f.submit("acknowledge-stop", "late-stop", 4, publication.result, 365, nextHead)).toThrow("STALE_WRITER");
+    expect(() => f.ledger.assertWriter(writer)).toThrow("STALE_WRITER");
+    expect(resources.terminal("terminal", terminal).disposition).toBe("duplicate");
+    expect(() => resources.terminal("late-terminal", terminal)).toThrow("TERMINAL_PROOF");
+    expect(resources.lookup(run.reservation_id)).toMatchObject({ status: "terminal", liability: 4, billed: null });
+    resources.settle("billing", { ...terminal, billed: 1 });
+    expect(resources.lookup(run.reservation_id)).toMatchObject({ status: "terminal", liability: 1, billed: 1 });
+  });
+
   it("authenticates preparation, deduplicates exact events, and leaves status outside control authority", () => {
     const f = fixture();
     const input = f.prepare({ paths: scope });
@@ -178,7 +368,7 @@ describe("GF-V03, GF-V04, GF-V07 and GF-V23: supervised lifecycle", () => {
     expect(() => f.submit("claim", "wrong-head", 1, input, 365, nextHead)).toThrow("STALE_LIFECYCLE_EVENT");
     expect(() => f.submit("claim", "foreign", 1, { ...input, observation: { ...input.observation,
       receipt: { ...input.observation.receipt, owner: "foreign" } } })).toThrow("WORKSPACE_WRITER");
-    expect(f.submit("claim", "write", 1, input).phase).toBe("claimed");
+    expect(f.submit("claim", "write", 1, f.started(input)).phase).toBe("claimed");
     f.time(24 * 60 + 2);
     expect(() => f.ledger.submit({ ...f.event("claim", "expired", 2, input), observed_at: at(1) }, input)).toThrow("LIFECYCLE_EVENT");
   });
@@ -197,12 +387,15 @@ describe("GF-V03, GF-V04, GF-V07 and GF-V23: supervised lifecycle", () => {
     f.denied.delete("superseded_prepared_receipt");
     f.submit("prepare", "replacement", 1, replacement);
     expect(() => f.submit("claim", "stale", 2, a)).toThrow("STALE_PREPARATION");
-    f.submit("claim", "owner", 2, replacement);
+    const started = f.started(replacement);
+    f.submit("claim", "owner", 2, started);
     expect(() => f.reopen().submit(f.event("claim", "same-branch", 1, b, 366), b)).toThrow("WRITER_CONTENTION");
     expect(() => f.submit("claim", "same-resource", 1, unrelatedBranch, 367)).toThrow("WRITER_CONTENTION");
-    expect(() => f.ledger.assertWriter({ repository, issue: 365, fence: 1, authorization_id: "grant-1", paths: [primary], evidence: ref("scope") })).toThrow("STALE_WRITER");
-    expect(f.ledger.assertWriter({ repository, issue: 365, fence: 4, authorization_id: "grant-4", paths: [primary], evidence: ref("scope") })).toBe(true);
-    expect(() => f.ledger.assertWriter({ repository, issue: 365, fence: 4, authorization_id: "grant-4", paths: [sibling], evidence: ref("scope") })).toThrow("WRITER_SCOPE");
+    const writer = { repository, issue: 365, fence: 4, authorization_id: "grant-4", native_run_id: started.native_run_id,
+      paths: [primary], evidence: ref("scope") };
+    expect(() => f.ledger.assertWriter({ ...writer, fence: 1, authorization_id: "grant-1" })).toThrow("STALE_WRITER");
+    expect(f.ledger.assertWriter(writer)).toBe(true);
+    expect(() => f.ledger.assertWriter({ ...writer, paths: [sibling] })).toThrow("WRITER_SCOPE");
   });
 
   it("retains the fence and budget after failed push, pauses reads, and reconciles a late exact checkpoint", () => {
@@ -307,7 +500,7 @@ describe("GF-V05 and GF-V14: closed-turn correction and bounded repair", () => {
     const expanded = f.prepare({ fence: 2, taskRevision: 2, paths: scope, issueBody: updated, attempt: "continuation" });
     f.submit("resume", "fresh-expanded", 8, expanded);
     expect(() => f.submit("begin-correction", "prepared-edit", 9, correction)).toThrow("CORRECTION_CLOSED_TURN_REQUIRED");
-    f.submit("claim", "new-writer", 9, expanded);
+    f.submit("claim", "new-writer", 9, f.started(expanded));
     expect(() => f.submit("begin-correction", "active-edit", 10, correction)).toThrow("LIVE_OR_PENDING_GRANT");
     f.submit("acknowledge-stop", "close-expanded", 10, f.withContext({ ...stop, fence: 2, workspace: expanded.workspace,
       observation: { ...expanded.observation, receipt: { ...expanded.observation.receipt, status: "closed" } } }, 2));
@@ -318,8 +511,10 @@ describe("GF-V05 and GF-V14: closed-turn correction and bounded repair", () => {
       issue: { ...expanded.issue, body: narrowedBody } });
     const narrowed = f.prepare({ fence: 3, taskRevision: 3, issueBody: narrowedBody, attempt: "continuation" });
     f.submit("resume", "fresh-narrow", 13, narrowed);
-    f.submit("claim", "narrow-writer", 14, narrowed);
-    expect(() => f.ledger.assertWriter({ repository, issue: 365, fence: 3, authorization_id: "grant-3", paths: [sibling], evidence: ref("old-path") })).toThrow("WRITER_SCOPE");
+    const started = f.started(narrowed);
+    f.submit("claim", "narrow-writer", 14, started);
+    expect(() => f.ledger.assertWriter({ repository, issue: 365, fence: 3, authorization_id: "grant-3",
+      native_run_id: started.native_run_id, paths: [sibling], evidence: ref("old-path") })).toThrow("WRITER_SCOPE");
   });
 
   it("freezes admission while settling active work and requires the full audit before two repairs and one reassessment", () => {
@@ -338,11 +533,11 @@ describe("GF-V05 and GF-V14: closed-turn correction and bounded repair", () => {
     expect(() => f.submit("resume", "incomplete-audit", 4, repair)).toThrow("affected_contract_and_sibling_audit");
     f.denied.delete("affected_contract_and_sibling_audit");
     f.submit("resume", "repair-one", 4, repair);
-    f.submit("claim", "claim-first-repair", 5, repair);
+    f.submit("claim", "claim-first-repair", 5, f.started(repair));
     f.submit("acknowledge-stop", "close-repair-one", 6, finish(repair));
     const second = f.prepare({ fence: 4, attempt: "repair" });
     f.submit("resume", "repair-two", 7, second);
-    f.submit("claim", "claim-second-repair", 8, second);
+    f.submit("claim", "claim-second-repair", 8, f.started(second));
     f.submit("acknowledge-stop", "close-repair-two", 9, finish(second));
     expect(() => f.submit("record-blocker", "renamed", 10, { root: "new-name", evidence: ref("old-root") })).toThrow("NEW_ROOT_REQUIRES_REVIEW");
     expect(() => f.submit("resume", "third-repair", 10, f.prepare({ fence: 5, attempt: "repair" }))).toThrow("REPAIR_LINEAGE_LIMIT");

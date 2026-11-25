@@ -81,27 +81,39 @@ function permitAdmission(state, task, verify, now) {
   const held = state.tasks.filter((prior) => ['claimed', 'checkpoint-pending'].includes(prior.phase));
   requireResource(held.length < 2 && held.every((prior) => branchIdentity(prior) !== branchIdentity(task)
     && prior.resource !== task.resource) && held.filter(sameGoal).length < task.writer_limit, 'WRITER_CONTENTION');
-  const awaiting = state.tasks.filter((prior) => prior.phase === 'published');
-  requireResource(awaiting.length < 2 && awaiting.filter(sameGoal).length < task.review_limit, 'REVIEW_BACKLOG');
+  // An admitted writer already holds the review slot its checkpoint may need.
+  const occupied = held.concat(state.tasks.filter((prior) => prior.phase === 'published'));
+  requireResource(occupied.length < 2 && occupied.filter(sameGoal).length < task.review_limit, 'REVIEW_BACKLOG');
   requireResource(state.tasks.every((prior) => prior.intent?.kind !== 'correction'
     || (branchIdentity(prior) !== branchIdentity(task) && prior.resource !== task.resource)),
     'CORRECTION_IN_FLIGHT');
 }
 
-function checkReservation(input, task, host) {
-  resourceRef(input.budget);
-  const run = host.resources.lookup(input.budget.id);
+function checkReservation(task, host) {
+  resourceRef(task.budget);
+  const run = host.resources.lookup(task.budget.id);
   const reservation = run.reservation;
-  requireResource(run.status === 'reserved' && digest(reservation) === input.budget.digest
+  // GF-05 keeps the admitted reservation immutable and exposes run state separately.
+  requireResource(reservation.id === task.budget.id && digest(reservation) === task.budget.digest
     && ['repository', 'goal_issue', 'goal_revision', 'goal_control_digest', 'task_issue', 'lineage_id'].every((key) =>
       task[key] === reservation[key]) && reservation.task_revision === task.task_revision && reservation.risk === task.risk
-    && reservationDisposition(reservation, host) === 'eligible_for_admission', 'LIFECYCLE_RESERVATION');
+    && reservationDisposition(reservation, host) === 'eligible_for_admission'
+    && resourceTime(host.now) < resourceTime(reservation.limits.execution_deadline), 'LIFECYCLE_RESERVATION');
   const { limits } = reservation;
   const policy = task.budget_policy;
   requireResource(['pool_id', 'account_scope', 'unit'].every((key) => limits[key] === policy[key])
     && ['account_ceiling', 'goal_ceiling', 'task_ceiling', 'max_model_calls', 'max_continuations'].every((key) => limits[key] <= policy[key])
     && limits.account_epoch >= policy.account_epoch && limits.cleanup_reserve >= policy.cleanup_reserve
     && resourceTime(limits.execution_deadline) <= resourceTime(policy.execution_deadline), 'LIFECYCLE_BUDGET_POLICY');
+  return run;
+}
+
+function checkActiveRun(task, workspace, nativeRunId, host) {
+  const run = checkReservation(task, host);
+  requireResource(typeof nativeRunId === 'string' && identifier.test(nativeRunId)
+    && run.status === 'started' && run.native_run_id === nativeRunId
+    && run.actual_profile_status === 'matches', 'LIFECYCLE_ACTIVE_RUN');
+  resourceAttest(host.verify, 'lifecycle_active_run_binding', { task, workspace, run, now: host.now });
 }
 
 function planPreparation(state, event, input, prior, host) {
@@ -140,7 +152,7 @@ function planPreparation(state, event, input, prior, host) {
     checkpoint: prior?.checkpoint ?? null, repair: prior?.repair ?? null };
   permitAdmission(state, task, verify, now);
   resourceAttest(verify, 'lifecycle_logical_resource', task);
-  checkReservation(input, task, host);
+  requireResource(checkReservation(task, host).status === 'reserved', 'LIFECYCLE_RESERVATION');
   if (event.kind === 'resume') {
     resourceAttest(verify, 'fresh_turn_from_checkpoint', { task, prior, proof: input.workspace.ready_proof });
   }
@@ -158,15 +170,18 @@ function claim(state, event, input, task, host) {
   const auth = reviewPreparation(taskIdentity(event), input, host);
   requireResource(auth.issueBodyDigest === task.body_digest && auth.census_digest === task.census_digest
     && auth.parser_digest === task.parser_digest && auth.parser_revision === task.parser_revision, 'PREPARED_AUTHORITY_CHANGED');
-  checkReservation({ budget: task.budget }, task, host);
+  resourceRef(input.budget);
+  requireResource(input.budget.id === task.budget.id && input.budget.digest === task.budget.digest, 'LIFECYCLE_RESERVATION');
   requireResource(!state.budgets.includes(task.budget.id), 'RESERVATION_ALREADY_CLAIMED');
   const workspace = reviewWorkspace(input.workspace, input.observation, input.remote, task,
     { verify, phase: 'claim', paths: task.required_paths, taskKind: task.task_kind });
   requireResource(['environment', 'directory', 'owner'].every((key) => workspace[key] === task.workspace[key])
     && workspace.authorization_id !== null, 'PREPARED_WORKSPACE_CHANGED');
+  const native_run_id = input.native_run_id;
+  checkActiveRun(task, workspace, native_run_id, host);
   resourceAttest(verify, 'first_mutation_fence', { task, workspace, event });
   state.budgets.push(task.budget.id);
-  return { ...task, phase: 'claimed', workspace, authorization_id: workspace.authorization_id };
+  return { ...task, phase: 'claimed', workspace, authorization_id: workspace.authorization_id, native_run_id };
 }
 
 function correction(task, input, host) {
@@ -446,13 +461,18 @@ export function openLifecycle({ directory, ledgerId, initialize = false, verify,
     inspect(repository, issue) {
       return load(directory, ledgerId).tasks.find((task) => task.repository === repository && task.task_issue === issue) ?? null;
     },
-    assertWriter({ repository, issue, fence, authorization_id, paths, evidence }) {
+    assertWriter({ repository, issue, fence, authorization_id, native_run_id, paths, evidence }) {
       resourceRef(evidence);
       return transaction(() => {
-        const task = load(directory, ledgerId).tasks.find((record) => record.repository === repository && record.task_issue === issue);
+        const state = load(directory, ledgerId);
+        const task = state.tasks.find((record) => record.repository === repository && record.task_issue === issue);
         requireWriter(task, { fence, authorization_id });
+        requireResource(native_run_id === task.native_run_id, 'STALE_WRITER_RUN');
         requireResource(Array.isArray(paths) && paths.length > 0 && paths.length <= 128
           && paths.every((path) => task.required_paths.includes(path)), 'WRITER_SCOPE');
+        const now = clock();
+        requireResource(resourceTime(now) >= state.now, 'LIFECYCLE_CLOCK_ROLLBACK');
+        checkActiveRun(task, task.workspace, native_run_id, { verify, now, resources });
         resourceAttest(verify, 'live_writer_mutation_boundary', { task, paths, evidence });
         resolveScopedPaths(task.workspace.directory, paths, task.task_kind);
         return true;
