@@ -105,15 +105,12 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=2048
         run: |
           set -euo pipefail
-          export PFM_HOUSEHOLD_OUTPUT="$PWD/engineering-validation-artifacts/household"
-          export PLAYWRIGHT_JSON_OUTPUT_FILE="$PFM_HOUSEHOLD_OUTPUT/report.json"
-          printf '{"node":"%s","workers":1,"max_node_heap_mib":2048,"deadline_seconds":300,"process_limit":256,"file_limit_blocks":8192}\n' \
-            "$(node --version)" > "$PFM_HOUSEHOLD_OUTPUT/resources.json"
-          ulimit -u 256
-          ulimit -f 8192
-          /usr/bin/time -v -o "$PFM_HOUSEHOLD_OUTPUT/resources.txt" \
-            timeout --kill-after=10s 300s node node_modules/@playwright/test/cli.js test \
-              --workers=1 --retries=0 --trace=off --reporter=line,json
+          # RLIMIT_NPROC counts runner-user threads as well as processes on Linux.
+          ulimit -u 512
+          export PFM_HOUSEHOLD_PROCESS_LIMIT="$(ulimit -u)"
+          output="$PWD/engineering-validation-artifacts/household"
+          /usr/bin/time -v -o "$output/resources.txt" \
+            timeout --kill-after=10s 310s node tools/ci/goal-framework-evidence.mjs household-run "$output"
       - name: Check bounded upload size
         id: artifact-size
         if: always()

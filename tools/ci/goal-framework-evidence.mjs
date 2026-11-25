@@ -1,5 +1,10 @@
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { open, writeFile } from 'node:fs/promises';
+import { constants, statfsSync } from 'node:fs';
+import { mkdtemp, open, rename, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { setTimeout as pause } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { crc32, inflateRawSync } from 'node:zlib';
 import { digest, inspectV3Body, validateRecord } from '../codex/goal-framework/contracts.mjs';
@@ -16,6 +21,13 @@ const workflowEvents = new Map([
   ['.github/workflows/engineering-validation.yml', 'workflow_dispatch'],
 ]);
 const householdRunTitle = 'engineering-validation / household-readiness';
+const householdLimits = Object.freeze({
+  deadlineMs: 300_000, readinessMs: 120_000, diskBytes: 4 * 1024 ** 3, artifactBytes: 12 * 1024 ** 2,
+  files: 12, retentionMs: 7 * 86_400_000, logBytes: 32 * 1024,
+});
+const householdCaptures = ['progress.jsonl', 'report.json', 'guided-trace.zip', 'guided-desktop.png', 'guided-mobile-200.png'];
+const householdReasons = ['running', 'browser-exit', 'server-startup-exit', 'server-exit', 'readiness-timeout',
+  'deadline', 'disk-budget', 'interrupted', 'supervisor-error'];
 const otherManualTitles = new Set(['performance', 'forecast-scaling', 'stochastic', 'onboarding', 'provider']
   .map((profile) => 'engineering-validation / ' + profile));
 const limits = Object.freeze({
@@ -334,7 +346,7 @@ function validateSelection(input) {
       }
       if (check.job === 'household-readiness') {
         requireEvidence(check.id === 'household-readiness' && check.artifact_required && check.artifact === 'household-readiness-{run}-{attempt}' &&
-          ['inventory.json', 'report.json', 'resources.json', 'resources.txt', 'guided-desktop.png',
+          ['inventory.json', 'execution.json', 'server.log', 'progress.jsonl', 'report.json', 'resources.json', 'resources.txt', 'guided-desktop.png',
             'guided-mobile-200.png', 'guided-trace.zip'].every((file) => check.files?.includes(file)),
         'HOUSEHOLD_ARTIFACT_PLAN');
       }
@@ -461,10 +473,147 @@ function unitFailureLog(bytes) {
   return failures;
 }
 
-function inspectTestEvidence(check, json, runnerLog, candidate, run, witnesses, ref) {
+function inspectHouseholdExecution(execution, candidate, run, ref, files) {
+  if (!execution) return { reason: 'missing', outcome: 'INCOMPLETE' };
+  requireEvidence(execution.schema === 1 && execution.sha === candidate.merge_candidate_sha &&
+    String(execution.attempt) === String(run.run_attempt) && String(execution.run_id) === String(run.id) &&
+    execution.ref === ref && Number.isSafeInteger(execution.elapsed_ms) && execution.elapsed_ms >= 0 &&
+    householdReasons.includes(execution.reason) && typeof execution.ready === 'boolean', 'MANUAL_EXECUTION_IDENTITY');
+  const { reason, ready, elapsed_ms } = execution;
+  if (reason === 'running') return { reason, ready, elapsed_ms, outcome: 'INCOMPLETE' };
+  const processResult = (value) => value === null || (knownFields(value, ['exit', 'signal', 'spawn_error']) &&
+    ((Number.isInteger(value.exit) && value.exit >= 0 && value.exit <= 255 && value.signal === null && value.spawn_error === null) ||
+      (value.exit === null && /^SIG[A-Z0-9]{1,12}$/.test(value.signal) && value.spawn_error === null) ||
+      (value.exit === null && value.signal === null && /^[A-Z0-9_]{1,40}$/.test(value.spawn_error))));
+  const { server, browser, cleanup, terminated, log_truncated, captures } = execution;
+  requireEvidence(processResult(server) && processResult(browser) &&
+    knownFields(terminated, ['server', 'browser']) && processResult(terminated.server) && processResult(terminated.browser) &&
+    ['stopped', 'incomplete'].includes(cleanup) && typeof log_truncated === 'boolean' &&
+    knownFields(captures, householdCaptures) && householdCaptures.every((name) =>
+      ['retained', 'missing', 'truncated', 'invalid'].includes(captures[name]) &&
+      (captures[name] === 'retained') === files.some((file) => file.name === name && file.size > 0)) &&
+    (reason !== 'browser-exit' || (ready && browser && !server)) &&
+    (reason !== 'server-startup-exit' || (!ready && server)) &&
+    (reason !== 'server-exit' || (ready && server)) &&
+    (reason !== 'readiness-timeout' || !ready), 'MANUAL_EXECUTION_RECORD');
+  const outcome = reason === 'deadline' || reason === 'readiness-timeout' ? 'TIMEOUT' :
+    ['server-startup-exit', 'server-exit'].includes(reason) || (reason === 'browser-exit' && browser.exit !== 0) ? 'FAIL' :
+      reason === 'browser-exit' && cleanup === 'stopped' && terminated.server && !log_truncated &&
+        Object.values(captures).every((value) => value === 'retained') ? 'PASS' : 'INCOMPLETE';
+  return { reason, ready, elapsed_ms, server, browser, terminated, cleanup, log_truncated, captures, outcome };
+}
+
+function householdProgress(bytes, selected) {
+  const events = new Map();
+  if (!bytes) return events;
+  requireEvidence(bytes.length <= householdLimits.logBytes, 'MANUAL_PROGRESS_LIMIT');
+  const lines = bytes.toString('utf8').split('\n');
+  lines.pop(); // An interruption can leave the final write incomplete.
+  requireEvidence(lines.length <= 64, 'MANUAL_PROGRESS_LIMIT');
+  for (const line of lines) {
+    const { phase, id, attempt, status, ids } = parseEvidenceJson(Buffer.from(line));
+    if (phase === 'inventory') {
+      requireEvidence(Array.isArray(ids) && ids.length === selected.length &&
+        unique(ids) && ids.every((item) => selected.some(({ id }) => id === item)), 'MANUAL_PROGRESS_INVENTORY');
+      continue;
+    }
+    if (phase === 'error') continue;
+    requireEvidence(selected.some((item) => item.id === id) && Number.isSafeInteger(attempt) && attempt >= 0 &&
+      (phase === 'start' || (phase === 'end' && ['passed', 'failed', 'timedOut', 'skipped', 'interrupted'].includes(status))),
+    'MANUAL_PROGRESS_EVENT');
+    if (!events.has(id)) events.set(id, new Map());
+    const attempts = events.get(id);
+    requireEvidence(!attempts.get(attempt), 'MANUAL_PROGRESS_EVENT');
+    attempts.set(attempt, phase === 'end' ? status : null);
+  }
+  return events;
+}
+
+function inspectHouseholdEvidence(json, files, progressBytes, candidate, run, witnesses, ref) {
+  const inventory = json.get('inventory.json');
+  requireEvidence(inventory?.sha === candidate.merge_candidate_sha &&
+    String(inventory.attempt) === String(run.run_attempt) && String(inventory.run_id) === String(run.id) &&
+    inventory.ref === ref && validOrdinaryBrowserCount(inventory.ordinary_count) &&
+    typeof inventory.ordinary_digest === 'string' && hash.test(inventory.ordinary_digest) &&
+    inventory.ux_count > inventory.ordinary_count && hash.test(inventory.ux_digest) &&
+    Array.isArray(inventory.manual) && inventory.manual.length === 4 && unique(inventory.manual), 'MANUAL_INVENTORY');
+  const selected = inventory.manual.map((id) => {
+    const title = typeof id === 'string' && id.startsWith(manualFile) &&
+      /^\d+:\d+ › (.{1,512})$/.exec(id.slice(manualFile.length))?.[1];
+    const key = title && caseKey(manualFile.slice(0, -1), title);
+    requireEvidence(key && witnesses.has(key), 'MANUAL_TEST_COVERAGE');
+    return { id, key };
+  });
+  requireEvidence(unique(selected.map(({ key }) => key)), 'MANUAL_TEST_COVERAGE');
+  const execution = inspectHouseholdExecution(json.get('execution.json'), candidate, run, ref, files);
+  const progress = householdProgress(progressBytes, selected);
+  const report = json.get('report.json');
+  validateBrowserPaths(report);
+  if (report?.config) report.config.rootDir = root + '/e2e';
+  const tests = playwrightResults(report);
+  requireEvidence(unique(tests.map(({ id }) => id)) &&
+    tests.every(({ id }) => selected.some((item) => item.id === id)), 'MANUAL_TEST_COVERAGE');
+  const failures = [];
+  const resultOutcome = (status) => ({ failed: 'FAIL', timedOut: 'TIMEOUT', skipped: 'SKIP', passed: 'PASS' })[status] ?? 'INCOMPLETE';
+  const retain = (test_digest, attempt, outcome, reason) => {
+    requireEvidence(failures.length < 128 && Number.isSafeInteger(attempt) && attempt >= 0, 'TEST_FAILURE_LIMIT');
+    failures.push({ test_digest, attempt, outcome, reason });
+  };
+  const case_dispositions = selected.map(({ id }) => {
+    const test = tests.find((item) => item.id === id)?.test;
+    const results = test?.results ?? [];
+    const test_digest = bytesDigest(id);
+    const attempts = progress.get(id);
+    for (const [attempt, status] of attempts ?? []) {
+      if (status !== 'passed' && !results.some((result) => result.retry === attempt)) {
+        retain(test_digest, attempt, resultOutcome(status), status ? 'progress-' + status : 'case-interrupted');
+      }
+    }
+    for (const result of results) {
+      if (result.status === 'passed') continue;
+      const errors = [...(result.errors ?? []), result.error].map((error) => error?.message ?? '');
+      const connection = errors.some((message) => /net::ERR_CONNECTION_(?:RESET|REFUSED|CLOSED)/.test(message));
+      const assertion = errors.some((message) => /\bexpect\(|\bAssertionError\b/.test(message));
+      const reason = assertion ? 'assertion' : connection ? 'server-connection' : result.status === 'failed' ? 'case-failure' :
+        result.status === 'timedOut' ? 'case-timeout' : result.status === 'skipped' ? 'case-skipped' : 'case-interrupted';
+      retain(test_digest, result.retry, resultOutcome(result.status), reason);
+    }
+    const failed = failures.filter((failure) => failure.test_digest === test_digest);
+    if (failed.length) {
+      const outcome = worst(failed.map((failure) => failure.outcome));
+      return { test_digest, outcome, reason: failed.find((failure) => failure.outcome === outcome).reason };
+    }
+    if (!results.length) {
+      return attempts?.size === 1 && attempts.get(0) === 'passed' ? { test_digest, outcome: 'PASS', reason: 'progress-passed' } :
+        { test_digest, outcome: 'INCOMPLETE', reason: 'unrun' };
+    }
+    const passed = test.status === 'expected' && test.expectedStatus === 'passed' &&
+      results.length === 1 && results[0].retry === 0 && results[0].status === 'passed';
+    return { test_digest, outcome: passed ? 'PASS' : 'INCOMPLETE', reason: passed ? 'completed' : 'unexpected-result' };
+  });
+  const valid = validatePlaywright(report, selected) && selected.every(({ id }) => {
+    const attempts = progress.get(id);
+    return attempts?.size === 1 && attempts.get(0) === 'passed';
+  });
+  const outcome = worst([execution.outcome, valid ? 'PASS' : 'INCOMPLETE', ...case_dispositions.map((item) => item.outcome)]);
+  return { execution, case_dispositions, failures, outcome,
+    ...(execution.outcome === 'TIMEOUT' ? { runner_outcome: 'TIMEOUT' } : {}),
+    ordinary_inventory: { count: inventory.ordinary_count, digest: inventory.ordinary_digest },
+    witness_cases: outcome === 'PASS' ? selected.map(({ key, id }) => ({ key, test_digest: bytesDigest(id) })) : [] };
+}
+
+function validateBrowserPaths(report) {
+  const suites = [...(report?.suites ?? [])];
+  while (suites.length) {
+    const suite = suites.pop();
+    requireEvidence((suite.specs ?? []).every(({ file }) => safePath(file)), 'BROWSER_REPORT_PATH');
+    suites.push(...(suite.suites ?? []));
+  }
+}
+
+function inspectTestEvidence(check, json, runnerLog, candidate, run, witnesses) {
   const shard = check.job.match(shardJob);
-  const manual = check.job === 'household-readiness';
-  if (!shard && !manual) return {};
+  if (!shard) return {};
   const report = json.get('report.json');
   const execution = json.get('execution.json');
   let selected;
@@ -519,12 +668,7 @@ function inspectTestEvidence(check, json, runnerLog, candidate, run, witnesses, 
       }
     }
   } else {
-    const suites = [...(report?.suites ?? [])];
-    while (suites.length) {
-      const suite = suites.pop();
-      requireEvidence((suite.specs ?? []).every(({ file }) => safePath(file)), 'BROWSER_REPORT_PATH');
-      suites.push(...(suite.suites ?? []));
-    }
+    validateBrowserPaths(report);
     if (report?.config) report.config.rootDir = root + '/e2e';
     valid = validatePlaywright(report, selected);
     const tests = playwrightResults(report);
@@ -537,19 +681,6 @@ function inspectTestEvidence(check, json, runnerLog, candidate, run, witnesses, 
         if (result.status !== 'passed') retain(id, result.retry,
           ({ failed: 'FAIL', timedOut: 'TIMEOUT', skipped: 'SKIP' })[result.status] ?? 'INCOMPLETE');
       }
-    }
-    if (manual) {
-      const inventory = json.get('inventory.json');
-      requireEvidence(inventory?.sha === candidate.merge_candidate_sha &&
-        String(inventory.attempt) === String(run.run_attempt) && String(inventory.run_id) === String(run.id) &&
-        inventory.ref === ref && validOrdinaryBrowserCount(inventory.ordinary_count) &&
-        typeof inventory.ordinary_digest === 'string' && hash.test(inventory.ordinary_digest) &&
-        inventory.ux_count > inventory.ordinary_count && hash.test(inventory.ux_digest) &&
-        Array.isArray(inventory.manual), 'MANUAL_INVENTORY');
-      requireEvidence(inventory.manual.length === 4 && unique(inventory.manual) &&
-        tests.length === inventory.manual.length && tests.every(({ id }) => inventory.manual.includes(id)) &&
-        cases.every(({ key, id }) => id.startsWith(manualFile) && witnesses.has(key)), 'MANUAL_TEST_COVERAGE');
-      ordinary_inventory = { count: inventory.ordinary_count, digest: inventory.ordinary_digest };
     }
   }
   const result = worst(failures.map(({ outcome: status }) => status));
@@ -572,9 +703,10 @@ async function artifactEvidence(provider, artifacts, name, run, repoId, now, bud
   const matching = artifacts.filter((artifact) => artifact.name === name);
   requireEvidence(matching.length === 1, 'ARTIFACT_MISSING_OR_DUPLICATE');
   const artifact = matching[0];
+  const manual = check.job === 'household-readiness';
   const expires = Date.parse(artifact.expires_at), created = Date.parse(artifact.created_at);
   requireEvidence(artifact.expired === false && created <= now && expires > now && expires > created &&
-    expires - created <= limits.retentionMs + 1000 && positive(artifact.id) &&
+    expires - created <= (manual ? householdLimits.retentionMs : limits.retentionMs) + 1000 && positive(artifact.id) &&
     positive(artifact.size_in_bytes) && artifact.size_in_bytes <= limits.archiveBytes &&
     typeof artifact.digest === 'string' && /^sha256:[a-f0-9]{64}$/.test(artifact.digest) &&
     artifact.workflow_run?.id === run.id && artifact.workflow_run.repository_id === repoId &&
@@ -585,12 +717,17 @@ async function artifactEvidence(provider, artifacts, name, run, repoId, now, bud
   const wanted = new Set(['execution.json', 'assignment.json', 'report.json', 'inventory.json', 'resources.json']);
   const json = new Map();
   let runnerLog;
-  const { files, unpacked } = inspectEvidenceZip(zip, Math.min(budget.remaining, limits.unpackedBytes), (path, data) => {
+  let progress;
+  const { files, unpacked } = inspectEvidenceZip(zip,
+    Math.min(budget.remaining, manual ? householdLimits.artifactBytes : limits.unpackedBytes), (path, data) => {
     if (wanted.has(path)) json.set(path, data);
   }, (path, bytes) => {
     if (path === 'runner.log' && check.job.startsWith('unit (shard ')) runnerLog = bytes;
+    if (path === 'progress.jsonl' && manual) progress = bytes;
   }, (size) => { budget.remaining -= size; });
-  const tests = inspectTestEvidence(check, json, runnerLog, candidate, run, witnesses, ref);
+  if (manual) requireEvidence(files.length <= householdLimits.files, 'MANUAL_FILE_LIMIT');
+  const tests = manual ? inspectHouseholdEvidence(json, files, progress, candidate, run, witnesses, ref) :
+    inspectTestEvidence(check, json, runnerLog, candidate, run, witnesses);
   const missing = (check.files ?? []).filter((path) => !files.some(({ name, size }) => name === path && size > 0));
   return {
     id: 'github-artifact:' + artifact.id, digest: checksum, expires_at: artifact.expires_at,
@@ -730,6 +867,7 @@ async function inspectRun(provider, original, workflow, planned, candidate, pull
           // Legacy shard names are overwritten across attempts. They can
           // identify a single attempt only when there was no rerun.
           try {
+            requireEvidence(job.name !== 'household-readiness' || result.checkout, 'MANUAL_CHECKOUT_UNVERIFIED');
             requireEvidence(selected.artifact.includes('{attempt}') || original.run_attempt === 1, 'ARTIFACT_ATTEMPT_UNKNOWN');
             artifacts ??= await provider.list(root + '/artifacts', 'artifacts');
             requireEvidence(unique(artifacts.map(({ id }) => id)), 'DUPLICATE_ARTIFACT_ID');
@@ -1017,6 +1155,7 @@ export function browserInventory(ordinary, manual, ux) {
   };
   const normal = ids(ordinary), profile = ids(manual), optIn = ids(ux);
   requireEvidence(validOrdinaryBrowserCount(normal.length), 'BROWSER_INVENTORY_LIMIT');
+  requireEvidence(profile.length === 4, 'MANUAL_DISCOVERY_COUNT');
   requireEvidence(normal.every((id) => !id.includes(manualFile) && !id.includes(uxFile)) &&
     profile.every((id) => id.startsWith(manualFile)) &&
     optIn.every((id) => !id.includes(manualFile)) &&
@@ -1026,7 +1165,196 @@ export function browserInventory(ordinary, manual, ux) {
     ux_count: optIn.length, ux_digest: inventoryDigest(optIn), manual: profile };
 }
 
+// Use injected observations for deterministic checks of ordering and refusal.
+export async function watchHousehold({ launchServer, launchBrowser, probe, hasDisk, elapsed, interrupted, wait }) {
+  let server;
+  let browser;
+  for (;;) {
+    const stop = interrupted() ? 'interrupted' : elapsed() >= householdLimits.deadlineMs ? 'deadline' :
+      !hasDisk() ? 'disk-budget' : null;
+    if (stop) return stop;
+    server ??= launchServer();
+    if (server.result) return browser ? 'server-exit' : 'server-startup-exit';
+    if (browser?.result) return 'browser-exit';
+    if (!browser) {
+      if (elapsed() >= householdLimits.readinessMs) return 'readiness-timeout';
+      if (await probe()) {
+        if (server.result) return 'server-startup-exit';
+        if (interrupted() || elapsed() >= householdLimits.readinessMs || !hasDisk()) continue;
+        browser = launchBrowser();
+      }
+    }
+    await wait();
+  }
+}
+
+function launchHouseholdChild(args, env, serverLog) {
+  const child = spawn(process.execPath, args, { env, detached: true,
+    stdio: serverLog ? ['ignore', 'pipe', 'pipe'] : 'ignore' });
+  const state = { pid: child.pid, result: null };
+  child.once('error', (error) => {
+    state.result = { exit: null, signal: null, spawn_error: error.code ?? 'UNKNOWN' };
+  });
+  child.once('exit', (exit, signal) => { state.result = { exit, signal, spawn_error: null }; });
+  if (serverLog) {
+    for (const source of ['stdout', 'stderr']) {
+      child[source].on('data', (chunk) => {
+        const log = serverLog[source];
+        const remaining = householdLimits.logBytes - log.bytes.length;
+        if (chunk.length > remaining) log.truncated = true;
+        if (remaining > 0) log.bytes = Buffer.concat([log.bytes, chunk.subarray(0, remaining)]);
+      });
+    }
+  }
+  return state;
+}
+
+async function stopHouseholdChildren(children) {
+  const groups = children.flatMap((child) => child?.pid ? [-child.pid] : []);
+  const signal = (pid, name) => {
+    try { process.kill(pid, name); return true; }
+    catch (error) { if (error.code !== 'ESRCH') throw error; return false; }
+  };
+  for (const pid of groups) signal(pid, 'SIGTERM');
+  const end = performance.now() + 3000;
+  while (groups.some((pid) => signal(pid, 0)) && performance.now() < end) await pause(50);
+  for (const pid of groups) signal(pid, 'SIGKILL');
+  const reaped = performance.now() + 1000;
+  while (children.some((child) => child && !child.result) && performance.now() < reaped) await pause(50);
+  return children.every((child) => !child || Boolean(child.result));
+}
+
+// Retain only recognized operational messages. Never write raw Next output.
+function householdLog(logs) {
+  return Object.entries(logs).map(([source, { bytes, truncated }]) => {
+    const output = bytes.toString('utf8');
+    const markers = [
+      [/Ready in /, 'next-ready'], [/Starting\.\.\./, 'next-starting'], [/Compiling /, 'next-compiling'],
+      [/GET \/ 200/, 'home-http-200'], [/GET \/ 500/, 'home-http-500'],
+      [/heap out of memory/i, 'node-heap-exhaustion'], [/fatal error/i, 'fatal-error'],
+      [/SIG(?:KILL|TERM|ABRT|XFSZ)/, 'signal-reported'],
+      [/Error|error/, 'error-reported'],
+    ].filter(([pattern]) => pattern.test(output)).map(([, label]) => label);
+    const codes = [...new Set(output.match(/\b(?:EADDRINUSE|EACCES|EAGAIN|ENOSPC|EMFILE|ENOMEM|ERR_WORKER_OUT_OF_MEMORY|MODULE_NOT_FOUND)\b/g))];
+    return { source, captured_bytes: bytes.length, truncated, markers, codes };
+  });
+}
+
+async function stageHouseholdCaptures(scratch, output) {
+  // Reserve 64 KiB for the inventory, receipt, redacted log and resource records.
+  let budget = householdLimits.artifactBytes - 64 * 1024;
+  const captures = {};
+  for (const name of householdCaptures) {
+    let file;
+    try {
+      file = await open(join(scratch, name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      const stat = await file.stat();
+      requireEvidence(stat.isFile() && stat.size > 0, 'invalid');
+      const cap = Math.min(budget, name === 'progress.jsonl' ? householdLimits.logBytes : limits.fileBytes);
+      requireEvidence(stat.size <= cap, 'truncated');
+      const bytes = Buffer.alloc(stat.size + 1);
+      let length = 0;
+      while (length < bytes.length) {
+        const { bytesRead } = await file.read(bytes, length, bytes.length - length, null);
+        if (!bytesRead) break;
+        length += bytesRead;
+      }
+      requireEvidence(length === stat.size, 'truncated');
+      const capture = bytes.subarray(0, length);
+      if (name === 'report.json') parseEvidenceJson(capture);
+      await writeFile(join(output, name), capture, { flag: 'wx' });
+      budget -= capture.length;
+      captures[name] = 'retained';
+    } catch (error) {
+      captures[name] = error.code === 'ENOENT' ? 'missing' : codeOf(error) === 'truncated' ? 'truncated' : 'invalid';
+    } finally {
+      await file?.close();
+    }
+  }
+  return captures;
+}
+
+async function runHousehold(output) {
+  const start = performance.now();
+  const elapsed = () => Math.floor(performance.now() - start);
+  const identity = { sha: process.env.GITHUB_SHA, attempt: process.env.GITHUB_RUN_ATTEMPT,
+    run_id: process.env.GITHUB_RUN_ID, ref: process.env.GITHUB_REF };
+  const receipt = async (details) => {
+    const pending = join(output, 'execution.pending');
+    await writeFile(pending, JSON.stringify({ schema: 1, ...identity, elapsed_ms: elapsed(), ...details }));
+    await rename(pending, join(output, 'execution.json'));
+  };
+  const logs = { stdout: { bytes: Buffer.alloc(0), truncated: false }, stderr: { bytes: Buffer.alloc(0), truncated: false } };
+  let server;
+  let browser;
+  let interrupted = false;
+  const interrupt = () => { interrupted = true; };
+  process.on('SIGTERM', interrupt);
+  process.on('SIGINT', interrupt);
+  let scratch;
+  let reason = 'supervisor-error';
+  try {
+    await receipt({ reason: 'running', ready: false });
+    await writeFile(join(output, 'resources.json'), JSON.stringify({
+      node: process.version, workers: 1, max_node_heap_mib: 2048,
+      process_limit: Number(process.env.PFM_HOUSEHOLD_PROCESS_LIMIT), deadline_seconds: householdLimits.deadlineMs / 1000,
+      readiness_seconds: householdLimits.readinessMs / 1000, disk_growth_bytes: householdLimits.diskBytes,
+      disk_free_floor_bytes: householdLimits.diskBytes,
+    }));
+    scratch = await mkdtemp(join(tmpdir(), 'pfm-household-'));
+    const free = (path) => {
+      const { bavail, bsize } = statfsSync(path);
+      return bavail * bsize;
+    };
+    const volumes = [process.cwd(), scratch].map((path) => ({ path, initial: free(path) }));
+    const hasDisk = () => volumes.every(({ path, initial }) =>
+      free(path) >= Math.max(householdLimits.diskBytes, initial - householdLimits.diskBytes));
+    const env = { ...process.env, TMPDIR: scratch };
+    reason = await watchHousehold({
+      elapsed, hasDisk, interrupted: () => interrupted, wait: () => pause(250),
+      launchServer: () => (server = launchHouseholdChild([
+        'node_modules/next/dist/bin/next', 'dev', '--hostname', '127.0.0.1', '--port', '3100',
+      ], env, logs)),
+      probe: async () => {
+        try {
+          const response = await fetch('http://127.0.0.1:3100/', { redirect: 'manual', signal: AbortSignal.timeout(1000) });
+          await response.body?.cancel();
+          return response.ok;
+        } catch { return false; }
+      },
+      launchBrowser: () => (browser = launchHouseholdChild([
+        'node_modules/@playwright/test/cli.js', 'test', '--workers=1', '--retries=0', '--trace=off',
+        '--reporter=json,./tools/ci/collect-test-durations.mjs', '--output=' + join(scratch, 'test-results'),
+      ], { ...env, PFM_HOUSEHOLD_SUPERVISED: '1', PFM_HOUSEHOLD_OUTPUT: scratch,
+        PLAYWRIGHT_JSON_OUTPUT_FILE: join(scratch, 'report.json'), PFM_PROGRESS: join(scratch, 'progress.jsonl') })),
+    });
+  } finally {
+    try {
+      const observed = { server: server?.result ?? null, browser: browser?.result ?? null };
+      const stopped = await stopHouseholdChildren([browser, server]);
+      const log = householdLog(logs);
+      await writeFile(join(output, 'server.log'), JSON.stringify(log));
+      const captures = scratch ? await stageHouseholdCaptures(scratch, output) :
+        Object.fromEntries(householdCaptures.map((name) => [name, 'missing']));
+      await receipt({ reason, ready: Boolean(browser), ...observed, cleanup: stopped ? 'stopped' : 'incomplete',
+        terminated: { server: server?.result ?? null, browser: browser?.result ?? null },
+        log_truncated: log.some(({ truncated }) => truncated), captures });
+      if (reason !== 'browser-exit' || observed.browser?.exit !== 0 || !stopped ||
+          log.some(({ truncated }) => truncated) || Object.values(captures).some((value) => value !== 'retained')) {
+        process.exitCode = reason === 'deadline' || reason === 'readiness-timeout' ? 124 : 1;
+      }
+    } finally {
+      process.off('SIGTERM', interrupt);
+      process.off('SIGINT', interrupt);
+    }
+  }
+}
+
 async function main(args) {
+  if (args[0] === 'household-run' && args.length === 2) {
+    await runHousehold(args[1]);
+    return;
+  }
   if (args[0] === 'browser-inventory' && args.length === 5) {
     const [, normal, manual, ux, output] = args;
     const values = await Promise.all([normal, manual, ux].map(async (file) => parseEvidenceJson(await readInput(file))));

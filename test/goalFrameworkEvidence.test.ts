@@ -5,7 +5,7 @@ import { expect, it } from "vitest";
 
 const {
   browserInventory, collectGoalEvidence, githubEvidenceProvider, householdReadiness, inspectEvidenceZip, parseEvidenceJson,
-  verificationDraft,
+  verificationDraft, watchHousehold,
 } = await import(new URL("../tools/ci/goal-framework-evidence.mjs", import.meta.url).href);
 const { digest } = await import(new URL("../tools/codex/goal-framework/contracts.mjs", import.meta.url).href);
 const refusals = JSON.parse(readFileSync(new URL("./fixtures/goalFramework/evidence/refusals.json", import.meta.url), "utf8")) as {
@@ -42,7 +42,7 @@ const pins = [...new Set([
   "test/fixtures/goalFramework/households/guided.json", "test/d2/integrated/jointHousehold/s8Five/oracle.ts",
   ...registryData.applicable.flatMap(({ evidence }) => evidence.flatMap(({ path, oracle, fixtures }) => [path, oracle, ...fixtures])),
 ])].map((path) => ({ path, digest: hash(raw(path)) }));
-const files = ["inventory.json", "report.json", "resources.json", "resources.txt", "guided-desktop.png",
+const files = ["inventory.json", "execution.json", "server.log", "progress.jsonl", "report.json", "resources.json", "resources.txt", "guided-desktop.png",
   "guided-mobile-200.png", "guided-trace.zip"];
 const plan = [
   { id: "household-readiness", workflow: workflow.id, job: "household-readiness", required: true,
@@ -138,18 +138,53 @@ const browserShards = [44, 44, 44, 43].map((count, shard) => {
 });
 const browserIds = browserShards.flatMap(({ selected }) => selected.map(({ id }) => id)).sort();
 
-function archive(attempt: number, variant?: "flaky" | "empty", wrongInventory = false, manualOrdinaryCount = browserIds.length) {
-  const titles = variant === "empty" ? [] : registryData.applicable
+type ManualDiagnostic = "startup-exit" | "early-exit" | "disk" | "deadline" | "truncated" | "assertion" | "missing" | "wrong-receipt";
+
+function archive(attempt: number, variant?: "flaky" | "empty", wrongInventory = false,
+  manualOrdinaryCount = browserIds.length, diagnostic?: ManualDiagnostic) {
+  const titles = registryData.applicable
     .flatMap(({ evidence }) => evidence.filter(({ path }) => path === spec).flatMap(({ cases }) => cases));
   const cases = [...new Set(titles)];
+  const ids = cases.map((title, index) => spec + `:${index + 1}:1 › ` + title);
+  const identity = { sha: merge, attempt, ref: workflow.ref, run_id: 23 };
+  const report = browserReport(spec, variant === "empty" ? [] : cases, variant);
+  if (diagnostic === "assertion") {
+    const test = report.suites[0]!.specs[0]!.tests[0]!;
+    test.status = "unexpected";
+    Object.assign(test.results[0]!, { status: "failed", errors: [{ message: "Error: expect(value).toBe(SECRET_FIXTURE)" }] });
+    Object.assign(report.stats, { expected: cases.length - 1, unexpected: 1 });
+  }
+  const reason = ({ "startup-exit": "server-startup-exit", "early-exit": "server-exit",
+    disk: "disk-budget", deadline: "deadline" } as const)[diagnostic as "startup-exit" | "early-exit" | "disk" | "deadline"] ?? "browser-exit";
+  const ready = !["server-startup-exit", "disk-budget"].includes(reason);
+  const finished = (exit: number | null, signal: string | null = null) => ({ exit, signal, spawn_error: null });
+  const server = reason.startsWith("server-") ? finished(null, "SIGKILL") : null;
+  const browser = reason === "browser-exit" ? finished(diagnostic === "assertion" ? 1 : 0) : null;
+  const captureNames = ["progress.jsonl", "report.json", "guided-trace.zip", "guided-desktop.png", "guided-mobile-200.png"];
+  const captures = Object.fromEntries(captureNames.map((name) => [name,
+    reason !== "browser-exit" && !(reason === "server-exit" && name === "progress.jsonl") ? "missing" :
+      name === "report.json" && diagnostic === "truncated" ? "truncated" : "retained"]));
+  const progressIds = reason === "server-exit" ? ids.slice(0, 1) : ids;
+  const progress = [
+    { phase: "inventory", ids },
+    ...progressIds.flatMap((id) => [{ phase: "start", id, attempt: 0 }, { phase: "end", id, attempt: 0,
+      status: diagnostic === "assertion" && id === ids[0] ? "failed" : "passed" }]),
+    ...(reason === "server-exit" ? [{ phase: "start", id: ids[1], attempt: 0 }] : []),
+  ].map((event) => JSON.stringify(event)).join("\n") + "\n";
   const contents: Record<string, string> = {
-    "inventory.json": JSON.stringify({ sha: merge, attempt, ref: workflow.ref, run_id: 23,
+    "inventory.json": JSON.stringify({ ...identity,
       ordinary_count: manualOrdinaryCount, ux_count: manualOrdinaryCount + 1,
       ordinary_digest: wrongInventory ? "9".repeat(64) : hash(Buffer.from(JSON.stringify(browserIds))), ux_digest: "1".repeat(64),
-      manual: cases.map((title, index) => spec + `:${index + 1}:1 › ` + title) }),
-    "report.json": JSON.stringify(browserReport(spec, cases, variant)),
+      manual: ids }),
+    "report.json": JSON.stringify(report),
+    "execution.json": JSON.stringify({ schema: 1, ...identity, ...(diagnostic === "wrong-receipt" ? { attempt: 77 } : {}),
+      elapsed_ms: 1500, reason, ready, server, browser, cleanup: "stopped", log_truncated: false, captures,
+      terminated: { server: server ?? finished(null, "SIGTERM"), browser: browser ?? (ready ? finished(null, "SIGTERM") : null) } }),
+    "server.log": "SECRET_FIXTURE",
+    "progress.jsonl": progress,
   };
-  return zip(files.map((name) => ({ name, data: contents[name] ?? "{}" })));
+  return zip(files.filter((name) => (captures[name] === undefined || captures[name] === "retained") &&
+    !(name === "execution.json" && diagnostic === "missing")).map((name) => ({ name, data: contents[name] ?? "{}" })));
 }
 
 function shardArchive(kind: string, index: number, failure?: "timeout" | "assertion" | "ambiguous", wrongSha = false) {
@@ -177,6 +212,7 @@ function shardArchive(kind: string, index: number, failure?: "timeout" | "assert
 function provider(options: {
   conclusions?: string[]; forgedApp?: boolean; expired?: boolean; stale?: boolean; missing?: boolean;
   tamper?: boolean; variant?: "flaky" | "empty";
+  manualDiagnostic?: ManualDiagnostic;
   ordinary?: boolean; noBrowser?: boolean; wrongAssociation?: boolean; wrongCheckout?: boolean;
   forgedCheckHead?: boolean; wrongAttempt?: boolean; wrongShard?: boolean; wrongBranch?: boolean;
   changedGoal?: boolean; omitAggregateProof?: boolean; duplicateCheckout?: boolean; workerCheckout?: boolean;
@@ -224,7 +260,7 @@ function provider(options: {
   }));
   const manualJobs = conclusions.map((conclusion, i) => job(101 + i, 23, i + 1, "household-readiness", conclusion));
   const archives = conclusions.map((_, i) => archive(i + 1, options.variant, options.wrongBrowserInventory,
-    options.manualOrdinaryCount));
+    options.manualOrdinaryCount, options.manualDiagnostic));
   const shardArtifacts = ordinaryPlan.flatMap(({ job: name, artifact }) => {
     const shard = /^(unit|e2e) \(shard (\d)/.exec(name);
     if (!shard || !artifact || (shard[1] === "e2e" && options.noBrowser) ||
@@ -466,6 +502,65 @@ it("retains every failed run attempt and an internal browser retry after a later
   expect(flaky.runs[0].attempts[0].jobs[0].artifact.failures).toMatchObject([{ attempt: 0, outcome: "FAIL" }]);
 });
 
+it.each([
+  ["startup-exit", "server-startup-exit", "FAIL", ["unrun", "unrun", "unrun", "unrun"]],
+  ["early-exit", "server-exit", "FAIL", ["progress-passed", "case-interrupted", "unrun", "unrun"]],
+  ["disk", "disk-budget", "INCOMPLETE", ["unrun", "unrun", "unrun", "unrun"]],
+  ["deadline", "deadline", "TIMEOUT", ["unrun", "unrun", "unrun", "unrun"]],
+  ["truncated", "browser-exit", "INCOMPLETE", Array.from({ length: 4 }, () => "progress-passed")],
+  ["assertion", "browser-exit", "FAIL", ["assertion", "completed", "completed", "completed"]],
+  ["missing", "missing", "INCOMPLETE", Array.from({ length: 4 }, () => "completed")],
+] as const)("retains compact manual %s evidence and refuses readiness", async (manualDiagnostic, reason, outcome, cases) => {
+  const input = ordinarySelection(true, true);
+  const result = await collectGoalEvidence(input, provider({ ordinary: true, manualDiagnostic }), now, verifyPlan(input));
+  const job = result.runs.find((run: { id: number }) => run.id === 23).attempts[0].jobs[0];
+  expect(job).toMatchObject({ outcome, artifact: { execution: { reason, outcome }, witness_cases: [] } });
+  expect(job.artifact.case_dispositions.map((item: { reason: string }) => item.reason)).toEqual(cases);
+  if (manualDiagnostic === "truncated") expect(job.artifact.execution.captures["report.json"]).toBe("truncated");
+  expect(JSON.stringify(result)).not.toContain("SECRET_FIXTURE");
+  expect(result.complete).toBe(false);
+  expect(householdReadiness({ collection: result, registryBytes: raw(registry), now }).disposition).toBe("NOT_READY");
+});
+
+it("rejects a manual diagnostic receipt with a stale attempt or unauthenticated checkout", async () => {
+  for (const [options, code] of [
+    [{ manualDiagnostic: "wrong-receipt" as const }, "MANUAL_EXECUTION_IDENTITY"],
+    [{ wrongCheckout: true }, "MANUAL_CHECKOUT_UNVERIFIED"],
+  ] as const) {
+    const result = await collectGoalEvidence(selection, provider(options), now, verifyPlan(selection));
+    expect(result.runs[0].attempts[0].jobs[0]).toMatchObject({ outcome: "INCOMPLETE", artifact_issue: code });
+    expect(result.complete).toBe(false);
+  }
+});
+
+it.each([
+  ["normal", "browser-exit", 1], ["startup-exit", "server-startup-exit", 0],
+  ["early-exit", "server-exit", 1], ["disk-before-launch", "disk-budget", 0],
+  ["disk-after-launch", "disk-budget", 1], ["readiness-timeout", "readiness-timeout", 0],
+  ["deadline", "deadline", 1],
+] as const)("supervises %s with deterministic readiness and budget observations", async (mode, reason, launches) => {
+  let ticks = 0;
+  let browserLaunches = 0;
+  const server = { result: null as number | null };
+  const browser = { result: null as number | null };
+  const outcome = await watchHousehold({
+    launchServer: () => server,
+    launchBrowser: () => { browserLaunches++; return browser; },
+    probe: async () => mode !== "readiness-timeout" && ticks === 1,
+    hasDisk: () => mode !== "disk-before-launch" && !(mode === "disk-after-launch" && ticks === 2),
+    elapsed: () => ticks === 2 && mode === "readiness-timeout" ? 120_000 : ticks === 2 && mode === "deadline" ? 300_000 : ticks,
+    interrupted: () => false,
+    wait: async () => {
+      if (++ticks === 1 && mode === "startup-exit") server.result = 1;
+      if (ticks === 2 && mode === "early-exit") server.result = 1;
+      if (ticks === 2 && mode === "normal") browser.result = 1;
+      if (ticks > 3) throw new Error("Supervisor did not stop");
+    },
+  });
+  expect(outcome).toBe(reason);
+  expect(browserLaunches).toBe(launches);
+});
+
 it.each(["forgedApp", "missing", "expired", "stale", "tamper"] as const)("refuses %s evidence", async (key) => {
   const result = await collectGoalEvidence(selection, provider({ [key]: true }), now);
   expect(result.complete).toBe(false);
@@ -514,10 +609,11 @@ it("keeps the token on the API request and rejects untrusted origins and excess 
 
 it("checks both manual exclusions without changing ordinary Playwright identities", () => {
   const ordinary = [{ id: "e2e/app.spec.ts:1:1 › ordinary" }];
-  const manual = [{ id: spec + ":1:1 › manual" }];
+  const manual = Array.from({ length: 4 }, (_, i) => ({ id: spec + `:${i + 1}:1 › manual ${i + 1}` }));
   const ux = [...ordinary, { id: "e2e/ux-evidence.spec.ts:1:1 › ux" }];
-  expect(browserInventory(ordinary, manual, ux)).toMatchObject({ ordinary_count: 1, ux_count: 2, manual: [manual[0]!.id] });
+  expect(browserInventory(ordinary, manual, ux)).toMatchObject({ ordinary_count: 1, ux_count: 2, manual: manual.map(({ id }) => id) });
   expect(() => browserInventory([...ordinary, ...manual], manual, ux)).toThrow("BROWSER_INVENTORY_ROUTING");
   expect(() => browserInventory(ordinary, [], ux)).toThrow("EMPTY_BROWSER_INVENTORY");
+  expect(() => browserInventory(ordinary, manual.slice(1), ux)).toThrow("MANUAL_DISCOVERY_COUNT");
   expect(() => browserInventory(ordinary, manual, ux.slice(1))).toThrow("BROWSER_INVENTORY_ROUTING");
 });

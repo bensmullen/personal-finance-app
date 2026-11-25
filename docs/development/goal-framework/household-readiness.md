@@ -39,8 +39,8 @@ and all four E2E shards. Mark workflow-proven omissions explicitly. Selected
 unit and browser shards require their existing exact-merge-SHA diagnostics.
 The manual inventory is validate, household-readiness and agent-incident.
 The selected manual row uses ID `household-readiness` and artifact
-`household-readiness-{run}-{attempt}` with `inventory.json`, `report.json`,
-`resources.json`, `resources.txt`, `guided-desktop.png`,
+`household-readiness-{run}-{attempt}` with `inventory.json`, `execution.json`,
+`server.log`, `progress.jsonl`, `report.json`, `resources.json`, `resources.txt`, `guided-desktop.png`,
 `guided-mobile-200.png` and `guided-trace.zip`. Incident execution is a
 failure observation.
 
@@ -116,12 +116,35 @@ The guided fixture verifies stored inputs and ownership. The registry points
 to the existing real compiler, worker, chart-period, stale/rerun, partial/error
 and source-qualified replay witnesses for the different runtime boundaries.
 
-A single repository-wide profile concurrency group, a 12-minute runner
-timeout, five-minute browser process deadline, 2 GiB Node heap, process and
-file limits, 12 MiB upload budget and seven-day retention bound the profile.
-The dedicated hosted runner keeps expensive execution away from foreground
-development and UAT. The artifact includes Node and configured limits plus
-elapsed time, CPU and peak RSS reported by GNU time for the measured command.
+A single repository-wide profile concurrency group and a 12-minute isolated
+runner bound CI use. The supervisor runs ordinary Next dev on loopback and
+starts Chromium after a successful HTTP response from the app. Readiness
+has 120 seconds within a 300-second execution deadline. The supervisor stops
+both process groups with TERM and then KILL as needed. A 310-second outer
+timeout with up to 10 seconds of signal grace backs up that deadline.
+
+The 2 GiB Node heap and a 512-task runner-user limit bound process resources.
+The task limit includes Linux threads and leaves room for Next compilation,
+Chromium and runner overhead. The supervisor checks the workspace and scratch
+filesystems before launch and during execution, with a 4 GiB free-space floor
+and a 4 GiB net-growth allowance per filesystem. The sampled guard can observe
+a write after it crosses the threshold. Next cache and Chromium runtime files
+use ordinary filesystem behavior. Only the staged artifact has a 12 MiB total,
+12-file limit and seven-day retention. Captures that exceed the staging budget
+are omitted and recorded as truncated.
+
+The execution receipt binds candidate SHA, ref, run and attempt. It records
+readiness, the stop reason, observed exits or signals, teardown and capture
+dispositions. The bounded server log retains only recognized operational
+markers and error codes from stdout and stderr. The Playwright progress file
+retains case starts and completions if the final JSON report is interrupted.
+The collector authenticates the provider checkout and artifact before
+reporting compact dispositions for all four discovered cases. It keeps shared
+server failures, case assertions, deadlines, and missing or truncated
+evidence distinct, with hashes and dispositions in the summary.
+
+The artifact includes Node and configured limits plus elapsed time, CPU and
+peak RSS reported by GNU time for the measured command.
 That RSS figure does not measure simultaneous process-tree peak, runner idle
 cost or host-wide memory. No baseline CPU, memory, browser or CI timing
 measurements were available in this implementation checkout. Existing S8-5A
@@ -130,7 +153,15 @@ bytes. The 12- and 24-installment HELOC fixtures carry 66 and 276 prior
 repayment rows respectively, which describes fixture size rather than measured
 runner cost.
 
-## Baseline readiness observation
+## Prior readiness observations
+
+PR #377 manual run 45564323938 attempt 1 tested integration commit
+`094e411ef0c01457a8c5368e3a77318c022f7861`. Setup and discovery passed.
+Desktop navigation encountered a connection reset and the other three cases
+encountered connection refusals before their household assertions. Artifact
+14998929069 contains the failure report, trace and resource observation.
+Server termination details were unavailable. This candidate remains
+**NOT_READY**. [Manual run](https://github.com/bensmullen/personal-finance-app/actions/runs/45564323938)
 
 The #366 reviewer checkpoint for PR #377 recorded source head
 `597549c44bad439248904c244619ef8007babef2`, base
