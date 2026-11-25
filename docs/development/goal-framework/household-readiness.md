@@ -119,9 +119,12 @@ and source-qualified replay witnesses for the different runtime boundaries.
 A single repository-wide profile concurrency group and a 12-minute isolated
 runner bound CI use. The supervisor runs ordinary Next dev on loopback and
 starts Chromium after a successful HTTP response from the app. Readiness
-has 120 seconds within a 300-second execution deadline. The supervisor stops
-both process groups with TERM and then KILL as needed. A 310-second outer
-timeout with up to 10 seconds of signal grace backs up that deadline.
+has 120 seconds within a 300-second execution deadline. Teardown gives TERM
+up to three seconds and polls for up to one more second after KILL. Successful
+cleanup requires an observed leader exit and an absence probe for each launched
+process group. An unresolved group, a missing leader exit or a signaling error
+makes cleanup incomplete and causes a nonzero exit. A 310-second outer timeout
+with up to 10 seconds of signal grace backs up the execution deadline.
 
 The 2 GiB Node heap and a 512-task runner-user limit bound process resources.
 The task limit includes Linux threads and leaves room for Next compilation,
@@ -133,11 +136,14 @@ use ordinary filesystem behavior. Only the staged artifact has a 12 MiB total,
 12-file limit and seven-day retention. Captures that exceed the staging budget
 are omitted and recorded as truncated.
 
-The execution receipt binds candidate SHA, ref, run and attempt. It records
-readiness, the stop reason, observed exits or signals, teardown and capture
-dispositions. The bounded server log retains only recognized operational
-markers and error codes from stdout and stderr. The Playwright progress file
-retains case starts and completions if the final JSON report is interrupted.
+Execution receipt schema 2 binds candidate SHA, ref, run and attempt. It records
+readiness, the stop reason, capture dispositions, and each child's PID, stop-time
+result, terminal result and process-group observation. The bounded server log
+retains only recognized operational markers and error codes from stdout and
+stderr. The Playwright progress file preserves case starts and completions if
+the final JSON report is interrupted. Passing evidence requires one matching
+inventory followed by one ordered start and end for each case at retry zero,
+with matching final report results and no runner errors or truncated progress.
 The collector authenticates the provider checkout and artifact before
 reporting compact dispositions for all four discovered cases. It keeps shared
 server failures, case assertions, deadlines, and missing or truncated

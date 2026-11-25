@@ -5,7 +5,7 @@ import { expect, it } from "vitest";
 
 const {
   browserInventory, collectGoalEvidence, githubEvidenceProvider, householdReadiness, inspectEvidenceZip, parseEvidenceJson,
-  verificationDraft, watchHousehold,
+  stopHouseholdChildren, verificationDraft, watchHousehold,
 } = await import(new URL("../tools/ci/goal-framework-evidence.mjs", import.meta.url).href);
 const { digest } = await import(new URL("../tools/codex/goal-framework/contracts.mjs", import.meta.url).href);
 const refusals = JSON.parse(readFileSync(new URL("./fixtures/goalFramework/evidence/refusals.json", import.meta.url), "utf8")) as {
@@ -138,10 +138,17 @@ const browserShards = [44, 44, 44, 43].map((count, shard) => {
 });
 const browserIds = browserShards.flatMap(({ selected }) => selected.map(({ id }) => id)).sort();
 
-type ManualDiagnostic = "startup-exit" | "early-exit" | "disk" | "deadline" | "truncated" | "assertion" | "missing" | "wrong-receipt";
+type ManualDiagnostic = "startup-exit" | "early-exit" | "disk" | "deadline" | "truncated" | "assertion" | "missing" |
+  "wrong-receipt" | "cleanup-pending" | "cleanup-false-stopped" | "cleanup-mismatched-result" | "cleanup-unreaped";
+type ProgressEvent = { phase: string; id?: string; ids?: string[]; attempt?: number; status?: string };
+const progressJson = (events: ProgressEvent[]) => events.map((event) => JSON.stringify(event)).join("\n") + "\n";
+type ManualProgress = (events: ProgressEvent[]) => string | null;
+const diagnosticReasons: Partial<Record<ManualDiagnostic, "server-startup-exit" | "server-exit" | "disk-budget" | "deadline">> = {
+  "startup-exit": "server-startup-exit", "early-exit": "server-exit", disk: "disk-budget", deadline: "deadline",
+};
 
 function archive(attempt: number, variant?: "flaky" | "empty", wrongInventory = false,
-  manualOrdinaryCount = browserIds.length, diagnostic?: ManualDiagnostic) {
+  manualOrdinaryCount = browserIds.length, diagnostic?: ManualDiagnostic, manualProgress: ManualProgress = progressJson) {
   const titles = registryData.applicable
     .flatMap(({ evidence }) => evidence.filter(({ path }) => path === spec).flatMap(({ cases }) => cases));
   const cases = [...new Set(titles)];
@@ -154,8 +161,7 @@ function archive(attempt: number, variant?: "flaky" | "empty", wrongInventory = 
     Object.assign(test.results[0]!, { status: "failed", errors: [{ message: "Error: expect(value).toBe(SECRET_FIXTURE)" }] });
     Object.assign(report.stats, { expected: cases.length - 1, unexpected: 1 });
   }
-  const reason = ({ "startup-exit": "server-startup-exit", "early-exit": "server-exit",
-    disk: "disk-budget", deadline: "deadline" } as const)[diagnostic as "startup-exit" | "early-exit" | "disk" | "deadline"] ?? "browser-exit";
+  const reason = (diagnostic && diagnosticReasons[diagnostic]) ?? "browser-exit";
   const ready = !["server-startup-exit", "disk-budget"].includes(reason);
   const finished = (exit: number | null, signal: string | null = null) => ({ exit, signal, spawn_error: null });
   const server = reason.startsWith("server-") ? finished(null, "SIGKILL") : null;
@@ -165,23 +171,34 @@ function archive(attempt: number, variant?: "flaky" | "empty", wrongInventory = 
     reason !== "browser-exit" && !(reason === "server-exit" && name === "progress.jsonl") ? "missing" :
       name === "report.json" && diagnostic === "truncated" ? "truncated" : "retained"]));
   const progressIds = reason === "server-exit" ? ids.slice(0, 1) : ids;
-  const progress = [
+  const progress = manualProgress([
     { phase: "inventory", ids },
     ...progressIds.flatMap((id) => [{ phase: "start", id, attempt: 0 }, { phase: "end", id, attempt: 0,
       status: diagnostic === "assertion" && id === ids[0] ? "failed" : "passed" }]),
-    ...(reason === "server-exit" ? [{ phase: "start", id: ids[1], attempt: 0 }] : []),
-  ].map((event) => JSON.stringify(event)).join("\n") + "\n";
+    ...(reason === "server-exit" ? [{ phase: "start", id: ids[1]!, attempt: 0 }] : []),
+  ]);
+  if (progress === null) captures["progress.jsonl"] = "missing";
+  const group = (pid: number, observed: ReturnType<typeof finished> | null) => ({
+    pid, observed, terminal: observed ?? finished(null, "SIGTERM"), group: "gone", signal_error: false,
+  });
+  const processes = {
+    server: { ...group(100, server),
+      ...(diagnostic === "cleanup-unreaped" ? { terminal: null } : {}),
+      ...(["cleanup-pending", "cleanup-false-stopped"].includes(diagnostic ?? "") ? { group: "present" } : {}) },
+    browser: ready ? { ...group(101, browser),
+      ...(diagnostic === "cleanup-mismatched-result" ? { terminal: finished(1) } : {}) } : null,
+  };
+  const cleanup = diagnostic === "cleanup-pending" || diagnostic === "cleanup-unreaped" ? "incomplete" : "stopped";
   const contents: Record<string, string> = {
     "inventory.json": JSON.stringify({ ...identity,
       ordinary_count: manualOrdinaryCount, ux_count: manualOrdinaryCount + 1,
       ordinary_digest: wrongInventory ? "9".repeat(64) : hash(Buffer.from(JSON.stringify(browserIds))), ux_digest: "1".repeat(64),
       manual: ids }),
     "report.json": JSON.stringify(report),
-    "execution.json": JSON.stringify({ schema: 1, ...identity, ...(diagnostic === "wrong-receipt" ? { attempt: 77 } : {}),
-      elapsed_ms: 1500, reason, ready, server, browser, cleanup: "stopped", log_truncated: false, captures,
-      terminated: { server: server ?? finished(null, "SIGTERM"), browser: browser ?? (ready ? finished(null, "SIGTERM") : null) } }),
+    "execution.json": JSON.stringify({ schema: 2, ...identity, ...(diagnostic === "wrong-receipt" ? { attempt: 77 } : {}),
+      elapsed_ms: 1500, reason, ready, processes, cleanup, log_truncated: false, captures }),
     "server.log": "SECRET_FIXTURE",
-    "progress.jsonl": progress,
+    "progress.jsonl": progress ?? "",
   };
   return zip(files.filter((name) => (captures[name] === undefined || captures[name] === "retained") &&
     !(name === "execution.json" && diagnostic === "missing")).map((name) => ({ name, data: contents[name] ?? "{}" })));
@@ -213,6 +230,7 @@ function provider(options: {
   conclusions?: string[]; forgedApp?: boolean; expired?: boolean; stale?: boolean; missing?: boolean;
   tamper?: boolean; variant?: "flaky" | "empty";
   manualDiagnostic?: ManualDiagnostic;
+  manualProgress?: ManualProgress;
   ordinary?: boolean; noBrowser?: boolean; wrongAssociation?: boolean; wrongCheckout?: boolean;
   forgedCheckHead?: boolean; wrongAttempt?: boolean; wrongShard?: boolean; wrongBranch?: boolean;
   changedGoal?: boolean; omitAggregateProof?: boolean; duplicateCheckout?: boolean; workerCheckout?: boolean;
@@ -260,7 +278,7 @@ function provider(options: {
   }));
   const manualJobs = conclusions.map((conclusion, i) => job(101 + i, 23, i + 1, "household-readiness", conclusion));
   const archives = conclusions.map((_, i) => archive(i + 1, options.variant, options.wrongBrowserInventory,
-    options.manualOrdinaryCount, options.manualDiagnostic));
+    options.manualOrdinaryCount, options.manualDiagnostic, options.manualProgress));
   const shardArtifacts = ordinaryPlan.flatMap(({ job: name, artifact }) => {
     const shard = /^(unit|e2e) \(shard (\d)/.exec(name);
     if (!shard || !artifact || (shard[1] === "e2e" && options.noBrowser) ||
@@ -510,6 +528,8 @@ it.each([
   ["truncated", "browser-exit", "INCOMPLETE", Array.from({ length: 4 }, () => "progress-passed")],
   ["assertion", "browser-exit", "FAIL", ["assertion", "completed", "completed", "completed"]],
   ["missing", "missing", "INCOMPLETE", Array.from({ length: 4 }, () => "completed")],
+  ["cleanup-pending", "browser-exit", "INCOMPLETE", Array.from({ length: 4 }, () => "completed")],
+  ["cleanup-unreaped", "browser-exit", "INCOMPLETE", Array.from({ length: 4 }, () => "completed")],
 ] as const)("retains compact manual %s evidence and refuses readiness", async (manualDiagnostic, reason, outcome, cases) => {
   const input = ordinarySelection(true, true);
   const result = await collectGoalEvidence(input, provider({ ordinary: true, manualDiagnostic }), now, verifyPlan(input));
@@ -522,15 +542,99 @@ it.each([
   expect(householdReadiness({ collection: result, registryBytes: raw(registry), now }).disposition).toBe("NOT_READY");
 });
 
+it("accepts four matching start/end transitions and a fully observed teardown", async () => {
+  const result = await collectGoalEvidence(selection, provider(), now, verifyPlan(selection));
+  const job = result.runs[0].attempts[0].jobs[0];
+  expect(job).toMatchObject({ outcome: "PASS", artifact: { execution: { cleanup: "stopped", processes: {
+    server: { pid: 100, group: "gone", terminal: { signal: "SIGTERM" } },
+    browser: { pid: 101, group: "gone", observed: { exit: 0 }, terminal: { exit: 0 } },
+  } } } });
+  expect(job.artifact.case_dispositions).toHaveLength(4);
+  expect(job.artifact.case_dispositions.every((item: { reason: string }) => item.reason === "completed")).toBe(true);
+  expect(job.artifact.witness_cases).toHaveLength(4);
+});
+
+const invalidProgress: [string, string, ManualProgress][] = [
+  ["missing progress", "MISSING", () => null],
+  ["missing inventory", "INVENTORY", (events) => progressJson(events.slice(1))],
+  ["wrong inventory", "INVENTORY", (events) => progressJson([{ phase: "inventory", ids: [] }, ...events.slice(1)])],
+  ["repeated inventory", "INVENTORY", (events) => progressJson([...events, events[0]!])],
+  ["repeated start", "EVENT", (events) => progressJson([events[0]!, events[1]!, ...events.slice(1)])],
+  ["end without start", "EVENT", (events) => progressJson([events[0]!, ...events.slice(2)])],
+  ["repeated end", "EVENT", (events) => progressJson([...events, events[2]!])],
+  ["wrong attempt", "EVENT", (events) => progressJson([events[0]!, { ...events[1]!, attempt: 1 }, ...events.slice(2)])],
+  ["wrong identity", "EVENT", (events) => progressJson([events[0]!, { ...events[1]!, id: "other" }, ...events.slice(2)])],
+  ["runner error", "RUNNER_ERROR", (events) => progressJson([...events, { phase: "error", status: "runner-error" }])],
+  ["trailing fragment", "TRUNCATED", (events) => progressJson(events) + '{"phase":'],
+];
+it.each(invalidProgress)("refuses a green manual report with %s", async (_name, issue, manualProgress) => {
+  const result = await collectGoalEvidence(selection, provider({ manualProgress }), now, verifyPlan(selection));
+  expect(result.runs[0].attempts[0].jobs[0]).toMatchObject({ outcome: "INCOMPLETE", artifact: {
+    progress_issue: "MANUAL_PROGRESS_" + issue, witness_cases: [],
+  } });
+  expect(result.complete).toBe(false);
+});
+
+it("retains an observed case failure when the final report claims it passed", async () => {
+  const manualProgress: ManualProgress = (events) => {
+    events[2]!.status = "failed";
+    return progressJson(events);
+  };
+  const result = await collectGoalEvidence(selection, provider({ manualProgress }), now, verifyPlan(selection));
+  const job = result.runs[0].attempts[0].jobs[0];
+  expect(job).toMatchObject({ outcome: "FAIL", artifact: { witness_cases: [], failures: [
+    { outcome: "FAIL", reason: "progress-failed", attempt: 0 },
+  ] } });
+  expect(job.artifact.case_dispositions[0]).toMatchObject({ outcome: "FAIL", reason: "progress-failed" });
+  expect(result.complete).toBe(false);
+});
+
 it("rejects a manual diagnostic receipt with a stale attempt or unauthenticated checkout", async () => {
   for (const [options, code] of [
     [{ manualDiagnostic: "wrong-receipt" as const }, "MANUAL_EXECUTION_IDENTITY"],
+    [{ manualDiagnostic: "cleanup-false-stopped" as const }, "MANUAL_EXECUTION_RECORD"],
+    [{ manualDiagnostic: "cleanup-mismatched-result" as const }, "MANUAL_EXECUTION_PROCESSES"],
     [{ wrongCheckout: true }, "MANUAL_CHECKOUT_UNVERIFIED"],
   ] as const) {
     const result = await collectGoalEvidence(selection, provider(options), now, verifyPlan(selection));
     expect(result.runs[0].attempts[0].jobs[0]).toMatchObject({ outcome: "INCOMPLETE", artifact_issue: code });
     expect(result.complete).toBe(false);
   }
+});
+
+it.each([
+  ["term", "gone", true, 50], ["kill", "gone", true, 3050], ["survives", "present", false, 4000],
+  ["unreaped", "gone", false, 4000], ["probe-error", "unknown", false, 4000],
+] as const)("bounds process-group teardown when the browser group is %s", async (mode, group, stopped, elapsed) => {
+  let tick = 0;
+  const server = { pid: 10, result: null as { exit: null; signal: string; spawn_error: null } | null };
+  const exited = { exit: 0, signal: null, spawn_error: null };
+  const browser = { pid: 11, result: mode === "unreaped" ? null : exited };
+  const signals: [number, string | number][] = [];
+  const { processes, stopped: observed } = await stopHouseholdChildren({ server, browser }, {
+    now: () => tick,
+    wait: async (ms: number) => {
+      tick += ms;
+      server.result = { exit: null, signal: "SIGTERM", spawn_error: null };
+      if (tick > 4000) throw new Error("Cleanup exceeded its budget");
+    },
+    signal: (pid: number, signal: string | number) => {
+      if (signal !== 0) signals.push([pid, signal]);
+      if (pid === -11 && mode === "probe-error") throw Object.assign(new Error(), { code: "EPERM" });
+      if (signal === 0 && ((pid === -10 && tick >= 50) || (pid === -11 &&
+          (((mode === "term" || mode === "unreaped") && tick >= 50) || (mode === "kill" && tick >= 3050))))) {
+        throw Object.assign(new Error(), { code: "ESRCH" });
+      }
+    },
+  });
+  expect(tick).toBe(elapsed);
+  expect(observed).toBe(stopped);
+  expect(processes).toMatchObject({
+    server: { pid: 10, group: "gone", observed: null, terminal: server.result },
+    browser: { pid: 11, group, observed: browser.result, terminal: browser.result, signal_error: mode === "probe-error" },
+  });
+  expect(signals).toEqual([[-10, "SIGTERM"], [-11, "SIGTERM"],
+    ...(["kill", "survives", "probe-error"].includes(mode) ? [[-11, "SIGKILL"]] : [])]);
 });
 
 it.each([

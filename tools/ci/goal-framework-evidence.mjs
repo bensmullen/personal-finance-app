@@ -475,7 +475,7 @@ function unitFailureLog(bytes) {
 
 function inspectHouseholdExecution(execution, candidate, run, ref, files) {
   if (!execution) return { reason: 'missing', outcome: 'INCOMPLETE' };
-  requireEvidence(execution.schema === 1 && execution.sha === candidate.merge_candidate_sha &&
+  requireEvidence(execution.schema === 2 && execution.sha === candidate.merge_candidate_sha &&
     String(execution.attempt) === String(run.run_attempt) && String(execution.run_id) === String(run.id) &&
     execution.ref === ref && Number.isSafeInteger(execution.elapsed_ms) && execution.elapsed_ms >= 0 &&
     householdReasons.includes(execution.reason) && typeof execution.ready === 'boolean', 'MANUAL_EXECUTION_IDENTITY');
@@ -483,50 +483,82 @@ function inspectHouseholdExecution(execution, candidate, run, ref, files) {
   if (reason === 'running') return { reason, ready, elapsed_ms, outcome: 'INCOMPLETE' };
   const processResult = (value) => value === null || (knownFields(value, ['exit', 'signal', 'spawn_error']) &&
     ((Number.isInteger(value.exit) && value.exit >= 0 && value.exit <= 255 && value.signal === null && value.spawn_error === null) ||
-      (value.exit === null && /^SIG[A-Z0-9]{1,12}$/.test(value.signal) && value.spawn_error === null) ||
-      (value.exit === null && value.signal === null && /^[A-Z0-9_]{1,40}$/.test(value.spawn_error))));
-  const { server, browser, cleanup, terminated, log_truncated, captures } = execution;
-  requireEvidence(processResult(server) && processResult(browser) &&
-    knownFields(terminated, ['server', 'browser']) && processResult(terminated.server) && processResult(terminated.browser) &&
-    ['stopped', 'incomplete'].includes(cleanup) && typeof log_truncated === 'boolean' &&
+      (value.exit === null && typeof value.signal === 'string' && /^SIG[A-Z0-9]{1,12}$/.test(value.signal) && value.spawn_error === null) ||
+      (value.exit === null && value.signal === null && typeof value.spawn_error === 'string' &&
+        /^[A-Z0-9_]{1,40}$/.test(value.spawn_error))));
+  const { processes, cleanup, log_truncated, captures } = execution;
+  const validProcess = (child) => {
+    if (child === null) return true;
+    if (!knownFields(child, ['pid', 'observed', 'terminal', 'group', 'signal_error']) ||
+        !processResult(child.observed) || !processResult(child.terminal) || typeof child.signal_error !== 'boolean') return false;
+    if (child.observed && !['exit', 'signal', 'spawn_error'].every((key) => child.observed[key] === child.terminal?.[key])) return false;
+    return child.pid === null ? child.group === 'not-launched' && !child.signal_error &&
+      (child.terminal === null || child.terminal.spawn_error !== null) :
+      positive(child.pid) && ['gone', 'present', 'unknown'].includes(child.group) && !child.terminal?.spawn_error;
+  };
+  requireEvidence(knownFields(processes, ['server', 'browser']) && validProcess(processes.server) &&
+    validProcess(processes.browser), 'MANUAL_EXECUTION_PROCESSES');
+  const { server, browser } = processes;
+  requireEvidence((!browser || (server && positive(server.pid))) && ready === Boolean(browser) &&
+    (!browser?.pid || browser.pid !== server.pid) &&
+    cleanup === (householdChildrenStopped(processes) ? 'stopped' : 'incomplete') && typeof log_truncated === 'boolean' &&
     knownFields(captures, householdCaptures) && householdCaptures.every((name) =>
       ['retained', 'missing', 'truncated', 'invalid'].includes(captures[name]) &&
       (captures[name] === 'retained') === files.some((file) => file.name === name && file.size > 0)) &&
-    (reason !== 'browser-exit' || (ready && browser && !server)) &&
-    (reason !== 'server-startup-exit' || (!ready && server)) &&
-    (reason !== 'server-exit' || (ready && server)) &&
+    (reason !== 'browser-exit' || (browser?.observed && !server.observed)) &&
+    (reason !== 'server-startup-exit' || (!ready && server?.observed)) &&
+    (reason !== 'server-exit' || (ready && server?.observed)) &&
     (reason !== 'readiness-timeout' || !ready), 'MANUAL_EXECUTION_RECORD');
   const outcome = reason === 'deadline' || reason === 'readiness-timeout' ? 'TIMEOUT' :
-    ['server-startup-exit', 'server-exit'].includes(reason) || (reason === 'browser-exit' && browser.exit !== 0) ? 'FAIL' :
-      reason === 'browser-exit' && cleanup === 'stopped' && terminated.server && !log_truncated &&
+    ['server-startup-exit', 'server-exit'].includes(reason) || (reason === 'browser-exit' && browser.observed.exit !== 0) ? 'FAIL' :
+      reason === 'browser-exit' && cleanup === 'stopped' && [server, browser].every((child) => positive(child.pid)) && !log_truncated &&
         Object.values(captures).every((value) => value === 'retained') ? 'PASS' : 'INCOMPLETE';
-  return { reason, ready, elapsed_ms, server, browser, terminated, cleanup, log_truncated, captures, outcome };
+  return { reason, ready, elapsed_ms, processes, cleanup, log_truncated, captures, outcome };
 }
 
 function householdProgress(bytes, selected) {
-  const events = new Map();
-  if (!bytes) return events;
+  const states = new Map();
+  if (!bytes) return { states, issue: 'MANUAL_PROGRESS_MISSING' };
   requireEvidence(bytes.length <= householdLimits.logBytes, 'MANUAL_PROGRESS_LIMIT');
-  const lines = bytes.toString('utf8').split('\n');
-  lines.pop(); // An interruption can leave the final write incomplete.
-  requireEvidence(lines.length <= 64, 'MANUAL_PROGRESS_LIMIT');
-  for (const line of lines) {
-    const { phase, id, attempt, status, ids } = parseEvidenceJson(Buffer.from(line));
-    if (phase === 'inventory') {
-      requireEvidence(Array.isArray(ids) && ids.length === selected.length &&
-        unique(ids) && ids.every((item) => selected.some(({ id }) => id === item)), 'MANUAL_PROGRESS_INVENTORY');
-      continue;
-    }
-    if (phase === 'error') continue;
-    requireEvidence(selected.some((item) => item.id === id) && Number.isSafeInteger(attempt) && attempt >= 0 &&
-      (phase === 'start' || (phase === 'end' && ['passed', 'failed', 'timedOut', 'skipped', 'interrupted'].includes(status))),
-    'MANUAL_PROGRESS_EVENT');
-    if (!events.has(id)) events.set(id, new Map());
-    const attempts = events.get(id);
-    requireEvidence(!attempts.get(attempt), 'MANUAL_PROGRESS_EVENT');
-    attempts.set(attempt, phase === 'end' ? status : null);
+  const completeLength = bytes.lastIndexOf(0x0a) + 1;
+  let content;
+  try {
+    content = new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, completeLength));
+  } catch {
+    return { states, issue: 'MANUAL_PROGRESS_EVENT' };
   }
-  return events;
+  const lines = completeLength ? content.slice(0, -1).split('\n') : [];
+  requireEvidence(lines.length <= 64, 'MANUAL_PROGRESS_LIMIT');
+  let inventory = false;
+  let issue = completeLength < bytes.length ? 'MANUAL_PROGRESS_TRUNCATED' : null;
+  for (const line of lines) {
+    try {
+      const { phase, id, attempt, status, ids } = parseEvidenceJson(Buffer.from(line));
+      if (phase === 'inventory') {
+        requireEvidence(!inventory && Array.isArray(ids) && ids.length === selected.length &&
+          unique(ids) && ids.every((item) => selected.some(({ id }) => id === item)), 'MANUAL_PROGRESS_INVENTORY');
+        inventory = true;
+        continue;
+      }
+      if (phase === 'error') {
+        issue ??= 'MANUAL_PROGRESS_RUNNER_ERROR';
+        continue;
+      }
+      requireEvidence(inventory, 'MANUAL_PROGRESS_INVENTORY');
+      requireEvidence(selected.some((item) => item.id === id) && attempt === 0, 'MANUAL_PROGRESS_EVENT');
+      if (phase === 'start') {
+        requireEvidence(!states.has(id), 'MANUAL_PROGRESS_EVENT');
+        states.set(id, 'started');
+      } else {
+        requireEvidence(phase === 'end' && states.get(id) === 'started' &&
+          ['passed', 'failed', 'timedOut', 'skipped', 'interrupted'].includes(status), 'MANUAL_PROGRESS_EVENT');
+        states.set(id, status);
+      }
+    } catch (error) {
+      return { states, issue: error instanceof EvidenceError ? error.message : 'MANUAL_PROGRESS_EVENT' };
+    }
+  }
+  return { states, issue: issue ?? (inventory ? null : 'MANUAL_PROGRESS_INVENTORY') };
 }
 
 function inspectHouseholdEvidence(json, files, progressBytes, candidate, run, witnesses, ref) {
@@ -546,7 +578,7 @@ function inspectHouseholdEvidence(json, files, progressBytes, candidate, run, wi
   });
   requireEvidence(unique(selected.map(({ key }) => key)), 'MANUAL_TEST_COVERAGE');
   const execution = inspectHouseholdExecution(json.get('execution.json'), candidate, run, ref, files);
-  const progress = householdProgress(progressBytes, selected);
+  const { states, issue: progress_issue } = householdProgress(progressBytes, selected);
   const report = json.get('report.json');
   validateBrowserPaths(report);
   if (report?.config) report.config.rootDir = root + '/e2e';
@@ -563,11 +595,9 @@ function inspectHouseholdEvidence(json, files, progressBytes, candidate, run, wi
     const test = tests.find((item) => item.id === id)?.test;
     const results = test?.results ?? [];
     const test_digest = bytesDigest(id);
-    const attempts = progress.get(id);
-    for (const [attempt, status] of attempts ?? []) {
-      if (status !== 'passed' && !results.some((result) => result.retry === attempt)) {
-        retain(test_digest, attempt, resultOutcome(status), status ? 'progress-' + status : 'case-interrupted');
-      }
+    const status = states.get(id);
+    if (status && status !== 'passed' && !results.some((result) => result.retry === 0 && result.status === status)) {
+      retain(test_digest, 0, resultOutcome(status), status === 'started' ? 'case-interrupted' : 'progress-' + status);
     }
     for (const result of results) {
       if (result.status === 'passed') continue;
@@ -584,19 +614,19 @@ function inspectHouseholdEvidence(json, files, progressBytes, candidate, run, wi
       return { test_digest, outcome, reason: failed.find((failure) => failure.outcome === outcome).reason };
     }
     if (!results.length) {
-      return attempts?.size === 1 && attempts.get(0) === 'passed' ? { test_digest, outcome: 'PASS', reason: 'progress-passed' } :
+      return status === 'passed' ? { test_digest, outcome: 'PASS', reason: 'progress-passed' } :
         { test_digest, outcome: 'INCOMPLETE', reason: 'unrun' };
     }
     const passed = test.status === 'expected' && test.expectedStatus === 'passed' &&
       results.length === 1 && results[0].retry === 0 && results[0].status === 'passed';
-    return { test_digest, outcome: passed ? 'PASS' : 'INCOMPLETE', reason: passed ? 'completed' : 'unexpected-result' };
+    if (!passed) return { test_digest, outcome: 'INCOMPLETE', reason: 'unexpected-result' };
+    return status === 'passed' ? { test_digest, outcome: 'PASS', reason: 'completed' } :
+      { test_digest, outcome: 'INCOMPLETE', reason: 'unconfirmed-report' };
   });
-  const valid = validatePlaywright(report, selected) && selected.every(({ id }) => {
-    const attempts = progress.get(id);
-    return attempts?.size === 1 && attempts.get(0) === 'passed';
-  });
+  const valid = !progress_issue && validatePlaywright(report, selected) && selected.every(({ id }) => states.get(id) === 'passed');
   const outcome = worst([execution.outcome, valid ? 'PASS' : 'INCOMPLETE', ...case_dispositions.map((item) => item.outcome)]);
   return { execution, case_dispositions, failures, outcome,
+    ...(progress_issue ? { progress_issue } : {}),
     ...(execution.outcome === 'TIMEOUT' ? { runner_outcome: 'TIMEOUT' } : {}),
     ordinary_inventory: { count: inventory.ordinary_count, digest: inventory.ordinary_digest },
     witness_cases: outcome === 'PASS' ? selected.map(({ key, id }) => ({ key, test_digest: bytesDigest(id) })) : [] };
@@ -1191,9 +1221,13 @@ export async function watchHousehold({ launchServer, launchBrowser, probe, hasDi
 function launchHouseholdChild(args, env, serverLog) {
   const child = spawn(process.execPath, args, { env, detached: true,
     stdio: serverLog ? ['ignore', 'pipe', 'pipe'] : 'ignore' });
-  const state = { pid: child.pid, result: null };
+  const state = { pid: child.pid, result: null, release() {
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+    child.unref();
+  } };
   child.once('error', (error) => {
-    state.result = { exit: null, signal: null, spawn_error: error.code ?? 'UNKNOWN' };
+    if (!state.pid) state.result = { exit: null, signal: null, spawn_error: error.code ?? 'UNKNOWN' };
   });
   child.once('exit', (exit, signal) => { state.result = { exit, signal, spawn_error: null }; });
   if (serverLog) {
@@ -1209,19 +1243,52 @@ function launchHouseholdChild(args, env, serverLog) {
   return state;
 }
 
-async function stopHouseholdChildren(children) {
-  const groups = children.flatMap((child) => child?.pid ? [-child.pid] : []);
-  const signal = (pid, name) => {
-    try { process.kill(pid, name); return true; }
-    catch (error) { if (error.code !== 'ESRCH') throw error; return false; }
+function householdChildrenStopped(processes) {
+  return Object.values(processes).every((child) => !child || (child.terminal && !child.signal_error &&
+    (child.pid === null ? child.group === 'not-launched' && Boolean(child.terminal.spawn_error) :
+      child.group === 'gone' && child.terminal.spawn_error === null)));
+}
+
+export async function stopHouseholdChildren(children, {
+  signal = (pid, name) => process.kill(pid, name), now = () => performance.now(), wait = pause,
+} = {}) {
+  const start = now();
+  const processes = Object.fromEntries(Object.entries(children).map(([name, child]) => [name, child ? {
+    pid: child.pid ?? null, observed: child.result, terminal: null,
+    group: child.pid ? 'unknown' : 'not-launched', signal_error: false,
+  } : null]));
+  const groups = Object.values(processes).filter((child) => child?.pid);
+  const send = (child, name) => {
+    if (child.group === 'gone') return;
+    try {
+      signal(-child.pid, name);
+      if (name === 0) child.group = 'present';
+    } catch (error) {
+      if (error.code === 'ESRCH') {
+        if (name === 0) child.group = 'gone';
+      } else {
+        child.group = 'unknown';
+        child.signal_error = true;
+      }
+    }
   };
-  for (const pid of groups) signal(pid, 'SIGTERM');
-  const end = performance.now() + 3000;
-  while (groups.some((pid) => signal(pid, 0)) && performance.now() < end) await pause(50);
-  for (const pid of groups) signal(pid, 'SIGKILL');
-  const reaped = performance.now() + 1000;
-  while (children.some((child) => child && !child.result) && performance.now() < reaped) await pause(50);
-  return children.every((child) => !child || Boolean(child.result));
+  const observeUntil = async (deadline) => {
+    for (;;) {
+      for (const group of groups) send(group, 0);
+      for (const [name, child] of Object.entries(processes)) {
+        if (child) child.terminal = children[name].result;
+      }
+      const remaining = deadline - now();
+      if (remaining <= 0 || Object.values(processes).every((child) =>
+        !child || (child.terminal && ['gone', 'not-launched'].includes(child.group)))) return;
+      await wait(Math.min(50, remaining));
+    }
+  };
+  for (const group of groups) send(group, 'SIGTERM');
+  await observeUntil(start + 3000);
+  for (const group of groups) send(group, 'SIGKILL');
+  await observeUntil(start + 4000);
+  return { processes, stopped: householdChildrenStopped(processes) };
 }
 
 // Retain only recognized operational messages. Never write raw Next output.
@@ -1281,7 +1348,7 @@ async function runHousehold(output) {
     run_id: process.env.GITHUB_RUN_ID, ref: process.env.GITHUB_REF };
   const receipt = async (details) => {
     const pending = join(output, 'execution.pending');
-    await writeFile(pending, JSON.stringify({ schema: 1, ...identity, elapsed_ms: elapsed(), ...details }));
+    await writeFile(pending, JSON.stringify({ schema: 2, ...identity, elapsed_ms: elapsed(), ...details }));
     await rename(pending, join(output, 'execution.json'));
   };
   const logs = { stdout: { bytes: Buffer.alloc(0), truncated: false }, stderr: { bytes: Buffer.alloc(0), truncated: false } };
@@ -1330,16 +1397,19 @@ async function runHousehold(output) {
     });
   } finally {
     try {
-      const observed = { server: server?.result ?? null, browser: browser?.result ?? null };
-      const stopped = await stopHouseholdChildren([browser, server]);
+      const { processes, stopped } = await stopHouseholdChildren({ browser, server });
+      if (!stopped) {
+        // Open child handles must not delay the failed exit beyond teardown.
+        browser?.release();
+        server?.release();
+      }
       const log = householdLog(logs);
       await writeFile(join(output, 'server.log'), JSON.stringify(log));
       const captures = scratch ? await stageHouseholdCaptures(scratch, output) :
         Object.fromEntries(householdCaptures.map((name) => [name, 'missing']));
-      await receipt({ reason, ready: Boolean(browser), ...observed, cleanup: stopped ? 'stopped' : 'incomplete',
-        terminated: { server: server?.result ?? null, browser: browser?.result ?? null },
+      await receipt({ reason, ready: Boolean(browser), processes, cleanup: stopped ? 'stopped' : 'incomplete',
         log_truncated: log.some(({ truncated }) => truncated), captures });
-      if (reason !== 'browser-exit' || observed.browser?.exit !== 0 || !stopped ||
+      if (reason !== 'browser-exit' || processes.browser?.observed?.exit !== 0 || !stopped ||
           log.some(({ truncated }) => truncated) || Object.values(captures).some((value) => value !== 'retained')) {
         process.exitCode = reason === 'deadline' || reason === 'readiness-timeout' ? 124 : 1;
       }
