@@ -7,6 +7,8 @@ on:
       - docs/development/milestone-issue-register.json
       - .codex/hooks/pfm-policy.py
       - tools/codex/verify-goal-framework-plan.py
+      - tools/roadmap/goal-issue-metadata.mjs
+      - tools/roadmap/verify-issue-stage-register.mjs
       - test/goalFrameworkPlan.test.ts
       - .github/workflows/goal-framework-plan.yml
   workflow_dispatch:
@@ -27,6 +29,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Check plan and negative fixtures without models or dependencies
         run: python3 tools/codex/verify-goal-framework-plan.py --self-test
       - name: Re-fetch saved issues and validate with actual V3 parser

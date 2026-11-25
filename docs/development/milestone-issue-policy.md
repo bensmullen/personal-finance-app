@@ -2,7 +2,7 @@
 
 **Status:** required project planning discipline  
 **Owner:** ChatGPT product architecture / milestone review layer  
-**Canonical machine register:** `docs/development/milestone-issue-register.json`  
+**Allocation authority during shadow:** `docs/development/milestone-issue-register.json`  
 **Controlled milestone authority:** `docs/specs/roadmap/post-pr21-implementation-roadmap.md`
 
 ## Purpose
@@ -36,4 +36,12 @@ An open backlog issue is not a guaranteed future deliverable merely because its 
 
 `test/milestoneIssueRegister.test.ts` validates static register identity, gate mapping, dependency consistency and roadmap linkage in ordinary CI. The separate GitHub Action `.github/workflows/issue-milestone-traceability.yml` also checks **live** open non-learning issues when an issue opens/reopens/is edited, when the register/check changes in a PR, and weekly. The live script fails with the exact missing GitHub issue numbers; new issues are not silently ignored. The workflow is active on main; its status must be checked when a new issue is created or the register changes. Candidate issues remain covered by their separate learning registry. Before every milestone handoff and closeout, human/ChatGPT reviewers must still inspect live issue state and substantive acceptance evidence; a green coverage check alone cannot prove that an issue is complete.
 
-The register never authorizes Codex to modify an issue's code scope. Codex still needs its separate valid `PFM_TASK_V3` issue contract and merged prerequisites. Live-issue coverage, dependency-cycle checks, independent financial semantics/replay review and PM UAT remain mandatory; removing file-level duplicates from planning CI does **not** remove those guards.
+Codex needs its separate valid `PFM_TASK_V3` issue contract and merged prerequisites. Live-issue coverage, dependency-cycle checks, independent financial semantics/replay review and PM UAT remain mandatory.
+
+## Metadata shadow and reviewed cutover
+
+During shadow, continue the issue lifecycle and register requirements above. The live workflow publishes a read-only comparison of the register, its lossless import and the observed GitHub issues. Historical and consolidated records remain in the comparison after closure. Labels and Projects can display the allocation.
+
+After independent review and explicit PM approval of a coordinated cutover, assign ordinary tasks within approved goal, stage, first gate and requirement boundaries through a validated `PFM_TASK_META_V1` block on the live issue. Existing controlled commitments still require their applicable review and canonical updates. The register becomes a generated snapshot for offline planning, including source and freshness. Live metadata coverage and the re-fetched V3 parser check remain required at dispatch. Issue closure still requires separate acceptance evidence.
+
+The [migration runbook](goal-framework/metadata-migration.md) records the rollout, the write boundary and the rollback inventory.

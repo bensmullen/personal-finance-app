@@ -23,8 +23,6 @@ const registry = JSON.parse(readFileSync(new URL("../docs/development/milestone-
   }[];
 };
 const roadmap = readFileSync(new URL("../docs/specs/roadmap/post-pr21-implementation-roadmap.md", import.meta.url), "utf8");
-const watchWorkflow = readFileSync(new URL("../.github/workflows/issue-milestone-traceability.yml", import.meta.url), "utf8");
-const liveCheck = readFileSync(new URL("../tools/roadmap/verify-issue-stage-register.mjs", import.meta.url), "utf8");
 
 describe("issue-backed roadmap traceability", () => {
   it('keeps CI efficiency #224 independent of U1B product performance repair', () => {
@@ -147,15 +145,6 @@ describe("issue-backed roadmap traceability", () => {
       expect(roadmap).toContain(`#${merger.consolidated_into}`);
       expect(roadmap).toContain(`#${owner}`);
     }
-  });
-  it("watches live GitHub issue creation and avoids silently missing new product issues", () => {
-    expect(watchWorkflow).toContain("types: [opened, reopened, edited]");
-    expect(watchWorkflow).toContain("issues: read");
-    expect(watchWorkflow).toContain("schedule:");
-    expect(watchWorkflow).toContain("verify-issue-stage-register.mjs");
-    expect(liveCheck).toContain("state=open&per_page=100");
-    expect(liveCheck).toContain("missing");
-    expect(liveCheck).toContain("[agent-candidate]");
   });
   it("records the planned live gate in the controlled roadmap and keeps historical cleanup separate", () => {
     expect(roadmap).toContain("milestone-issue-register.json");

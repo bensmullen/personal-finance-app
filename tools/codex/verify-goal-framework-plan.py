@@ -47,7 +47,7 @@ def safe_path(path):
     return (len(parts) >= 2 and "." in parts[-1]) or base in {"AGENTS.md", "package.json", "package-lock.json", "playwright.config.ts", "stryker.config.mjs"}
 
 
-def check(plan, registry):
+def check(plan, registry, *, projected=False):
     """Malformed shape is a validation failure, not an uncaught KeyError."""
     errors = []
     def need(ok, message):
@@ -87,9 +87,9 @@ def check(plan, registry):
             for dep in w["depends_on"]:
                 need(type(dep) is int and dep in by_issue and by_issue[dep]["phase"] <= w["phase"], "future phase dependency")
             row = rows.get(w["issue"], {})
-            need(row.get("blocking_gate") == "GOAL_FRAMEWORK_" + w["phase"], "register gate")
-            need(row.get("depends_on") == w["depends_on"], "register dependencies")
-            need(row.get("spec_requirement_ids") == w["requirements"], "register requirements")
+            need(row.get("blocking_gate") == "GOAL_FRAMEWORK_" + w["phase"], "allocation gate")
+            need(row.get("depends_on") == w["depends_on"], "allocation dependencies")
+            need(row.get("spec_requirement_ids") == w["requirements"], "allocation requirements")
         need(covered == requirements, "unowned requirement")
         for p in plan["phases"]:
             need(p["gate"] == "GOAL_FRAMEWORK_" + p["id"], "phase gate identity")
@@ -97,7 +97,11 @@ def check(plan, registry):
             need(set(p["issues"]) == expected and len(p["issues"]) == len(expected), "phase allocation")
             gate = registry["stage_gates"].get(p["gate"], {})
             ids = gate.get("required_issue_numbers", [])
-            need(set(ids) == expected | ({plan["goal_issue"]} if p["id"] == "P4" else set()) and len(ids) == len(set(ids)), "register phase allocation")
+            required = expected | ({plan["goal_issue"]} if p["id"] == "P4" else set())
+            valid_ids = required <= set(ids) if projected else required == set(ids)
+            need(valid_ids and len(ids) == len(set(ids)), "phase gate allocation")
+            for number in ids:
+                need(rows.get(number, {}).get("blocking_gate") == p["gate"], "phase gate owner")
             need(bool(p["exit"].strip()), "phase exit")
         active, complete = set(), set()
         def visit(number):
@@ -130,9 +134,10 @@ def check(plan, registry):
         for a in audits:
             need(bool(a["issues"]) and len(a["issues"]) == len(set(a["issues"])) and set(a["issues"]) <= set(by_issue), "audit ownership")
         # This engineering goal must never become a hidden product prerequisite.
+        goal_issues = set(by_issue) | {plan["goal_issue"]}
         for row in registry["issues"]:
-            if row["issue_number"] not in set(by_issue) | {plan["goal_issue"]}:
-                need(not set(row["depends_on"]) & (set(by_issue) | {plan["goal_issue"]}), "product dependency contamination")
+            if row["issue_number"] not in goal_issues and (not projected or row["blocking_gate"] not in {p["gate"] for p in phases.values()}):
+                need(not set(row["depends_on"]) & goal_issues, "product dependency contamination")
     except (KeyError, TypeError, ValueError, AttributeError):
         errors.append("malformed plan/register shape")
     return errors
@@ -149,6 +154,16 @@ def check_documents(contents, plan):
         if set(found) != set(expected) or len(found) != len(expected):
             errors.append("missing/duplicate reference definitions: " + name)
     return errors
+
+
+def snapshot_registry(report):
+    """Allocation snapshots are offline inputs with origin/freshness hints only."""
+    snapshot = report["snapshot"]
+    if (report["status"] != "LIVE_METADATA_TRACEABILITY_NON_AUTHORIZING" or
+            report["authority"] != "issue_metadata" or snapshot["origin"] != REPOSITORY or
+            not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z", snapshot["generated_at"])):
+        raise ValueError("invalid allocation snapshot envelope")
+    return snapshot["registry"]
 
 
 def contract_errors(issue, work, validate, audits):
@@ -205,6 +220,15 @@ def self_test(plan, registry):
         mutation(p,r)
         if not check(p,r):
             raise ValueError("invalid plan accepted")
+    r = copy.deepcopy(registry)
+    gate = "GOAL_FRAMEWORK_P1"
+    r["issues"].append(dict(issue_number=999999, blocking_gate=gate, depends_on=[363]))
+    r["stage_gates"][gate]["required_issue_numbers"].append(999999)
+    if check(plan, r, projected=True) or not check(plan, r):
+        raise ValueError("new metadata task must not require a committed register row")
+    r["stage_gates"][gate]["required_issue_numbers"].remove(363)
+    if not check(plan, r, projected=True):
+        raise ValueError("projected allocation dropped a planned obligation")
     unsafe = [".", "**", "*", "../x", "/tmp/x", "C:/x", "tools/../x", "tools//x", "tools/**", "docs/development/**", "src/x.ts", "ui/x.tsx", ".codex/runtime/a.json", "test/?.ts", "test/[ab].ts", "tools/codex", "docs/development", ".github/workflows"]
     if any(safe_path(p) for p in unsafe) or not safe_path("tools/codex/goal-framework/schemas/**"):
         raise ValueError("path negative failed")
@@ -234,7 +258,7 @@ def self_test(plan, registry):
         changed[name] = changed[name].replace(identifier, identifier + "-missing")
         if not check_documents(changed, plan):
             raise ValueError("missing reference definition accepted")
-    return {"positive": 3, "negative": len(mutations)+len(unsafe)+3+len(bad)+4}
+    return {"positive": 4, "negative": len(mutations)+len(unsafe)+3+len(bad)+5}
 
 
 def hook_parser():
@@ -281,6 +305,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--self-test",action="store_true")
     parser.add_argument("--live-contracts",action="store_true")
+    parser.add_argument("--allocation-snapshot", type=Path, help="check generated allocation offline, without a committed register")
     args = parser.parse_args()
     try:
         if hasattr(signal,"SIGALRM"):
@@ -293,8 +318,13 @@ def main():
                 raise ValueError("unsafe/oversized reference")
             return path.read_text()
         plan = decode(read(DOCS/"plan.json"))
-        registry = decode(read(ROOT/"docs/development/milestone-issue-register.json"))
-        errors = check(plan,registry)
+        if args.allocation_snapshot:
+            if args.self_test:
+                raise ValueError("built-in fixtures require the baseline register")
+            registry = snapshot_registry(decode(read(args.allocation_snapshot)))
+        else:
+            registry = decode(read(ROOT/"docs/development/milestone-issue-register.json"))
+        errors = check(plan, registry, projected=args.allocation_snapshot is not None)
         if errors:
             raise ValueError("; ".join(errors))
         contents = {name: read(DOCS/name) for name in plan["documents"]}
@@ -302,6 +332,8 @@ def main():
         if errors:
             raise ValueError("; ".join(errors))
         report = {"status":"PLAN_VALID_NOT_IMPLEMENTED","work_packages":len(plan["work_packages"]),"requirements":len(plan["requirements"])}
+        if args.allocation_snapshot:
+            report["allocation"] = "OFFLINE_SNAPSHOT_NON_AUTHORIZING"
         if args.self_test:
             report["self_test"] = self_test(plan,registry)
         if args.live_contracts:
