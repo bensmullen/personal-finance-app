@@ -131,20 +131,20 @@ function browserReport(path: string, titles: string[], variant?: "flaky" | "empt
   };
 }
 
-const browserShards = [44, 44, 43, 43].map((count, shard) => {
+const browserShards = [44, 44, 44, 43].map((count, shard) => {
   const path = shard === 0 ? "e2e/u1b-low-input-forecast.spec.ts" : `e2e/fixture-${shard}.spec.ts`;
   const titles = Array.from({ length: count }, (_, i) => "synthetic browser case " + (i + 1));
   return { path, titles, selected: titles.map((title, i) => ({ id: path + `:${i + 1}:1 › ` + title })) };
 });
 const browserIds = browserShards.flatMap(({ selected }) => selected.map(({ id }) => id)).sort();
 
-function archive(attempt: number, variant?: "flaky" | "empty", wrongInventory = false) {
+function archive(attempt: number, variant?: "flaky" | "empty", wrongInventory = false, manualOrdinaryCount = browserIds.length) {
   const titles = variant === "empty" ? [] : registryData.applicable
     .flatMap(({ evidence }) => evidence.filter(({ path }) => path === spec).flatMap(({ cases }) => cases));
   const cases = [...new Set(titles)];
   const contents: Record<string, string> = {
     "inventory.json": JSON.stringify({ sha: merge, attempt, ref: workflow.ref, run_id: 23,
-      ordinary_count: browserIds.length, ux_count: 175,
+      ordinary_count: manualOrdinaryCount, ux_count: manualOrdinaryCount + 1,
       ordinary_digest: wrongInventory ? "9".repeat(64) : hash(Buffer.from(JSON.stringify(browserIds))), ux_digest: "1".repeat(64),
       manual: cases.map((title, index) => spec + `:${index + 1}:1 › ` + title) }),
     "report.json": JSON.stringify(browserReport(spec, cases, variant)),
@@ -180,7 +180,7 @@ function provider(options: {
   ordinary?: boolean; noBrowser?: boolean; wrongAssociation?: boolean; wrongCheckout?: boolean;
   forgedCheckHead?: boolean; wrongAttempt?: boolean; wrongShard?: boolean; wrongBranch?: boolean;
   changedGoal?: boolean; omitAggregateProof?: boolean; duplicateCheckout?: boolean; workerCheckout?: boolean;
-  wrongBrowserInventory?: boolean;
+  wrongBrowserInventory?: boolean; manualOrdinaryCount?: number; omitBrowserAssignment?: boolean;
   unitFailure?: "timeout" | "assertion" | "ambiguous"; ordinaryOutcome?: string; ordinaryAttempts?: number;
 } = {}) {
   const conclusions = options.conclusions ?? ["success"];
@@ -223,10 +223,12 @@ function provider(options: {
     return job(400 + round * 30 + index, 24, options.wrongAttempt ? round + 2 : round + 1, name, conclusion);
   }));
   const manualJobs = conclusions.map((conclusion, i) => job(101 + i, 23, i + 1, "household-readiness", conclusion));
-  const archives = conclusions.map((_, i) => archive(i + 1, options.variant, options.wrongBrowserInventory));
+  const archives = conclusions.map((_, i) => archive(i + 1, options.variant, options.wrongBrowserInventory,
+    options.manualOrdinaryCount));
   const shardArtifacts = ordinaryPlan.flatMap(({ job: name, artifact }) => {
     const shard = /^(unit|e2e) \(shard (\d)/.exec(name);
-    if (!shard || !artifact || (shard[1] === "e2e" && options.noBrowser)) return [];
+    if (!shard || !artifact || (shard[1] === "e2e" && options.noBrowser) ||
+      (name === "e2e (shard 4/4)" && options.omitBrowserAssignment)) return [];
     const failure = name === "unit (shard 2/3)" ? options.unitFailure : undefined;
     return [{ name: artifact, data: shardArchive(shard[1]!, Number(shard[2]), failure, options.wrongShard) }];
   });
@@ -292,15 +294,18 @@ function provider(options: {
   };
 }
 
-it("binds a positive provider observation while household gaps and absent reviews keep UAT pending", async () => {
+it("binds a grown ordinary browser inventory while household gaps and absent reviews keep UAT pending", async () => {
   const input = ordinarySelection(true, true);
   const result = await collectGoalEvidence(input, provider({ ordinary: true }), now, verifyPlan(input));
   expect(result.complete).toBe(true);
   expect(verificationDraft(result)).toMatchObject({ schema: "VERIFICATION_EVIDENCE_V1", disposition: "pending" });
   expect(result.checks.slice(0, 3).map((check: { outcome: string }) => check.outcome))
     .toEqual(["PASS", "NOT_APPLICABLE", "NOT_APPLICABLE"]);
-  expect(result.runs.find((run: { id: number }) => run.id === 24).attempts[0].jobs
-    .filter((job: { artifact?: unknown }) => job.artifact)).toHaveLength(7);
+  const ordinaryJobs = result.runs.find((run: { id: number }) => run.id === 24).attempts[0].jobs;
+  expect(ordinaryJobs.filter((job: { artifact?: unknown }) => job.artifact)).toHaveLength(7);
+  expect(ordinaryJobs.slice(-4)).toMatchObject(Array.from({ length: 4 }, () => ({
+    outcome: "PASS", artifact: { ordinary_inventory: { count: 175 } },
+  })));
   const readiness = householdReadiness({ collection: result, registryBytes: raw(registry), now });
   expect(readiness.disposition).toBe("NOT_READY");
   expect(readiness.browser_artifact.id).toBe("github-artifact:300");
@@ -324,11 +329,37 @@ it("authenticates the ordinary source head and separate checkout, including a sk
     .toEqual(Array.from({ length: 4 }, () => "NOT_APPLICABLE"));
 });
 
-it("refuses a manual discovery digest that disagrees with the exact ordinary assignments", async () => {
+it.each([
+  { wrongBrowserInventory: true }, { manualOrdinaryCount: browserIds.length + 1 },
+])("refuses a valid-sized manual inventory that differs from the ordinary inventory (%j)", async (override) => {
   const input = ordinarySelection(true, true);
-  const result = await collectGoalEvidence(input, provider({ ordinary: true, wrongBrowserInventory: true }), now, verifyPlan(input));
+  const result = await collectGoalEvidence(input, provider({ ordinary: true, ...override }), now, verifyPlan(input));
   expect(result.complete).toBe(false);
   expect(result.issues).toContainEqual({ code: "BROWSER_DISCOVERY_ASSIGNMENT_MISMATCH" });
+});
+
+it.each([0, 10_001, 175.5, Number.MAX_SAFE_INTEGER + 1])("refuses an invalid manual ordinary count of %s", async (count) => {
+  const input = ordinarySelection(true, true);
+  const result = await collectGoalEvidence(input, provider({ ordinary: true, manualOrdinaryCount: count }), now, verifyPlan(input));
+  expect(result.ordinary_complete).toBe(true);
+  expect(result.complete).toBe(false);
+  expect(result.runs.find((run: { id: number }) => run.id === 23).attempts[0].jobs[0]).toMatchObject({
+    outcome: "INCOMPLETE", artifact_issue: "MANUAL_INVENTORY",
+  });
+});
+
+it.each([true, false])("requires all four ordinary assignments for household readiness (ordinary E2E selected: %s)", async (selected) => {
+  const input = ordinarySelection(selected, true);
+  const result = await collectGoalEvidence(input, provider({ ordinary: true, noBrowser: !selected,
+    omitBrowserAssignment: selected }), now, verifyPlan(input));
+  expect(result.ordinary_complete).toBe(!selected);
+  expect(result.checks[0].outcome).toBe("PASS");
+  expect(result.complete).toBe(false);
+  expect(result.issues).toContainEqual({ workflow: workflow.id, code: "ORDINARY_BROWSER_ASSIGNMENT_MISSING" });
+  if (selected) expect(result.checks.at(-1).outcome).toBe("INCOMPLETE");
+  expect(householdReadiness({ collection: result, registryBytes: raw(registry), now })).toMatchObject({
+    disposition: "NOT_READY", blockers: expect.arrayContaining(["EXACT_CANDIDATE_EVIDENCE_MISSING"]),
+  });
 });
 
 it.each(["wrongAssociation", "wrongCheckout", "forgedCheckHead", "wrongAttempt", "wrongShard", "wrongBranch",

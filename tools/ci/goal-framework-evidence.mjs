@@ -27,6 +27,7 @@ const limits = Object.freeze({
 });
 const bytesDigest = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const positive = (value) => Number.isSafeInteger(value) && value > 0;
+const validOrdinaryBrowserCount = (count) => positive(count) && count <= 10_000;
 const codeOf = (error) => error instanceof EvidenceError ? error.message : 'PROVIDER_UNAVAILABLE';
 function attested(verify, boundary, binding) {
   try { return verify?.(boundary, binding) === true; } catch { return false; }
@@ -278,9 +279,10 @@ const identityPaths = [
   'test/fixtures/goalFramework/households/guided.json', 'test/d2/integrated/jointHousehold/s8Five/oracle.ts',
 ];
 const shardJob = /^(unit|e2e) \(shard (\d)\/(3|4)\)$/;
+const ordinaryBrowserJobs = [1, 2, 3, 4].map((i) => 'e2e (shard ' + i + '/4)');
 const ordinaryJobs = ['verification-plan', 'spec', 'architecture', 'codex-tooling', 'typecheck', 'build',
   'forecast-feasibility', 'test', 'deploy', ...[1, 2, 3].map((i) => 'unit (shard ' + i + '/3)'),
-  ...[1, 2, 3, 4].map((i) => 'e2e (shard ' + i + '/4)')];
+  ...ordinaryBrowserJobs];
 
 function validateSelection(input) {
   const { task, candidate, plan, workflows, inputs, implementer } = input;
@@ -475,6 +477,7 @@ function inspectTestEvidence(check, json, runnerLog, candidate, run, witnesses, 
       proof.kind === kind && proof.count === Number(count) && proof.shards?.length === Number(count) &&
       execution?.schema === 1 && execution.sha === candidate.merge_candidate_sha && execution.kind === kind &&
       String(execution.runAttempt) === String(run.run_attempt), 'SHARD_IDENTITY');
+    if (kind === 'e2e') requireEvidence(validOrdinaryBrowserCount(proof.inventory?.length), 'SHARD_INVENTORY');
     try { validatePartition(proof.inventory, proof.shards); } catch { throw new EvidenceError('SHARD_INVENTORY'); }
     selected = proof.shards[Number(index) - 1];
     requireEvidence(selected.length > 0, 'EMPTY_SHARD');
@@ -539,7 +542,8 @@ function inspectTestEvidence(check, json, runnerLog, candidate, run, witnesses, 
       const inventory = json.get('inventory.json');
       requireEvidence(inventory?.sha === candidate.merge_candidate_sha &&
         String(inventory.attempt) === String(run.run_attempt) && String(inventory.run_id) === String(run.id) &&
-        inventory.ref === ref && inventory.ordinary_count === 174 && hash.test(inventory.ordinary_digest) &&
+        inventory.ref === ref && validOrdinaryBrowserCount(inventory.ordinary_count) &&
+        typeof inventory.ordinary_digest === 'string' && hash.test(inventory.ordinary_digest) &&
         inventory.ux_count > inventory.ordinary_count && hash.test(inventory.ux_digest) &&
         Array.isArray(inventory.manual), 'MANUAL_INVENTORY');
       requireEvidence(inventory.manual.length === 4 && unique(inventory.manual) &&
@@ -854,8 +858,14 @@ export async function collectGoalEvidence(input, provider, now = Date.now(), ver
     jobs.filter(({ outcome, artifact }) => outcome === 'PASS' && artifact?.ordinary_inventory)
       .map(({ artifact }) => digest(artifact.ordinary_inventory))));
   if (new Set(browserInventories).size > 1) issues.push({ code: 'BROWSER_DISCOVERY_ASSIGNMENT_MISMATCH' });
+  const manualWorkflow = workflows.find(({ path }) => workflowEvents.get(path) === 'workflow_dispatch');
+  // Ordinary completion also requires every selected job in each attempt and coherent shard assignments.
+  if (manualWorkflow && !ordinaryBrowserJobs.every((job) => plan.some((check, index) =>
+    check.job === job && check.selection === 'selected' && checks[index].outcome === 'PASS'))) {
+    issues.push({ workflow: manualWorkflow.id, code: 'ORDINARY_BROWSER_ASSIGNMENT_MISSING' });
+  }
   const ordinary_complete = workflowComplete('pull_request');
-  const complete = ordinary_complete && (!workflows.some(({ ref }) => ref) || workflowComplete('workflow_dispatch'));
+  const complete = ordinary_complete && (!manualWorkflow || workflowComplete('workflow_dispatch'));
   return {
     task, candidate, implementer, observed_at: Number.isFinite(now) ? new Date(now).toISOString() : null,
     selection_digest: digest({ task, candidate, workflows, inputs, implementer }),
@@ -1006,6 +1016,7 @@ export function browserInventory(ordinary, manual, ux) {
     return result.sort();
   };
   const normal = ids(ordinary), profile = ids(manual), optIn = ids(ux);
+  requireEvidence(validOrdinaryBrowserCount(normal.length), 'BROWSER_INVENTORY_LIMIT');
   requireEvidence(normal.every((id) => !id.includes(manualFile) && !id.includes(uxFile)) &&
     profile.every((id) => id.startsWith(manualFile)) &&
     optIn.every((id) => !id.includes(manualFile)) &&

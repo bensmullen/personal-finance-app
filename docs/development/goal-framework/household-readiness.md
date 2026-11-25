@@ -102,8 +102,12 @@ ref resolves that ref's commit and can provide diagnostic evidence. Only a run
 at the integration SHA satisfies exact-candidate collection.
 
 The workflow first compares ordinary discovery, exclusive household discovery
-and the existing UX opt-in. The collector compares the 174 ordinary discovery
-identities with selected ordinary E2E shard assignments when both are present.
+and the existing UX opt-in. The collector requires the manual run's ordinary
+discovery count and identity digest to match the coherent assignment inventory
+from all four selected, passing ordinary E2E shards for the same integration
+SHA. The count must be a positive safe integer at most 10,000. Missing or
+divergent assignments block household readiness. A workflow-proven E2E
+exclusion can still satisfy ordinary verification on its own.
 The four normal-user cases use one Chromium worker and no Playwright retries.
 They cover initialization, exact input/export amounts, accessible income
 navigation, keyboard entry, edit/cancel/discard, saved reload on desktop,
