@@ -95,10 +95,13 @@ describe("optional shadow preflight", () => {
     const decision = planLocalPreflight(preflightFixture(), candidate, host);
     const sealed = { decision: { id: decision.id, digest: digest(decision) }, patch_digest: decision.patch_digest,
       active_authorization: decision.active_authorization, tool_digest: decision.tool_digest, unit: decision.unit,
+      lockfile_digest: decision.lockfile_digest, profile: decision.profile,
       receipt: profileRef("protected-post-tool-use"), host_observed: true, outcome: "FAIL", timeout_observed: true };
     expect(localPreflightAdvisory(decision, { verify, readAttempt: () => null }).outcome).toBe("NOT_ATTEMPTED");
     expect(localPreflightAdvisory(decision, { verify, readAttempt: () => ({ ...sealed, host_observed: false }) }).outcome)
       .toBe("NOT_OBSERVED");
+    expect(localPreflightAdvisory(decision, { verify, readAttempt: () => ({ ...sealed, outcome: "INCOMPLETE" }) }))
+      .toMatchObject({ outcome: "INCOMPLETE", timeout_observed: true });
     for (const outcome of ["PASS", "FAIL", "TIMEOUT", "SKIP", "INCOMPLETE"]) {
       const observed = { ...sealed, outcome, timeout_observed: ["FAIL", "TIMEOUT"].includes(outcome) };
       expect(localPreflightAdvisory(decision, { verify, readAttempt: () => observed }))
@@ -126,7 +129,8 @@ const operations = ["probe", "prepare", "launch", "observe", "checkpoint", "stop
   "budget_enforcement", "terminal_acknowledgement", "separate_credentials", "writer_fencing"];
 const extras = ["hard_ceiling", "deadline_watchdog", "host_isolation", "foreground_capacity", "kill_switch",
   "publication_fence", "late_usage", "artifact_retention", "credential_separation", "native_identity"];
-const reservation = { id: "reservation-1", repository, task_issue: 368 };
+const reservation = { id: "reservation-1", repository, task_issue: 368,
+  runtime_profile_ref: profileRef("distinct-gf05-runtime-profile") };
 const binding = { task_issue: 368, reservation: { id: reservation.id, digest: digest(reservation) },
   native_run_id: null, fence: 4 };
 
@@ -138,7 +142,7 @@ function runnerFixture(surface: "local" | "cloud", certified = false) {
       runtime_version: "runtime-v1", tool_version: "tool-v1", authentication_ref: profileRef("synthetic-auth"),
       operations: Object.fromEntries(operations.map((name) => [name, { ...capability }])) },
     transport: "fixture-transport", config_digest: digest("config"), permissions_digest: digest("permissions"),
-    control_revision: head, resource_profile: profileRef("distinct-gf05-runtime-profile"),
+    control_revision: head, runtime: "gf05-fixture-runtime", resource_profile: reservation.runtime_profile_ref,
     native: Object.fromEntries(extras.map((name) => [name, { ...capability }])),
   };
   const row: { reservation: typeof reservation; status: string; billed: number | null; liability: number;
@@ -146,8 +150,14 @@ function runnerFixture(surface: "local" | "cloud", certified = false) {
     reservation, status: "ambiguous", billed: null, liability: 50, native_run_id: null, actual_profile_status: "unknown",
   };
   const task = { phase: "checkpoint-pending", fence: 4, native_run_id: "native-1", branch: workspace.branch,
-    budget: binding.reservation, intent: { kind: "checkpoint", id: "intent-1", expected: head, desired: "c".repeat(40) } };
+    authorization_id: "approved", head_sha: head, budget: binding.reservation,
+    intent: { kind: "checkpoint", id: "intent-1", expected: head, desired: "c".repeat(40),
+      state: "open", deadline: Date.parse(deadline) } };
   const preparation = vi.fn();
+  const admission = { schema: "PFM_ADAPTER_INTENT_V1", operation: "launch", repository, surface, task_issue: 368,
+    authorization_id: task.authorization_id, branch: workspace.branch, head_sha: head, resource_operation: "implementation",
+    reservation: binding.reservation, fence: binding.fence, resource_profile: reservation.runtime_profile_ref,
+    runner_binding: profileRef("runner-binding") };
   const effects = new Map<string, string>();
   const calls = vi.fn();
   const commitEffect = vi.fn((intent: { idempotency_key: string; operation: string }) => {
@@ -166,6 +176,7 @@ function runnerFixture(surface: "local" | "cloud", certified = false) {
     return { intent_digest: intentDigest, status: prior ? "duplicate" : "recorded", evidence: profileRef("effect") };
   });
   const host = { verify, clock: () => now, inventory: () => runtime, resources: { lookup: () => row }, preparation,
+    readAdmission: () => admission,
     lifecycle: { inspect: () => task }, commitEffect };
   return { host, runtime, row, task, calls, adapter: createRunnerAdapter({ repository, surface, host }) };
 }
@@ -174,6 +185,8 @@ describe("local and cloud runner adapters", () => {
   it.each(["local", "cloud"] as const)("keeps %s uncertified inventory separate from dispatch", (surface) => {
     const fixture = runnerFixture(surface);
     expect(fixture.adapter.probe()).toMatchObject({ mode: surface === "local" ? "manual-v3" : "read-only" });
+    if (surface === "local") expect(fixture.adapter.prepare({ task_issue: 368 }).preflight)
+      .toEqual({ selection: "NOT_SELECTED", reason: "execution-unavailable" });
     for (const operation of ["prepare", "launch", "resume"]) {
       expect(fixture.adapter[operation]({ task_issue: 368 }, profileRef("checkpoint")).status).toBe("unavailable");
     }
@@ -181,12 +194,10 @@ describe("local and cloud runner adapters", () => {
     expect(fixture.host.commitEffect).not.toHaveBeenCalled();
   });
 
-  it("fails closed on the GF-01 and GF-05 profile reference conflict even with all synthetic controls", () => {
+  it("requires actual preparation independently of observed controls", () => {
     const fixture = runnerFixture("local", true);
     expect(fixture.adapter.probe().mode).toBe("controls-observed");
-    expect(fixture.adapter.launch({ task_issue: 368 })).toMatchObject({
-      status: "unavailable", reason: "canonical-profile-reference-conflict",
-    });
+    expect(() => fixture.adapter.launch({ task_issue: 368 })).toThrow("ADAPTER_PREPARATION");
     expect(fixture.host.commitEffect).not.toHaveBeenCalled();
     const rejecting = createRunnerAdapter({ repository, surface: "local", host: {
       ...fixture.host, verify: (boundary: string) => boundary !== "adapter_capability",
@@ -211,9 +222,29 @@ describe("local and cloud runner adapters", () => {
     fixture.row.status = "terminal";
     fixture.row.billed = 70;
     expect(fixture.adapter.observe(binding)).toMatchObject({ status: "terminal", billed: 70 });
-    expect(() => fixture.adapter.checkpoint({ ...binding, fence: 3 })).toThrow("CHECKPOINT_STALE");
+    expect(() => fixture.adapter.checkpoint({ ...binding, fence: 3 })).toThrow("RUN_BINDING");
     expect(fixture.adapter.checkpoint(binding).status).toBe("recorded");
     expect(fixture.adapter.checkpoint(binding).status).toBe("duplicate");
     expect(fixture.calls).toHaveBeenCalledTimes(2);
+  });
+
+  it("reconciles malformed, conflicting or unverified effect receipts after dispatch", () => {
+    for (const result of [null, { status: "recorded" }, { status: "recorded", intent_digest: digest("different") }]) {
+      const fixture = runnerFixture("local");
+      fixture.host.commitEffect.mockImplementationOnce(() => result as never);
+      expect(fixture.adapter.stop(binding).status).toBe("reconcile");
+      expect(fixture.host.commitEffect).toHaveBeenCalledTimes(1);
+    }
+    const fixture = runnerFixture("local");
+    const verifier = (boundary: string) => boundary !== "adapter_effect_receipt";
+    fixture.row.status = "terminal";
+    fixture.row.native_run_id = "native-1";
+    const adapter = createRunnerAdapter({ repository, surface: "local", host: { ...fixture.host, verify: verifier } });
+    expect(adapter.checkpoint(binding).status).toBe("reconcile");
+    expect(adapter.checkpoint(binding).status).toBe("reconcile");
+    expect(fixture.calls).toHaveBeenCalledTimes(1);
+    const other = createRunnerAdapter({ repository, surface: "cloud", host: fixture.host });
+    expect(() => other.stop(binding)).toThrow("RUN_BINDING");
+    expect(fixture.host.commitEffect).toHaveBeenCalledTimes(2);
   });
 });

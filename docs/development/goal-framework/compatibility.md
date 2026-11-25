@@ -47,17 +47,15 @@ published checkpoint and fresh grant on the same lineage. Cloud admission
 also requires local certification. Runtime, permissions, hook or profile
 changes require fresh evidence.
 
-**Native admission blocker.** GF-01's `validateExecutionGrant` binds
-`grant.runtime_profile_ref` to a closed `RUNNER_CAPABILITIES_V1` record
-and requires `reservation.runtime_profile_ref` to equal that reference.
-GF-05's `selectProfile` independently resolves the reservation reference
-to a different registry record with model, reasoning, surface, runtime,
-permitted operations and risk range. The two records have different
-canonical bytes and serve different purposes. The adapter returns
-`canonical-profile-reference-conflict` when independently observed
-references differ. Reviewers need an approved contract revision that
-authenticates both references independently and binds their relationship
-to the same runtime. Both canonical sources are read-only under #368.
+The grant names `RUNNER_CAPABILITIES_V1` and the reservation names the
+distinct GF-05 registry profile. The grant pins `RUNNER_PROFILE_BINDING_V1`
+to authenticate the two references against the exact installed tool,
+runtime identifier, model, effort, credentials, config, permissions,
+merged parser/control revision, reservation and workspace fence. GF-05
+resolves the registry profile at reserve and begin. Existing unbound grants
+require fresh issuance for live use. The synthetic composition fixture uses
+both journals and exercises cross-surface resume. Actual native execution
+on both surfaces still requires independent certification.
 
 ## Optional preflight and next gates
 
@@ -72,7 +70,8 @@ clean worktree.
 `LOCAL_PREFLIGHT_DECISION_V1` stores the binding and finite reason.
 `PFM_LOCAL_PREFLIGHT_ADVISORY_V1` references that decision and the protected
 receipt. A never-invoked check is `NOT_ATTEMPTED`. An invocation without
-verifiable host evidence is `NOT_OBSERVED` and remains incomplete. The
+verifiable host evidence is `NOT_OBSERVED`. A matching observed interruption
+seals `INCOMPLETE` and its diagnostic references. The
 helper keeps the shared 60-second compiler and 30-second unit budgets,
 records phase timings and case progress in one private stream, and caps
 the aggregate runner log at 1 MiB. The existing hook owns merged-tool

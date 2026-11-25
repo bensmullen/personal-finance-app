@@ -145,13 +145,14 @@ export function localPreflightAdvisory(raw, host) {
   if (attempt === null) return advisory('NOT_ATTEMPTED', decision.reason);
   const bound = copy(attempt);
   requireResource(digest(bound.decision) === digest(decisionRef) && bound.patch_digest === decision.patch_digest
-    && bound.tool_digest === decision.tool_digest && bound.unit === decision.unit
+    && bound.tool_digest === decision.tool_digest && bound.lockfile_digest === decision.lockfile_digest
+    && digest(bound.profile) === digest(decision.profile) && bound.unit === decision.unit
     && digest(bound.active_authorization) === digest(decision.active_authorization), 'PREFLIGHT_ATTEMPT_BINDING');
   resourceRef(bound.receipt);
   resourceAttest(host.verify, 'local_preflight_hash_bound_hook_attempt', bound);
   if (bound.host_observed === false) return advisory('NOT_OBSERVED', 'protected-result-missing', bound.receipt);
   requireResource(bound.host_observed === true && outcomes.includes(bound.outcome)
     && typeof bound.timeout_observed === 'boolean' && (bound.outcome !== 'TIMEOUT' || bound.timeout_observed)
-    && (!bound.timeout_observed || ['TIMEOUT', 'FAIL'].includes(bound.outcome)), 'PREFLIGHT_OUTCOME');
+    && (!bound.timeout_observed || ['TIMEOUT', 'FAIL', 'INCOMPLETE'].includes(bound.outcome)), 'PREFLIGHT_OUTCOME');
   return advisory(bound.outcome, 'protected-host-result', bound.receipt, bound.timeout_observed);
 }

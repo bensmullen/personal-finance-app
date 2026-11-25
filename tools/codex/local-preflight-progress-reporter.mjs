@@ -9,12 +9,18 @@ const progress = process.env.PFM_PREFLIGHT_PROGRESS;
 const MAX_EVENTS = 4096;
 let events = 0;
 const overflowStatuses = new Set();
+let writeFailed = false;
+const isTimeout = error => /timeout/i.test(String(error?.name ?? ''))
+  || /\b(?:test|hook) timed out\b/i.test(String(error?.message ?? ''));
 
 function append(event) {
-  appendFileSync(progress, JSON.stringify(event) + '\n', {
-    flag: constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW | constants.O_NONBLOCK | constants.O_CREAT,
-    mode: 0o600,
-  });
+  try {
+    appendFileSync(progress, JSON.stringify(event) + '\n', {
+      flag: constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    });
+  } catch {
+    writeFailed = true;
+  }
 }
 
 function record(phase, testCase, status) {
@@ -43,10 +49,18 @@ export default class LocalPreflightProgressReporter {
     // Vitest's per-case timeout exits the file nonzero, but must not become an
     // ordinary FAIL eligible for a corrective local rerun. Inspect messages
     // only in-process; never serialize assertion content into progress logs.
-    const timedOut = state === 'failed' && (result?.errors ?? []).some(error =>
-      /timeout/i.test(String(error?.name ?? '')) ||
-      /\b(?:test|hook) timed out\b/i.test(String(error?.message ?? '')));
+    const timedOut = state === 'failed' && (result?.errors ?? []).some(isTimeout);
     record('end', testCase, timedOut ? 'timed_out' :
       ['passed', 'failed', 'skipped', 'todo'].includes(state) ? state : 'incomplete');
+  }
+
+  onTestRunEnd(modules, errors, reason) {
+    if (!progress) return;
+    const runErrors = [...errors, ...modules.flatMap(module => module.errors())];
+    if (runErrors.some(isTimeout)) append({ phase: 'run-outcome', status: 'timed_out' });
+    if (runErrors.some(error => !isTimeout(error))) append({ phase: 'run-outcome', status: 'failed' });
+    if (!writeFailed && ['passed', 'failed'].includes(reason)) {
+      append({ phase: 'cases-complete', status: reason });
+    }
   }
 }

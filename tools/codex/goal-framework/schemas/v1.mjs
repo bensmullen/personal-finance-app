@@ -115,6 +115,12 @@ export const schemas = Object.freeze({
     surface: enumeration('local', 'cloud'), product: id, runtime_version: nullable(id), tool_version: nullable(id),
     authentication_ref: nullable(ref), operations: object(Object.fromEntries(capabilities.map((name) => [name, capability]))),
   }),
+  RUNNER_PROFILE_BINDING_V1: record('RUNNER_PROFILE_BINDING_V1', {
+    ...taskIdentity, runner_ref: ref, resource_profile_ref: ref, budget_reservation_ref: ref,
+    workspace_receipt_ref: ref, grant_id: id, authorization_id: id, writer_fence: revision,
+    surface: enumeration('local', 'cloud'), transport: id, config_digest: digest, permissions_digest: digest,
+    control_revision: sha, runtime: id, model: id, reasoning: id, expires_at: time, revocation_ref: nullable(ref),
+  }),
   VERIFICATION_EVIDENCE_V1: record('VERIFICATION_EVIDENCE_V1', {
     ...taskRevision, candidate, checks: array(check, 0, 128), capability_versions: array(id), fixture_versions: array(id),
     disposition: enumeration('pending', 'approved', 'changes_required'), reviewer_evidence: nullable(ref),

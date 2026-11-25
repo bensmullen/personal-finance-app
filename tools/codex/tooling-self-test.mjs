@@ -1170,46 +1170,68 @@ assert single(dict(hook_event_name='UserPromptSubmit', session_id='third', turn_
 }
 
 const taskSkill = fs.readFileSync(path.join(root, ".agents/skills/pfm-pr-task/SKILL.md"), "utf8");
+function reservePreflightWitness({ f, command }) {
+  f.claim(); f.dirty();
+  const tool = { tool_name: 'Bash', tool_use_id: 'helper-process-witness', tool_input: { command } };
+  assert(JSON.stringify(f.invoke('PreToolUse', tool)) === '{}', 'host reserves the exact helper command');
+  return tool;
+}
+
+function sealPreflightWitness({ f, state }, tool, result, report) {
+  f.invoke('PostToolUse', { ...tool, tool_response: { exit_code: result.status, stdout: result.stdout } });
+  const receipt = state().PREFLIGHT.result;
+  assert(receipt.host_observed && receipt.status === report.status && receipt.timeout_observed === report.timeoutObserved
+    && receipt.retry_eligible === report.retryEligible && receipt.progress === report.progress, 'host seals the exact helper result');
+  const push = f.invoke('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'git push origin codex/policy-self-test' } });
+  assert(Boolean(push.hookSpecificOutput?.permissionDecisionReason?.includes('LOCAL_PREFLIGHT_FAILED')) === (report.status === 'FAIL'),
+    'publication gate preserves a helper-observed failure');
+}
+
 // Exercise the sandbox-safe helper with synthetic process shims. No real
 // compiler/test suite or package installation is run by these fixtures.
-for (const failure of ['none', 'typecheck', 'unit', 'unit-timeout', 'unit-mixed']) {
-  const directory = path.join(temp, `bounded-helper-${failure}`);
-  for (const sub of ['.codex/runtime', 'node_modules/typescript/bin', 'node_modules/vitest']) {
-    fs.mkdirSync(path.join(directory, sub), { recursive: true });
-  }
-  // Mimic a sandbox-protected .codex/logs path. The trusted helper must never
-  // touch it, even when typecheck and the selected unit genuinely execute.
-  fs.writeFileSync(path.join(directory, '.codex/logs'), 'sandbox-protected');
+for (const failure of ['none', 'typecheck', 'unit', 'unit-timeout', 'unit-mixed',
+  'unit-invalid', 'unit-truncated', 'unit-oversized', 'unit-overflow-mixed']) {
+  const witness = preparePreflightHookFixture({ setup(directory) {
+  for (const sub of ['node_modules/typescript/bin', 'node_modules/vitest']) fs.mkdirSync(path.join(directory, sub), { recursive: true });
   fs.writeFileSync(path.join(directory, 'package.json'), JSON.stringify({ scripts: {
     typecheck: 'tsc --noEmit && tsc -p tsconfig.next.json',
   } }));
   fs.writeFileSync(path.join(directory, 'node_modules/typescript/bin/tsc'),
     `console.log('tsc', process.argv.slice(2).join(' ')); process.exit(${failure === 'typecheck' ? 1 : 0});`);
-  const progressCases = failure === 'unit-timeout'
+  const completeCases = JSON.stringify({ phase: 'cases-complete', status: failure === 'none' ? 'passed' : 'failed' }) + '\n';
+  let progressCases = failure === 'unit-timeout'
     ? JSON.stringify({ phase: 'end', status: 'timed_out', id: 'one' }) + '\n'
     : failure === 'unit-mixed' ? [
       JSON.stringify({ phase: 'end', status: 'timed_out', id: 'one' }),
       JSON.stringify({ phase: 'end', status: 'failed', id: 'two' }),
-    ].join('\n') + '\n' : '';
+    ].join('\n') + '\n' : failure === 'unit' ? JSON.stringify({ phase: 'end', status: 'failed', id: 'one' }) + '\n' : '';
+  if (failure === 'unit-overflow-mixed') progressCases = [
+    { phase: 'case-limit' }, { phase: 'case-overflow-outcome', status: 'timed_out' },
+    { phase: 'case-overflow-outcome', status: 'failed' },
+  ].map(event => JSON.stringify(event)).join('\n') + '\n';
+  if (failure === 'unit-invalid') progressCases = '{invalid}\n';
+  if (failure === 'unit-oversized') progressCases = ' '.repeat(512 * 1024) + '\n';
+  progressCases = failure === 'unit-truncated' ? completeCases.slice(0, -2) : progressCases + completeCases;
   fs.writeFileSync(path.join(directory, 'node_modules/vitest/vitest.mjs'),
     `import { appendFileSync } from 'node:fs';
 console.log('unit', process.argv.slice(2).join(' '));
 if (process.env.PFM_PREFLIGHT_PROGRESS) appendFileSync(process.env.PFM_PREFLIGHT_PROGRESS, ${JSON.stringify(progressCases)});
 process.exit(${failure === 'unit' || failure.startsWith('unit-') ? 1 : 0});`);
-  const data = JSON.stringify({ ACTIVE: true, WORKTREE: directory, AUTHORIZATION_ID: 'helper-test',
-    PREFLIGHT: { count: 1, test: 'test/affected.test.ts', patch: 'a'.repeat(64), nonce: 'b'.repeat(32) } });
-  fs.writeFileSync(path.join(directory, '.codex/runtime/owner.json'), data);
-  fs.writeFileSync(path.join(directory, '.codex/runtime/latest-task.json'), JSON.stringify({
-    path: 'owner.json', sha256: createHash('sha256').update(data).digest('hex'),
-  }));
-  const result = run(process.execPath, [path.join(root, 'tools/codex/limited-local-verification.mjs'),
+  } });
+  const directory = witness.f.repository;
+  const tool = reservePreflightWitness(witness);
+  // This protected path is a sentinel for unintended helper writes.
+  fs.writeFileSync(path.join(directory, '.codex/logs'), 'sandbox-protected');
+  const result = run(process.execPath, [path.join(directory, witness.helper),
     'test/affected.test.ts'], { cwd: directory });
   const expected = failure === 'none' ? 'PASS' : failure === 'unit-timeout' ? 'TIMEOUT' : 'FAIL';
   assert(result.status === (expected === 'FAIL' ? 1 : 0), 'bounded helper preserves process failure and classifies case timeout');
   const outcome = JSON.parse(result.stdout.split('PFM_PREFLIGHT_RESULT ')[1]?.trim() ?? 'null');
   assert(outcome?.status === expected, 'compact truthful host result');
-  assert(outcome.timeoutObserved === failure.startsWith('unit-'),
+  assert(outcome.timeoutObserved === ['unit-timeout', 'unit-mixed', 'unit-overflow-mixed'].includes(failure),
     'case timeout is explicit even when mixed with a separate assertion FAIL');
+  assert(outcome.schema === 2 && outcome.retryEligible === ['typecheck', 'unit'].includes(failure),
+    'only an ordinary failure with complete timeout classification admits a retry');
   const log = fs.readFileSync(path.join(directory, outcome.log), 'utf8');
   const stages = fs.readFileSync(path.join(directory, outcome.progress), 'utf8').trim().split('\n')
     .map(JSON.parse).filter(event => event.phase === 'stage-end');
@@ -1224,20 +1246,29 @@ process.exit(${failure === 'unit' || failure.startsWith('unit-') ? 1 : 0});`);
     'all raw test output remains in ignored diagnostics, not model context');
   assert(fs.readFileSync(path.join(directory, '.codex/logs'), 'utf8') === 'sandbox-protected',
     'sandboxed helper never writes to protected .codex paths');
-  const repeated = run(process.execPath, [path.join(root, 'tools/codex/limited-local-verification.mjs'),
+  fs.unlinkSync(path.join(directory, '.codex/logs'));
+  sealPreflightWitness(witness, tool, result, outcome);
+  const repeated = run(process.execPath, [path.join(directory, witness.helper),
     'test/affected.test.ts'], { cwd: directory });
   assert(repeated.status === 0 && repeated.stdout.includes('SKIP') && repeated.stdout.includes('no tests executed'),
     'the same reserved helper invocation cannot execute tests twice');
 }
 // Only these synthetic child processes see short timer deadlines. Check the
 // actual budgets passed to the timer independently from the test acceleration.
-for (const scenario of ['first-timeout', 'second-timeout', 'unit-timeout', 'unit-mixed-timeout', 'unit-interrupted']) {
-  const directory = path.join(temp, `phase-deadline-${scenario}`);
-  for (const sub of ['.codex/runtime', 'node_modules/typescript/bin', 'node_modules/vitest']) {
+for (const scenario of ['first-timeout', 'second-timeout', 'unit-timeout', 'unit-mixed-timeout',
+  'unit-interrupted', 'deadline-before-timer']) {
+  const witness = preparePreflightHookFixture({ setup(directory) {
+  for (const sub of ['node_modules/typescript/bin', 'node_modules/vitest']) {
     fs.mkdirSync(path.join(directory, sub), { recursive: true });
   }
   fs.writeFileSync(path.join(directory, 'timers.mjs'), `
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync } from 'node:fs';
+if (${scenario === 'deadline-before-timer'}) {
+  const clock = globalThis.performance;
+  Object.defineProperty(globalThis, 'performance', { value: {
+    now: () => clock.now() + (existsSync('elapsed-compiler-exit') ? 60_001 : 0),
+  } });
+}
 const original = globalThis.setTimeout;
 globalThis.setTimeout = (callback, delay, ...args) => {
   if (delay > 25_000 && delay <= 60_000) {
@@ -1252,6 +1283,10 @@ globalThis.setTimeout = (callback, delay, ...args) => {
   }));
   fs.writeFileSync(path.join(directory, 'node_modules/typescript/bin/tsc'), `
 const first = process.argv[2] === '--noEmit';
+if (${scenario === 'deadline-before-timer'}) {
+  require('node:fs').writeFileSync('elapsed-compiler-exit', '');
+  process.exit(1);
+}
 if (first ? ${scenario === 'first-timeout'} : ${scenario === 'second-timeout'}) setInterval(() => {}, 100);
 else process.stdout.write('x'.repeat(600_000));
 `);
@@ -1264,33 +1299,36 @@ appendFileSync(process.env.PFM_PREFLIGHT_PROGRESS, [
 if (${scenario === 'unit-interrupted'}) process.kill(process.pid, 'SIGTERM');
 else setInterval(() => {}, 100);
 `);
-  const data = JSON.stringify({ ACTIVE: true, WORKTREE: directory, AUTHORIZATION_ID: 'phase-deadline',
-    PREFLIGHT: { count: 1, test: 'test/affected.test.ts', patch: 'a'.repeat(64), nonce: 'b'.repeat(32) } });
-  fs.writeFileSync(path.join(directory, '.codex/runtime/owner.json'), data);
-  fs.writeFileSync(path.join(directory, '.codex/runtime/latest-task.json'), JSON.stringify({
-    path: 'owner.json', sha256: createHash('sha256').update(data).digest('hex'),
-  }));
+    fs.appendFileSync(path.join(directory, '.gitignore'), '\ntimers.jsonl\nelapsed-compiler-exit\n');
+  } });
+  const directory = witness.f.repository;
+  const tool = reservePreflightWitness(witness);
   const executed = run(process.execPath, ['--import', path.join(directory, 'timers.mjs'),
-    path.join(root, 'tools/codex/limited-local-verification.mjs'), 'test/affected.test.ts'],
+    path.join(directory, witness.helper), 'test/affected.test.ts'],
   { cwd: directory, timeout: 8000 });
   const report = JSON.parse(executed.stdout.split('PFM_PREFLIGHT_RESULT ')[1]?.trim() ?? 'null');
   const expected = scenario === 'unit-interrupted' ? 'INCOMPLETE'
-    : scenario === 'unit-mixed-timeout' ? 'FAIL' : 'TIMEOUT';
+    : ['unit-mixed-timeout', 'deadline-before-timer'].includes(scenario) ? 'FAIL' : 'TIMEOUT';
   assert(report?.status === expected && report.timeoutObserved === (expected !== 'INCOMPLETE'),
     `truthful process outcome for ${scenario}: ${executed.stdout.slice(0, 600)} ${executed.stderr.slice(0, 600)}`);
   const timers = fs.readFileSync(path.join(directory, 'timers.jsonl'), 'utf8').trim().split('\n').map(Number);
-  const phaseCount = scenario === 'first-timeout' ? 1 : scenario === 'second-timeout' ? 2 : 3;
+  assert(report.retryEligible === false, 'deadline and interrupted outcomes never authorize retry');
+  const phaseCount = ['first-timeout', 'deadline-before-timer'].includes(scenario) ? 1 : scenario === 'second-timeout' ? 2 : 3;
   assert(timers.length === phaseCount && timers[0] <= 60_000
     && (phaseCount < 2 || timers[1] < timers[0]) && (phaseCount < 3 || timers[2] <= 30_000),
   'compiler phases share a deadline, and the single unit has 30 seconds');
   const events = fs.readFileSync(path.join(directory, report.progress), 'utf8').trim().split('\n').map(JSON.parse);
   const stages = events.filter(event => event.phase.startsWith('stage-'));
   assert(stages.length === phaseCount * 2 &&
-    stages.at(-1).status === (expected === 'FAIL' ? 'TIMEOUT' : expected), 'no later phase or automatic retry');
+    stages.at(-1).status === (scenario === 'unit-mixed-timeout' ? 'TIMEOUT' : expected), 'no later phase or automatic retry');
   assert(phaseCount < 3 || (events.some(event => event.phase === 'end' && event.id === 'one')
     && events.some(event => event.phase === 'start' && event.id === 'two')
     && !events.some(event => event.phase === 'end' && event.id === 'two')), 'preserves partial unit progress');
   assert(fs.statSync(path.join(directory, report.log)).size <= 1024 * 1024, 'one aggregate log ceiling per attempt');
+  sealPreflightWitness(witness, tool, executed, report);
+  witness.f.dirty();
+  assert(witness.f.invoke('PreToolUse', tool).hookSpecificOutput?.permissionDecision === 'deny',
+    'observed deadline or interruption cannot reserve a correction');
 }
 // A malformed sandbox-writable directory is nonexecuting SKIP, not a test FAIL.
 {
@@ -1336,6 +1374,8 @@ else setInterval(() => {}, 100);
   fs.writeFileSync(path.join(directory, 'node_modules/typescript/bin/tsc'),
     "console.log('tsc ' + process.argv.slice(2).join(' '));");
   fs.writeFileSync(path.join(directory, 'node_modules/vitest/vitest.mjs'),
+    "import { appendFileSync } from 'node:fs';\n" +
+    "appendFileSync(process.env.PFM_PREFLIGHT_PROGRESS, '{\"phase\":\"cases-complete\",\"status\":\"passed\"}\\n');\n" +
     "console.log('unit ' + process.argv.slice(2).join(' '));");
   const data = JSON.stringify({ ACTIVE: true, WORKTREE: directory,
     AUTHORIZATION_ID: 'sparse-path', PREFLIGHT: {
@@ -1371,6 +1411,7 @@ else setInterval(() => {}, 100);
 // Simulate a killed run: one completed case survives, the next stays incomplete.
 {
   const progress = path.join(temp, 'partial-local-progress.jsonl');
+  fs.writeFileSync(progress, '');
   process.env.PFM_PREFLIGHT_PROGRESS = progress;
   const { default: Reporter } = await import('./local-preflight-progress-reporter.mjs?fixture=partial');
   delete process.env.PFM_PREFLIGHT_PROGRESS;
@@ -1398,6 +1439,9 @@ else setInterval(() => {}, 100);
   assert(overflow.length === 4099 && overflow.slice(-3).map(event => event.phase).join(',') ===
     'case-limit,case-overflow-outcome,case-overflow-outcome',
   'bounded progress still records mixed failure and timeout beyond its case inventory cap');
+  reporter.onTestRunEnd([], [], 'failed');
+  assert(fs.readFileSync(progress, 'utf8').includes('"phase":"cases-complete","status":"failed"'),
+    'only a completed run can close the bounded case stream');
 }
 
 // A foreign active session is never assumed interrupted, even with clean Git.
@@ -1424,7 +1468,7 @@ for (const dirty of [false, true]) {
   f.invoke('Stop', { last_assistant_message: 'TASK_STATUS: BLOCKED\nBLOCKER: owner done' });
   assert(fs.readFileSync(receipt, 'utf8') === before, 'idempotent old Stop cannot replace new owner');
 }
-const preparePreflightHookFixture = ({ startTask = true } = {}) => {
+function preparePreflightHookFixture({ startTask = true, legacy = false, unitShim = null, setup } = {}) {
   const f = recoveryFixture({ initial: "none" });
   const helper = 'tools/codex/limited-local-verification.mjs';
   const reporter = 'tools/codex/local-preflight-progress-reporter.mjs';
@@ -1436,6 +1480,22 @@ const preparePreflightHookFixture = ({ startTask = true } = {}) => {
   fs.mkdirSync(path.join(f.repository, 'test'));
   for (const file of [helper, reporter, launcher, diagnostic]) {
     fs.copyFileSync(path.join(root, file), path.join(f.repository, file));
+  }
+  if (legacy) fs.writeFileSync(path.join(f.repository, helper), '// Fixture for a merged schema-1 report emitter.\n');
+  if (setup) {
+    setup(f.repository);
+    fs.appendFileSync(path.join(f.repository, '.gitignore'), '\nnode_modules/\n');
+  }
+  if (unitShim !== null) {
+    const write = (file, value) => {
+      const location = path.join(f.repository, file);
+      fs.mkdirSync(path.dirname(location), { recursive: true });
+      fs.writeFileSync(location, value);
+    };
+    write('package.json', JSON.stringify({ scripts: { typecheck: 'tsc --noEmit && tsc -p tsconfig.next.json' } }));
+    write('node_modules/typescript/bin/tsc', 'process.exit(0);');
+    write('node_modules/vitest/vitest.mjs', unitShim);
+    fs.appendFileSync(path.join(f.repository, '.gitignore'), '\nnode_modules/\n');
   }
   fs.writeFileSync(path.join(f.repository, 'test/affected.test.ts'),
     "import { value } from '../src/allowed.js';\nimport { outside } from '../../outside.js';\nit('affected', () => value);\n");
@@ -1454,9 +1514,10 @@ const preparePreflightHookFixture = ({ startTask = true } = {}) => {
     const used = now.PREFLIGHT;
     const prefix = `.pfm-preflight/preflight-${now.AUTHORIZATION_ID}-${used.count}/`;
     const report = {
-      schema: 1, authorization: now.AUTHORIZATION_ID, attempt: used.count,
+      schema: used.report_schema, authorization: now.AUTHORIZATION_ID, attempt: used.count,
       patch: used.patch, nonce: used.nonce, test: used.test,
       status, reason: 'synthetic runner observation',
+      timeoutObserved: status === 'TIMEOUT', retryEligible: status === 'FAIL',
       log: prefix + 'runner.log', progress: prefix + 'progress.jsonl',
       ...overrides,
     };
@@ -1465,7 +1526,7 @@ const preparePreflightHookFixture = ({ startTask = true } = {}) => {
         stdout: 'PFM_PREFLIGHT_RESULT ' + JSON.stringify(report) } });
   };
   return { f, helper, reporter, launcher, command, launchCommand, preflight, state, post };
-};
+}
 // Exact read-only Node diagnosis needs neither a writer nor a test receipt.
 // It cannot modify task state or gain authority through a tampered script.
 {
@@ -1689,10 +1750,10 @@ const advanceSyntheticVerifierMain = (f, id) => {
   assert(JSON.stringify(preflight(command)) === '{}', 'preflight can reserve an attempt');
   const used = state().PREFLIGHT;
   const report = {
-    schema: 1, authorization: state().AUTHORIZATION_ID, attempt: used.count,
+    schema: 2, authorization: state().AUTHORIZATION_ID, attempt: used.count,
     patch: used.patch, nonce: used.nonce, test: used.test, status: 'SKIP',
     reason: 'sandbox diagnostic directory unavailable (EPERM); no tests executed',
-    timeoutObserved: false,
+    timeoutObserved: false, retryEligible: false,
   };
   f.invoke('PostToolUse', { tool_name: 'Bash', tool_input: { command },
     tool_response: { exit_code: 0, stdout: 'PFM_PREFLIGHT_RESULT ' + JSON.stringify(report) } });
@@ -1782,13 +1843,65 @@ const advanceSyntheticVerifierMain = (f, id) => {
   f.dirty();
   assert(JSON.stringify(preflight(command)) === '{}', 'changed-patch correction is admitted once');
   post('INCOMPLETE');
-  assert(state().PREFLIGHT.result.status === 'INCOMPLETE' && state().PREFLIGHT.prior_failure,
+  const sealed = state().PREFLIGHT.result;
+  assert(sealed.status === 'INCOMPLETE' && sealed.host_observed && state().PREFLIGHT.prior_failure && sealed.progress,
     'a signal-interrupted correction cannot clear an observed FAIL');
+  post('PASS');
+  assert(JSON.stringify(state().PREFLIGHT.result) === JSON.stringify(sealed),
+    'a repeated callback cannot replace a sealed interruption or its evidence');
   assert(f.invoke('PreToolUse', { tool_name: 'Bash',
     tool_input: { command: 'git push origin codex/policy-self-test' } })
     .hookSpecificOutput?.permissionDecisionReason.includes('LOCAL_PREFLIGHT_FAILED'),
   'incomplete correction blocks ordinary publication');
   assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'incomplete correction cannot retry');
+}
+{
+  const { f, command, preflight, state, post } = preparePreflightHookFixture({ legacy: true });
+  f.claim(); f.dirty();
+  assert(JSON.stringify(preflight(command)) === '{}' && state().PREFLIGHT.report_schema === 1,
+    'a complete historical toolset retains its schema-1 report contract');
+  post('FAIL', { timeoutObserved: undefined, retryEligible: undefined });
+  f.dirty();
+  assert(JSON.stringify(preflight(command)) === '{}', 'coherently trusted legacy FAIL permits one retry');
+}
+for (const retryEligible of [undefined, 'true', false]) {
+  const { f, command, preflight, state, post } = preparePreflightHookFixture();
+  f.claim(); f.dirty();
+  assert(JSON.stringify(preflight(command)) === '{}', 'new preflight attempt reserved');
+  post('FAIL', { schema: 1 });
+  assert(state().PREFLIGHT.result.host_observed === false, 'new helper cannot fall back to a legacy report');
+  post('FAIL', { retryEligible });
+  assert(state().PREFLIGHT.result.status === 'FAIL' && state().PREFLIGHT.result.retry_eligible === false,
+    'missing or invalid retry evidence preserves the observed FAIL and denies retry');
+  f.dirty();
+  assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'unknown retry evidence cannot be retried');
+  assert(f.invoke('PreToolUse', { tool_name: 'Bash',
+    tool_input: { command: 'git push origin codex/policy-self-test' } })
+    .hookSpecificOutput?.permissionDecisionReason.includes('LOCAL_PREFLIGHT_FAILED'), 'observed FAIL remains a publication blocker');
+}
+for (const interruption of [true, false]) {
+  const { f, command, helper, state, post } = preparePreflightHookFixture({ unitShim: `
+import { appendFileSync } from 'node:fs';
+appendFileSync(process.env.PFM_PREFLIGHT_PROGRESS, JSON.stringify({ phase: 'end', status: 'passed', id: 'earlier' }) + '\\n');
+${interruption ? "process.kill(process.pid, 'SIGTERM');" : "process.exit(1);"}
+` });
+  f.claim(); f.dirty();
+  const tool = { tool_name: 'Bash', tool_use_id: 'actual-helper-attempt', tool_input: { command } };
+  assert(JSON.stringify(f.invoke('PreToolUse', tool)) === '{}', 'protected attempt reserved for actual helper');
+  const result = run(process.execPath, [path.join(f.repository, helper), 'test/affected.test.ts'], { cwd: f.repository });
+  const response = { exit_code: result.status, stdout: result.stdout };
+  f.invoke('PostToolUse', { ...tool, tool_use_id: 'wrong-tool', tool_response: response });
+  assert(state().PREFLIGHT.result.host_observed === false, 'wrong tool use cannot seal an authentic report');
+  f.invoke('PostToolUse', { ...tool, tool_response: response });
+  const receipt = state().PREFLIGHT.result;
+  assert(receipt.status === (interruption ? 'INCOMPLETE' : 'FAIL') && receipt.host_observed &&
+    receipt.retry_eligible === false && receipt.timeout_observed === false && receipt.progress,
+    'actual helper evidence seals interruption or a true FAIL with unknown case completion');
+  post('PASS');
+  f.invoke('PostToolUse', { ...tool, tool_response: response });
+  assert(JSON.stringify(state().PREFLIGHT.result) === JSON.stringify(receipt), 'sealed helper result survives repeated callbacks');
+  f.dirty();
+  assert(f.invoke('PreToolUse', tool).hookSpecificOutput?.permissionDecision === 'deny', 'no repeat after sealed incomplete case evidence');
 }
 {
   const { f, command, preflight, state, post } = preparePreflightHookFixture();

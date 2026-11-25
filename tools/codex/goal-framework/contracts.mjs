@@ -239,6 +239,10 @@ const semantics = {
         && record.runtime_version !== null && record.tool_version !== null && record.authentication_ref !== null), 'CAPABILITY_EVIDENCE');
     }
   },
+  RUNNER_PROFILE_BINDING_V1(record) {
+    requireContract(record.producer.role === 'supervisor'
+      && atOrBefore(record.created_at, record.expires_at), 'RUNNER_BINDING_WINDOW_OR_OWNER');
+  },
   VERIFICATION_EVIDENCE_V1(record) {
     unique(record.checks, (check) => check.id, 'DUPLICATE_CHECK');
     requireContract(record.disposition !== 'approved' || (record.producer.role === 'reviewer'
@@ -507,7 +511,6 @@ export function validateExecutionGrant(value, input, authority) {
   const reservation = validateRecord(input.reservation, 'BUDGET_RESERVATION_V1');
   requireContract(referenceMatches(grant.budget_reservation_ref, reservation)
     && sameFields(grant, reservation, [...taskKeys, 'lineage_id'])
-    && same(grant.runtime_profile_ref, reservation.runtime_profile_ref)
     && reservation.risk === census.risk
     && atOrBefore(grant.expires_at, reservation.expires_at), 'GRANT_RESERVATION');
   const limits = reservation.limits;
@@ -518,6 +521,35 @@ export function validateExecutionGrant(value, input, authority) {
     && limits.cleanup_reserve >= policy.cleanup_reserve
     && atOrBefore(limits.execution_deadline, policy.execution_deadline), 'GRANT_BUDGET_POLICY');
   requireContract(reservationDisposition(reservation, authority) === 'eligible_for_admission', 'GRANT_RESERVATION_INACTIVE');
+  requireContract(input.runnerBinding != null, 'GRANT_RUNNER_BINDING_REQUIRED');
+  const binding = validateRecord(input.runnerBinding, 'RUNNER_PROFILE_BINDING_V1');
+  requireContract(grant.references.some((ref) => referenceMatches(ref, binding))
+    && grant.references.filter(({ id }) => id === binding.id).length === 1
+    && sameFields(grant, binding, [...taskKeys, 'lineage_id', 'authorization_id', 'writer_fence'])
+    && same(grant.budget_reservation_ref, binding.budget_reservation_ref)
+    && same(grant.workspace_receipt_ref, binding.workspace_receipt_ref)
+    && binding.grant_id === grant.id && binding.surface === runner.surface
+    && same(binding.runner_ref, grant.runtime_profile_ref)
+    && same(binding.resource_profile_ref, reservation.runtime_profile_ref)
+    && binding.runner_ref.id !== binding.resource_profile_ref.id
+    && binding.runner_ref.digest !== binding.resource_profile_ref.digest, 'GRANT_RUNNER_BINDING');
+  requireContract(binding.revocation_ref === null && atOrBefore(binding.created_at, grant.created_at)
+    && !atOrBefore(binding.expires_at, now) && atOrBefore(grant.expires_at, binding.expires_at)
+    && atOrBefore(binding.expires_at, reservation.expires_at),
+  'GRANT_RUNNER_BINDING_INACTIVE');
+  const profile = input.resourceProfile;
+  const risks = ['simple', 'standard', 'cross-cutting'];
+  requireContract(profile?.status === 'verified' && referenceMatches(binding.resource_profile_ref, profile)
+    && sameFields(binding, profile, ['surface', 'runtime', 'model', 'reasoning'])
+    && Array.isArray(profile.operations) && profile.operations.includes('implementation')
+    && risks.indexOf(profile.max_risk) >= risks.indexOf(reservation.risk), 'GRANT_RESOURCE_PROFILE');
+  const runtime = input.runtimeIdentity;
+  requireContract(runtime && sameFields(binding, runtime, [
+    'surface', 'transport', 'config_digest', 'permissions_digest', 'control_revision', 'runtime',
+  ]) && sameFields(runner, runtime, ['product', 'runtime_version', 'tool_version'])
+    && runtime.authentication_ref != null && same(runner.authentication_ref, runtime.authentication_ref),
+  'GRANT_RUNTIME_IDENTITY');
+  attest(verify, 'live_runner_resource_profile_binding', { grant, binding, runner, profile, runtime, reservation, workspace });
   attest(verify, 'live_execution_grant', { grant, taskAlignment: input.taskAlignment });
   return grant;
 }

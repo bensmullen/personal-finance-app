@@ -46,6 +46,7 @@ const limits = {
 const allowedAttestations = new Set([
   "live_goal_control", "saved_open_v3_actual_parser", "live_workspace_receipt", "independent_scope_review",
   "resolved_workspace_scope", "live_runner_profile", "live_budget_reservation", "terminal_run", "live_execution_grant",
+  "live_runner_resource_profile_binding",
   "exact_candidate_checks", "independent_verification_review", "live_checkpoint_authority", "stopped_checkpoint_writer",
   "task_event", "task_transition_evidence", "complete_publication", "native_start_acknowledgement",
   "actual_merge_confirmation", "complete_acceptance_criteria",
@@ -119,25 +120,44 @@ function fixture(uatPolicy = "not_required") {
         [name, { disposition: "covered", detail: "Independent synthetic witness for " + name }])),
     })),
   };
+  const resourceProfile = { id: "fixture-resource-profile", status: "verified", surface: "local", runtime: "fixture-runtime",
+    model: "fixture-model", reasoning: "fixture-effort", operations: ["implementation"], max_risk: "cross-cutting",
+    evidence: artifact("profile") };
+  const runtimeIdentity = { surface: runner.surface, runtime: resourceProfile.runtime, product: runner.product,
+    runtime_version: runner.runtime_version, tool_version: runner.tool_version, authentication_ref: runner.authentication_ref,
+    transport: "fixture-transport", config_digest: digest("fixture-config"), permissions_digest: digest("fixture-permissions"),
+    control_revision: base };
   const reservation = {
     ...envelope("BUDGET_RESERVATION_V1"), ...task, lineage_id: "original-task", risk: census.risk,
-    runtime_profile_ref: reference(runner), limits, estimated_ceiling: 8,
+    runtime_profile_ref: reference(resourceProfile), limits, estimated_ceiling: 8,
     carries: { account_liability: 20, goal_liability: 12, task_liability: 2, model_calls: 2, continuations: 1 },
     max_admitted_model_calls: 3, max_admitted_continuations: 1, expires_at: expires,
     state: "reserved", native_run_id: null, terminal_ack: null,
   };
-  const grant = {
+  const unboundGrant = {
     ...envelope("EXECUTION_GRANT_V1"), ...task, lineage_id: reservation.lineage_id,
     issue_body_digest: v3.issueBodyDigest, branch, head_sha: head, v3_marker: "PFM_TASK_V3",
     workspace_receipt_ref: reference(workspace), scope_census_ref: reference(census), runtime_profile_ref: reference(runner),
     budget_reservation_ref: reference(reservation), writer_fence: 1, authorization_id: "v3-authorization", expires_at: expires,
     revocation_ref: null,
   };
+  const runnerBinding = {
+    ...envelope("RUNNER_PROFILE_BINDING_V1"), ...task, lineage_id: reservation.lineage_id,
+    runner_ref: reference(runner), resource_profile_ref: reference(resourceProfile),
+    budget_reservation_ref: reference(reservation), workspace_receipt_ref: reference(workspace),
+    grant_id: unboundGrant.id, authorization_id: unboundGrant.authorization_id, writer_fence: workspace.writer_fence,
+    surface: runner.surface, transport: runtimeIdentity.transport, config_digest: runtimeIdentity.config_digest,
+    permissions_digest: runtimeIdentity.permissions_digest, control_revision: base,
+    runtime: resourceProfile.runtime, model: resourceProfile.model, reasoning: resourceProfile.reasoning,
+    expires_at: expires, revocation_ref: null,
+  };
+  const grant = { ...unboundGrant, references: [reference(runnerBinding)] };
   const taskAlignment = {
     approved_goal_revision: task.goal_revision, goal_control_digest: task.goal_control_digest, decisions: [decision],
     unresolved: [], risk: census.risk, independentOutcome: true, coherent: true, relatedBatch: false,
   };
-  const grantInputs = { goal, approval, savedBody, workspace, census, scopeRequirements, runner, reservation, taskAlignment };
+  const grantInputs = { goal, approval, savedBody, workspace, census, scopeRequirements, runner, reservation,
+    taskAlignment, resourceProfile, runnerBinding, runtimeIdentity };
 
   const plan = [
     { id: "unit-1", required: true, artifact_required: true },
@@ -289,7 +309,8 @@ describe("GF-V04 / GF-V23 census, V3 and workspace binding", () => {
     expect(() => validateExecutionGrant(f.goal, f.grantInputs, f.authority)).toThrow("UNKNOWN_SCHEMA");
     const taskAlignment = { ...f.grantInputs.taskAlignment, independentOutcome: false };
     expect(() => validateExecutionGrant(f.grant, { ...f.grantInputs, taskAlignment }, f.authority)).toThrow("GRANT_ALIGNMENT");
-    for (const boundary of ["saved_open_v3_actual_parser", "live_workspace_receipt", "resolved_workspace_scope", "live_execution_grant"]) {
+    for (const boundary of ["saved_open_v3_actual_parser", "live_workspace_receipt", "resolved_workspace_scope",
+      "live_runner_resource_profile_binding", "live_execution_grant"]) {
       f.denied.add(boundary);
       expect(() => validateExecutionGrant(f.grant, f.grantInputs, f.authority)).toThrow(boundary);
       f.denied.delete(boundary);
@@ -299,6 +320,48 @@ describe("GF-V04 / GF-V23 census, V3 and workspace binding", () => {
     const runner = { ...f.runner, operations: { ...f.runner.operations, stop: { status: "unverified", evidence: [] } } };
     expect(() => validateExecutionGrant({ ...f.grant, runtime_profile_ref: reference(runner) }, { ...f.grantInputs, runner }, f.authority))
       .toThrow("UNCERTIFIED_WRITER_CONTROLS");
+  });
+
+  it("keeps historical grants shape-readable and rejects substituted runner and resource identities", () => {
+    const f = fixture();
+    const { runnerBinding, resourceProfile, runtimeIdentity } = f.grantInputs;
+    const legacy = { ...f.grant, references: [] };
+    expect(validateRecord(legacy)).toEqual(legacy);
+    expect(() => validateExecutionGrant(legacy, { ...f.grantInputs, runnerBinding: null }, f.authority))
+      .toThrow("GRANT_RUNNER_BINDING_REQUIRED");
+    expect(() => validateExecutionGrant(legacy, f.grantInputs, f.authority)).toThrow("GRANT_RUNNER_BINDING");
+    for (const patch of [
+      { repository: "fixture/other" }, { goal_revision: 2 }, { task_issue: 102 }, { task_revision: 2 },
+      { lineage_id: "other-lineage" }, { writer_fence: 3 }, { grant_id: "other-grant" }, { authorization_id: "other-auth" },
+      { runner_ref: artifact("foreign-runner") }, { resource_profile_ref: reference(f.runner) },
+      { budget_reservation_ref: artifact("wrong-budget") }, { workspace_receipt_ref: artifact("different-workspace") },
+      { surface: "cloud" }, { model: "other-model" }, { reasoning: "other-effort" }, { runtime: "other-runtime" },
+      { expires_at: now }, { revocation_ref: artifact("revoked") }, { transport: "other-transport" },
+      { permissions_digest: digest("changed-permission") }, { control_revision: published },
+    ]) {
+      const binding = { ...runnerBinding, ...patch };
+      expect(() => validateExecutionGrant({ ...f.grant, references: [reference(binding)] },
+        { ...f.grantInputs, runnerBinding: binding }, f.authority)).toThrow(/GRANT_(RUNNER_BINDING|RESOURCE_PROFILE|RUNTIME_IDENTITY)/);
+    }
+    for (const patch of [{ runtime_version: "changed" }, { tool_version: "changed" },
+      { authentication_ref: artifact("new-auth") }, { config_digest: digest("changed") }]) {
+      expect(() => validateExecutionGrant(f.grant, { ...f.grantInputs, runtimeIdentity: { ...runtimeIdentity, ...patch } }, f.authority))
+        .toThrow("GRANT_RUNTIME_IDENTITY");
+    }
+    expect(() => validateExecutionGrant(f.grant, { ...f.grantInputs, resourceProfile: { ...resourceProfile,
+      evidence: artifact("substituted-same-surface") } }, f.authority)).toThrow("GRANT_RESOURCE_PROFILE");
+    const alias = { ...f.reservation, runtime_profile_ref: reference(f.runner) };
+    const binding = { ...runnerBinding, resource_profile_ref: reference(f.runner), budget_reservation_ref: reference(alias) };
+    expect(() => validateExecutionGrant({ ...f.grant, budget_reservation_ref: reference(alias), references: [reference(binding)] },
+      { ...f.grantInputs, reservation: alias, runnerBinding: binding, resourceProfile: f.runner }, f.authority)).toThrow("GRANT_RUNNER_BINDING");
+  });
+
+  it.each([1, 10, 100])("stores %i bounded runner bindings as references", (count) => {
+    const { runnerBinding } = fixture().grantInputs;
+    const bindings = Array.from({ length: count }, (_, index) =>
+      validateRecord({ ...runnerBinding, id: `binding-${index}`, grant_id: `grant-${index}` }));
+    expect(Buffer.byteLength(canonicalJson(bindings, 256 * 1024))).toBeLessThan(count * 1900);
+    expect(JSON.stringify(bindings)).not.toContain("fixture/worktree");
   });
 });
 
@@ -397,6 +460,10 @@ describe("GF-V03 / GF-V23 evidence and lifecycle", () => {
       f.approvedEvents.add(digest(result));
       return result;
     }
+    const legacy = { ...f.grant, references: [] };
+    expect(() => proposeTaskTransition(state, event("READY", reference(legacy)), { ...input, grant: legacy }, f.authority))
+      .toThrow("GRANT_RUNNER_BINDING");
+    expect(state.status).toBe("PLANNED");
     apply(event("READY", reference(f.grant)));
     const start = event("RUNNING");
     f.denied.add("native_start_acknowledgement");

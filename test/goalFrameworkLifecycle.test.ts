@@ -5,8 +5,9 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 const load = (name: string) => import(new URL(`../tools/codex/goal-framework/${name}.mjs`, import.meta.url).href);
-const { canonicalJson, digest, goalControlDigest, inspectV3Body } = await load("contracts");
-const { censusBoundaries } = await load("schemas/v1");
+const { canonicalJson, digest, goalControlDigest, inspectV3Body, proposeTaskTransition } = await load("contracts");
+const { censusBoundaries, schemas } = await load("schemas/v1");
+const { createRunnerAdapter } = await load("adapters/runner");
 const { levelOneBody, pinnedV3Parser, sha256 } = await load("authorization");
 const { openLifecycle } = await load("lifecycle");
 const { openResourceLedger } = await load("resources");
@@ -34,7 +35,8 @@ const hostEstimate = { cpu_millicores: 100, memory_mib: 128, processes: 1, disk_
 const actual = { model: "fixture-model", reasoning: "fixture-effort", surface: "local", runtime: "fixture-runtime" };
 const profile = { ...actual, id: "fixture-profile", status: "verified", evidence: ref("runtime-probe"),
   max_risk: "cross-cutting", financial_review: true, operations: ["implementation"] };
-const registry = { ...JSON.parse(readFileSync(new URL("../tools/codex/goal-framework/profiles.json", import.meta.url), "utf8")), profiles: [profile] };
+const cloudProfile = { ...profile, id: "fixture-cloud-profile", surface: "cloud", runtime: "fixture-cloud-runtime" };
+const registry = { ...JSON.parse(readFileSync(new URL("../tools/codex/goal-framework/profiles.json", import.meta.url), "utf8")), profiles: [profile, cloudProfile] };
 const root = readFileSync(new URL("../.codex/hooks/pfm-policy.py", import.meta.url), "utf8");
 const roots: string[] = [];
 
@@ -66,6 +68,7 @@ function fixture({ realResources = false } = {}) {
   let now = at(1);
   let phaseFault: string | null = null;
   const denied = new Set<string>();
+  const boundaries = new Map<string, (value: any) => boolean>();
   const humanEvents = new Set<string>();
   const runBindings = new Map<string, string>();
   const runBinding = (budget: ReturnType<typeof ref>, fence: number, directory: string, environment: string,
@@ -73,6 +76,7 @@ function fixture({ realResources = false } = {}) {
   const verify = (boundary: string, value: unknown) => {
     if (denied.has(boundary)) return false;
     if (boundary === "human_approval") return humanEvents.has(digest(value));
+    if (boundaries.has(boundary)) return boundaries.get(boundary)!(value);
     if (realResources && boundary === "lifecycle_active_run_binding") {
       const { task, workspace, run } = value as { task: { budget: ReturnType<typeof ref>; fence: number };
         workspace: { directory: string; environment: string; owner: string; authorization_id: string };
@@ -119,7 +123,8 @@ function fixture({ realResources = false } = {}) {
 
   function prepare({ issueNumber = 365, fence = 1, directory = firstDirectory, environment = "local",
     target = branch, base = head, paths = [primary], issueBody = body(paths, target), taskRevision = 1,
-    upstream = true, resource = "shared-register", attempt = "initial", goalIssue = 362, reviewLimit = 2, expires = 40 } = {}) {
+    upstream = true, resource = "shared-register", attempt = "initial", goalIssue = 362, reviewLimit = 2, expires = 40,
+    selectedProfile = profile } = {}) {
     const { goalKeys, goal, approval } = goalAuthority(goalIssue, reviewLimit);
     goalByTask.set(issueNumber, goalKeys);
     const issue = { repository, number: issueNumber, body: issueBody, kind: "issue", state: "open", evidence: ref("saved-issue") };
@@ -143,7 +148,7 @@ function fixture({ realResources = false } = {}) {
     const lineage_id = `lineage-${issueNumber}`;
     const reservation = { ...envelope("BUDGET_RESERVATION_V1", `reservation-${fence}`), ...goalKeys,
       task_issue: issueNumber, task_revision: taskRevision, lineage_id, limits, risk: "cross-cutting",
-      runtime_profile_ref: realResources ? recordRef(profile) : ref("profile"), estimated_ceiling: 2,
+      runtime_profile_ref: realResources ? recordRef(selectedProfile) : ref("profile"), estimated_ceiling: 2,
       carries: { account_liability: 0, goal_liability: 0, task_liability: 0, model_calls: 0, continuations: 0 },
       max_admitted_model_calls: 1, max_admitted_continuations: 0, expires_at: at(expires),
       state: "reserved", native_run_id: null, terminal_ack: null };
@@ -210,20 +215,288 @@ function fixture({ realResources = false } = {}) {
     return stop;
   }
 
-  function publication(input: ReturnType<typeof prepare>, intent_id: string) {
+  function publication(input: ReturnType<typeof prepare>, intent_id: string, desired = nextHead) {
     const fence = input.workspace.writer_fence;
-    const observation = { ...input.observation, head: nextHead, paths: [primary] };
-    const candidate = { candidate: true, head_sha: nextHead, fence, authorization_id: input.observation.receipt.authorization_id,
+    const observation = { ...input.observation, head: desired, paths: [primary] };
+    const candidate = { candidate: true, head_sha: desired, fence, authorization_id: input.observation.receipt.authorization_id,
       evidence: ref("candidate"), observation: { ...observation, receipt: { ...observation.receipt, status: "active" } } };
     const result = withContext({ intent_id, outcome: "applied", fence, evidence: ref("found-remote-head"), terminal: ref("owner-stop"),
-      workspace: { ...input.workspace, head_sha: nextHead, upstream_head_sha: nextHead }, remote: { ...input.remote, head: nextHead },
-      observation: { ...observation, upstream_head: nextHead, receipt: { ...observation.receipt, status: "closed" } } });
+      workspace: { ...input.workspace, head_sha: desired, upstream_head_sha: desired }, remote: { ...input.remote, head: desired },
+      observation: { ...observation, upstream_head: desired, receipt: { ...observation.receipt, status: "closed" } } });
     return { candidate, result };
   }
 
   return { journal, ledger, resourceLedger, prepare, started, claimed, closeUnpublished, withContext, publication, event, submit, reopen, denied, otherDirectory,
+    verify, boundaries, parseSaved, clock: () => now,
     fault: (phase: string | null) => { phaseFault = phase; }, time: (minutes: number) => { now = at(minutes); } };
 }
+
+describe("GF-06 offline adapter composition", () => {
+  it.each([profile, cloudProfile])("uses both journals and fresh authority when resuming on $surface", (targetProfile) => {
+    const f = fixture({ realResources: true });
+    const resources = f.resourceLedger;
+    const admissions = new Map<string, any>();
+    const effects = new Map<string, string>();
+    const startProofs = new Set<string>();
+    const terminalProofs = new Map<string, { digest: string; nativeId: string }>();
+    let localEvidence = false;
+    let killSwitch = false;
+    let launchCount = 0;
+    let checkpointCount = 0;
+    let previous: any;
+    let publication: ReturnType<typeof f.publication>;
+    f.boundaries.set("adapter_local_certification_before_cloud", (value) => localEvidence && value.repository === repository);
+    f.boundaries.set("resource_start_ack", ({ data }) => startProofs.has(digest(data)));
+    f.boundaries.set("resource_terminal_ack", ({ data }) => terminalProofs.get(data.reservation_id)?.digest === digest(data));
+    f.boundaries.set("adapter_run_binding", ({ admission }) =>
+      digest(admissions.get(admission.reservation.id)) === digest(admission));
+    f.boundaries.set("lifecycle_admissions_open", () => !killSwitch);
+    f.boundaries.set("resource_reservation_authority", (run) => run.operation === "implementation");
+
+    function configured(input: ReturnType<typeof f.prepare>, selected: typeof profile) {
+      const receipt = input.observation.receipt;
+      const reservation = resources.lookup(input.budget.id).reservation;
+      const identity = { repository, goal_issue: reservation.goal_issue, goal_revision: reservation.goal_revision,
+        task_issue: reservation.task_issue, head_sha: input.workspace.head_sha };
+      const keys = { repository, goal_issue: reservation.goal_issue, goal_revision: reservation.goal_revision,
+        goal_control_digest: reservation.goal_control_digest, task_issue: reservation.task_issue,
+        task_revision: reservation.task_revision, lineage_id: reservation.lineage_id };
+      const capability = { status: "verified", evidence: [ref("fixture-control-observation")] };
+      const runner = { ...envelope("RUNNER_CAPABILITIES_V1", `runner-${selected.surface}`),
+        surface: selected.surface, product: "synthetic-runner", runtime_version: "installed-version",
+        tool_version: "installed-tool", authentication_ref: ref(`fixture-auth-${selected.surface}`),
+        operations: Object.fromEntries(Object.keys(schemas.RUNNER_CAPABILITIES_V1.properties.operations.properties)
+          .map((name) => [name, capability])) };
+      const runtime = { runner, transport: "fixture-transport", config_digest: digest("fixture-config"),
+        permissions_digest: digest("fixture-permissions"), control_revision: f.parseSaved(input.issue).parser_revision,
+        runtime: selected.runtime, resource_profile: recordRef(selected), native: Object.fromEntries([
+          "hard_ceiling", "deadline_watchdog", "host_isolation", "foreground_capacity", "kill_switch", "publication_fence",
+          "late_usage", "artifact_retention", "credential_separation", "native_identity",
+        ].map((name) => [name, capability])) };
+      const metadata = { surface: runner.surface, product: runner.product, runtime_version: runner.runtime_version,
+        tool_version: runner.tool_version, authentication_ref: runner.authentication_ref, transport: runtime.transport,
+        config_digest: runtime.config_digest, permissions_digest: runtime.permissions_digest,
+        control_revision: runtime.control_revision, runtime: runtime.runtime, resource_profile: runtime.resource_profile };
+      const grantId = `execution-${receipt.authorization_id}`;
+      const workspaceRef = recordRef(input.workspace);
+      const runnerBinding = { ...envelope("RUNNER_PROFILE_BINDING_V1", `binding-${receipt.authorization_id}`), ...keys,
+        runner_ref: recordRef(runner), resource_profile_ref: recordRef(selected), budget_reservation_ref: input.budget,
+        workspace_receipt_ref: workspaceRef, grant_id: grantId, authorization_id: receipt.authorization_id,
+        writer_fence: input.workspace.writer_fence, surface: selected.surface, transport: runtime.transport,
+        config_digest: runtime.config_digest, permissions_digest: runtime.permissions_digest, control_revision: runtime.control_revision,
+        runtime: selected.runtime, model: selected.model, reasoning: selected.reasoning, expires_at: at(30), revocation_ref: null };
+      const grant = { ...envelope("EXECUTION_GRANT_V1", grantId), ...keys, references: [recordRef(runnerBinding)],
+        issue_body_digest: receipt.body_digest, branch, head_sha: identity.head_sha, v3_marker: "PFM_TASK_V3",
+        workspace_receipt_ref: workspaceRef, scope_census_ref: recordRef(input.census), runtime_profile_ref: recordRef(runner),
+        budget_reservation_ref: input.budget, writer_fence: input.workspace.writer_fence,
+        authorization_id: receipt.authorization_id, expires_at: at(30), revocation_ref: null };
+      const context = { telemetry: null, session: { opened_at: at(0), deadline: at(20), lineage_deadline: at(90) } };
+      const live = { identity, input, grant, runnerBinding, context };
+      const grantInputs = { goal: input.goal, approval: input.approval, taskAlignment: input.alignment,
+        savedBody: input.issue.body, census: input.census, scopeRequirements: input.routes, workspace: input.workspace,
+        runner, reservation, runtimeIdentity: metadata, runnerBinding, resourceProfile: selected };
+      const request = { task_issue: identity.task_issue, grant: recordRef(grant) };
+      const run = { task_issue: identity.task_issue, reservation: input.budget,
+        fence: input.workspace.writer_fence, native_run_id: null };
+      const expectedBinding = digest({ grant, binding: runnerBinding, runner, profile: selected,
+        runtime: metadata, reservation, workspace: input.workspace });
+      const verify = (boundary: string, value: any) => {
+        if (!f.verify(boundary, value)) return false;
+        if (boundary === "live_runner_resource_profile_binding") return digest(value) === expectedBinding;
+        if (boundary === "adapter_native_admission") return !killSwitch && readyGrant?.digest === value.grant.digest;
+        if (boundary === "adapter_checkpoint_stopped_writer") return value.run.native_run_id != null
+          && terminalProofs.get(value.admission.reservation.id)?.nativeId === value.run.native_run_id
+          && value.publication.intent_id === publication.result.intent_id;
+        if (boundary === "adapter_effect_receipt") return effects.get(value.intent.idempotency_key) === value.observed.intent_digest;
+        return true;
+      };
+      let readyGrant: ReturnType<typeof ref> | undefined;
+      const markReady = () => {
+        const state = { ...keys, status: "PLANNED", revision: 1, head_sha: identity.head_sha, candidate_digest: null };
+        const event = { ...envelope("PFM_TASK_EVENT_V1"), ...keys, event_id: `ready-${grantId}`,
+          source: "fixture-admission", expected_revision: 1, head_sha: identity.head_sha, kind: "READY",
+          payload_ref: request.grant, observed_at: f.clock() };
+        const { lineage_id: _lineage, ...eventRecord } = event;
+        const proposal = proposeTaskTransition(state, eventRecord, { grant, grantInputs, seenEvents: new Map() },
+          { verify, now: f.clock(), consumedNonces: new Set() });
+        expect(proposal.state.status).toBe("READY");
+        readyGrant = proposal.state.grant_ref;
+      };
+      let controlActive = false;
+      let dropStartAck = true;
+      let dropCheckpointAck = true;
+      const host = {
+        verify, clock: f.clock, parseSaved: f.parseSaved, consumedNonces: new Set(), resources, lifecycle: f.ledger,
+        inventory: () => runtime, preparation: () => live,
+        resolveResourceProfile: (reference: ReturnType<typeof ref>) => registry.profiles.find((item) =>
+          digest(recordRef(item)) === digest(reference)),
+        readAdmission: (reference: ReturnType<typeof ref>) => admissions.get(reference.id),
+        previousCheckpoint: () => previous,
+        commitEffect(intent: any) {
+          // One synthetic supervisor serializes and revalidates before either journal can
+          // authorize a fake effect. The journals are the real GF-03 and GF-05 implementations.
+          const intentDigest = digest(intent);
+          const key = intent.idempotency_key;
+          const old = effects.get(key);
+          if (old) {
+            if (old !== intentDigest) throw new Error("conflicting intent");
+            return { intent_digest: old, status: "duplicate", evidence: ref("effect-replay") };
+          }
+          if (controlActive) throw new Error("global supervisor fence unavailable");
+          controlActive = true;
+          try {
+            const task = f.ledger.inspect(repository, identity.task_issue);
+            if (intent.operation === "launch" || intent.operation === "resume") {
+              if (!verify("adapter_native_admission", intent) || task.phase !== "prepared" || task.fence !== intent.fence
+                || task.head_sha !== intent.head_sha || task.workspace.receipt_digest !== receipt.digest
+                || digest(recordRef(live.runnerBinding)) !== digest(intent.runner_binding)
+                || resources.lookup(intent.reservation.id).status !== "reserved") throw new Error("stale admission");
+              admissions.set(intent.reservation.id, intent);
+              if (resources.begin(key, intent.reservation.id).disposition !== "committed") throw new Error("uncertain begin");
+              effects.set(key, intentDigest);
+              launchCount += 1;
+              if (dropStartAck) throw new Error("lost start response");
+            } else if (intent.operation === "stop") {
+              if (digest(admissions.get(intent.reservation.id)) !== intent.admission_digest) throw new Error("wrong admission");
+              resources.requestStop(key, intent.reservation.id);
+              effects.set(key, intentDigest);
+            } else {
+              if (task.intent?.id !== intent.publication.intent_id || task.intent.expected !== intent.publication.expected
+                || task.intent.desired !== intent.publication.desired || task.fence !== intent.fence
+                || resources.lookup(intent.reservation.id).status !== "terminal") throw new Error("stale checkpoint");
+              checkpointCount += 1;
+              effects.set(key, intentDigest);
+              f.submit("reconcile", `reconcile-${grantId}`, task.revision, publication.result, identity.task_issue, task.head_sha);
+              if (dropCheckpointAck) throw new Error("lost checkpoint response");
+            }
+            return { intent_digest: intentDigest, status: "recorded", evidence: ref("supervisor-effect") };
+          } finally {
+            controlActive = false;
+          }
+        },
+      };
+      const adapter = createRunnerAdapter({ surface: selected.surface, repository, host });
+      const started = f.started(input);
+      const start = () => {
+        const { surface, runtime: runtimeId, model, reasoning } = selected;
+        const data = { reservation_id: input.budget.id, native_run_id: started.native_run_id,
+          actual: { surface, runtime: runtimeId, model, reasoning }, evidence: ref("native-start") };
+        startProofs.add(digest(data));
+        resources.started(`started-${grantId}`, data);
+        const task = f.ledger.inspect(repository, identity.task_issue);
+        expect(f.submit("claim", `claim-${grantId}`, task.revision, started, identity.task_issue, task.head_sha).phase).toBe("claimed");
+        expect(f.reopen().assertWriter({ repository, issue: identity.task_issue, fence: run.fence,
+          authorization_id: receipt.authorization_id, native_run_id: started.native_run_id, paths: [primary],
+          evidence: ref("scoped-writer") })).toBe(true);
+      };
+      const stop = () => {
+        expect(adapter.stop(run).status).toBe("recorded");
+        const terminal = { reservation_id: input.budget.id, native_run_id: started.native_run_id,
+          outcome: "stopped", evidence: ref("native-terminal") };
+        expect(() => resources.terminal(`terminal-${grantId}`, terminal)).toThrow("resource_terminal_ack");
+        terminalProofs.set(input.budget.id, { digest: digest(terminal), nativeId: terminal.native_run_id });
+        resources.terminal(`terminal-${grantId}`, terminal);
+        expect(adapter.observe(run)).toMatchObject({ status: "terminal", billed: null, liability: 4 });
+        resources.settle(`bill-${grantId}`, { ...terminal, billed: 1 });
+        resources.settle(`late-bill-${grantId}`, { ...terminal, billed: 3 });
+        expect(adapter.observe(run)).toMatchObject({ status: "terminal", billed: 3, liability: 3 });
+      };
+      return { adapter, host, live, runtime, request, run, markReady, start, stop,
+        retainAcks() { dropStartAck = false; dropCheckpointAck = false; } };
+    }
+
+    const first = f.prepare();
+    const local = configured(first, profile);
+    expect(local.adapter.prepare(local.request).status).toBe("observed");
+    expect(f.ledger.inspect(repository, 365)).toBeNull();
+    f.submit("prepare", "prepare-local", 0, first);
+    expect(() => local.adapter.launch(local.request)).toThrow("adapter_native_admission");
+    local.markReady();
+    killSwitch = true;
+    expect(() => local.adapter.launch(local.request)).toThrow("adapter_native_admission");
+    killSwitch = false;
+    const trust = local.runtime.control_revision;
+    local.runtime.control_revision = nextHead;
+    expect(() => local.adapter.launch(local.request)).toThrow("ADAPTER_CONTROL_REVISION");
+    local.runtime.control_revision = trust;
+    const resolveProfile = local.host.resolveResourceProfile;
+    local.host.resolveResourceProfile = () => ({ ...profile, evidence: ref("changed-registry-entry") });
+    expect(() => local.adapter.launch(local.request)).toThrow("GRANT_RESOURCE_PROFILE");
+    local.host.resolveResourceProfile = resolveProfile;
+    local.live.grant.expires_at = at(1);
+    expect(() => local.adapter.launch(local.request)).toThrow("GRANT_INACTIVE");
+    local.live.grant.expires_at = at(30);
+    local.live.context.session.deadline = at(1);
+    expect(() => local.adapter.launch(local.request)).toThrow("ADAPTER_CONTEXT");
+    local.live.context.session.deadline = at(20);
+    const quota = (remaining: number) => ({ ...pool, account_epoch: 1, source: "fixture-counter", observed_at: f.clock(),
+      reset_at: at(90), evidence: ref(`quota-${remaining}`), quality: "observed", coverage: "complete", remaining });
+    f.time(2);
+    resources.snapshot("quota-depleted", quota(2));
+    expect(local.adapter.launch(local.request).status).toBe("reconcile");
+    expect(resources.lookup(first.budget.id)).toMatchObject({ status: "reserved", liability: 4 });
+    f.time(3);
+    resources.snapshot("quota-restored", quota(100));
+    expect(launchCount).toBe(0);
+    expect(local.adapter.launch(local.request).status).toBe("reconcile");
+    expect(local.adapter.launch(local.request).status).toBe("reconcile");
+    expect(local.adapter.observe(local.run)).toMatchObject({ status: "ambiguous", liability: 4 });
+    expect(launchCount).toBe(1);
+    local.start();
+    publication = f.publication(first, "checkpoint-local");
+    f.submit("begin-checkpoint", "checkpoint-local", 2, publication.candidate);
+    expect(() => local.adapter.checkpoint(local.run)).toThrow("WORKER_ACTIVE");
+    const transport = local.runtime.transport;
+    local.runtime.transport = "replacement-after-start";
+    local.stop();
+    expect(local.adapter.checkpoint(local.run).status).toBe("reconcile");
+    const checkpoint = recordRef(publication.result.context_checkpoint);
+    expect(local.adapter.checkpoint(local.run)).toMatchObject({ status: "reconcile", checkpoint });
+    expect(checkpointCount).toBe(1);
+    local.runtime.transport = transport;
+    f.submit("review-disposition", "resume-authority", 4, { outcome: "repair", evidence: ref("review") }, 365, nextHead);
+    const priorFrom = (result: typeof publication.result, budget: typeof first.budget) => ({
+      checkpoint: result.context_checkpoint, reservation: budget,
+      live: { receipt: result.workspace, current: { ...result.context_checkpoint,
+        issue_body_digest: result.workspace.issue_body_digest,
+        required_artifacts: result.context_checkpoint.artifacts, open_gates: [ref("review-gate")] } },
+      compaction: { kind: "deterministic" },
+    });
+    previous = priorFrom(publication.result, first.budget);
+    const next = f.prepare({ fence: 2, base: nextHead, attempt: "continuation", selectedProfile: targetProfile });
+    const resumed = configured(next, targetProfile);
+    f.submit("resume", "prepare-resume", 5, next, 365, nextHead);
+    resumed.markReady();
+    resumed.retainAcks();
+    if (targetProfile.surface === "cloud") {
+      expect(() => resumed.adapter.resume(resumed.request, checkpoint)).toThrow("local_certification_before_cloud");
+      expect(() => resumed.adapter.stop(local.run)).toThrow("RUN_BINDING");
+    }
+    localEvidence = true;
+    expect(() => resumed.adapter.resume(resumed.request, ref("wrong-checkpoint"))).toThrow("ADAPTER_RESUME_CHECKPOINT");
+    expect(resumed.adapter.resume(resumed.request, checkpoint).status).toBe("recorded");
+    expect(resumed.adapter.resume(resumed.request, checkpoint).status).toBe("reconcile");
+    expect(launchCount).toBe(2);
+    resumed.start();
+    const finalHead = "d".repeat(40);
+    publication = f.publication(next, "checkpoint-resumed", finalHead);
+    f.submit("begin-checkpoint", "checkpoint-resumed", 7, publication.candidate, 365, nextHead);
+    resumed.stop();
+    expect(resumed.adapter.checkpoint(resumed.run).status).toBe("recorded");
+    expect(checkpointCount).toBe(2);
+    f.submit("review-disposition", "return-authority", 9, { outcome: "repair", evidence: ref("review") }, 365, finalHead);
+    previous = priorFrom(publication.result, next.budget);
+    const last = f.prepare({ fence: 3, base: finalHead, attempt: "continuation" });
+    const returned = configured(last, profile);
+    f.submit("resume", "prepare-return", 10, last, 365, finalHead);
+    returned.markReady();
+    returned.retainAcks();
+    expect(returned.adapter.resume(returned.request, recordRef(previous.checkpoint)).status).toBe("recorded");
+    returned.start();
+    returned.stop();
+    expect(launchCount).toBe(3);
+  });
+});
 
 describe("GF-V03, GF-V04, GF-V07 and GF-V23: supervised lifecycle", () => {
   it("reserves prospective outcomes across goals and retains both slots through publication and journal replay", () => {
