@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 import { canonicalJson, readTaskMetadata, validateRecord } from "../codex/goal-framework/contracts.mjs";
 
 const marker = "<!-- PFM_TASK_META_V1";
-const markerFamily = /^\s*<!--\s*PFM_TASK_META(?:\b|_)/mu;
+const markerFamily = /<!--\s*PFM_TASK_META(?:\b|_)/gu;
 const maxIssues = 4_000;
 const maxBodyBytes = 256 * 1024;
 const maxBatch = 64;
@@ -150,13 +150,11 @@ function issueObservation(issue, repository) {
 
 export function parseIssueMetadata(issue, repository) {
   const observation = issueObservation(issue, repository);
-  function parse() {
-    requireMetadata([...issue.body.matchAll(/<!--\s*PFM_TASK_META(?:_\w+)?\b/gu)].length === 1
-      && issue.body.includes(marker), "Unknown or duplicate metadata marker");
-    return readTaskMetadata(issue.body, { repository, taskIssue: issue.number });
-  }
-  // Fail closed on unknown versions and malformed markers that resemble one.
-  const metadata = markerFamily.test(issue.body) ? parse() : null;
+  const markers = issue.body.matchAll(markerFamily);
+  const { value: first } = markers.next();
+  if (!first) return { ...observation, metadata: null };
+  requireMetadata(markers.next().done && issue.body.startsWith(marker, first.index), "Unknown or duplicate metadata marker");
+  const metadata = readTaskMetadata(issue.body, { repository, taskIssue: issue.number });
   return { ...observation, metadata };
 }
 

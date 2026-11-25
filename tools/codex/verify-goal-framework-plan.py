@@ -2,6 +2,7 @@
 """Read-only allocation and saved-contract checks; never authorizes execution."""
 import argparse
 import ast
+from collections import deque
 import copy
 import fnmatch
 import hashlib
@@ -17,6 +18,8 @@ ROOT = Path(__file__).resolve().parents[2]
 DOCS = ROOT / "docs/development/goal-framework"
 REPOSITORY = "bensmullen/personal-finance-app"
 MAX_BYTES = 1024 * 1024
+MAX_ISSUES = 4000
+MAX_ISSUE_NUMBER = 2**53 - 1
 
 
 def decode(text):
@@ -47,13 +50,103 @@ def safe_path(path):
     return (len(parts) >= 2 and "." in parts[-1]) or base in {"AGENTS.md", "package.json", "package-lock.json", "playwright.config.ts", "stryker.config.mjs"}
 
 
-def check(plan, registry, *, projected=False):
+def issue_number(value):
+    return type(value) is int and 0 < value <= MAX_ISSUE_NUMBER
+
+
+def nonempty(value):
+    return isinstance(value, str) and bool(value.strip())
+
+
+def unique_list(value, accepts):
+    return isinstance(value, list) and all(accepts(item) for item in value) and len(value) == len(set(value))
+
+
+def check_projection(registry, imported):
+    """Check offline structure and preservation against the reviewed export."""
+    gates = registry["stage_gates"]
+    allocations = registry["issues"]
+    if not isinstance(allocations, list) or len(allocations) > MAX_ISSUES:
+        raise ValueError("projected allocation inventory bound")
+    rows = {}
+    gate_members = {gate: set() for gate in gates}
+    for row in allocations:
+        number = row["issue_number"]
+        gate = row["blocking_gate"]
+        if (not issue_number(number) or number in rows or not nonempty(row["owner_stage"]) or
+                not nonempty(row["scope"]) or not isinstance(gate, str) or gate not in gates or
+                not unique_list(row["depends_on"], issue_number) or
+                not unique_list(row["spec_requirement_ids"], nonempty) or not row["spec_requirement_ids"]):
+            raise ValueError("invalid projected allocation row")
+        rows[number] = row
+        gate_members[gate].add(number)
+    for gate, rule in gates.items():
+        members = rule["required_issue_numbers"]
+        if not unique_list(members, issue_number) or set(members) != gate_members[gate]:
+            raise ValueError("projected gate inventory mismatch")
+
+    dependents = {number: [] for number in rows}
+    pending = {}
+    for number, row in rows.items():
+        pending[number] = len(row["depends_on"])
+        for dep in row["depends_on"]:
+            if dep == number or dep not in rows:
+                raise ValueError("unknown or self projected dependency")
+            dependents[dep].append(number)
+    ready = deque(number for number, count in pending.items() if count == 0)
+    visited = 0
+    while ready:
+        visited += 1
+        for dependent in dependents[ready.popleft()]:
+            pending[dependent] -= 1
+            if pending[dependent] == 0:
+                ready.append(dependent)
+    if visited != len(rows):
+        raise ValueError("projected dependency cycle")
+
+    if type(imported["version"]) is not int or imported["version"] != 1 or imported["repository"] != REPOSITORY:
+        raise ValueError("invalid reviewed legacy import")
+    header = copy.deepcopy(imported["header"])
+    for rule in header["stage_gates"].values():
+        del rule["required_issue_numbers"]
+    current_header = {key: value for key, value in registry.items()
+                      if key not in {"issues", "closed_consolidations", "legacy_open_task_reconciliation"}}
+    current_header["stage_gates"] = {gate: {key: value for key, value in rule.items() if key != "required_issue_numbers"}
+                                     for gate, rule in gates.items()}
+    if current_header != header or type(registry["schema_version"]) is not int:
+        raise ValueError("projected register changed legacy controls")
+    historical, consolidated, legacy_numbers = [], [], set()
+    for obligation in imported["obligations"]:
+        kind, row = obligation["kind"], obligation["row"]
+        number = row["issue_number"]
+        if not issue_number(number) or number in legacy_numbers:
+            raise ValueError("invalid reviewed legacy obligation")
+        legacy_numbers.add(number)
+        if kind == "allocation" and rows.get(number) == row:
+            continue
+        if number in rows:
+            raise ValueError("projected register changed legacy allocation")
+        if kind == "administrative":
+            historical.append(number)
+        elif kind == "consolidation":
+            consolidated.append(row)
+        else:
+            raise ValueError("projected register dropped legacy allocation")
+    if (registry["legacy_open_task_reconciliation"] != {**imported["administrative"], "issue_numbers": historical} or
+            registry["closed_consolidations"] != consolidated):
+        raise ValueError("projected register changed historical obligations")
+
+
+def check(plan, registry, *, legacy_import=None):
     """Malformed shape is a validation failure, not an uncaught KeyError."""
     errors = []
     def need(ok, message):
         if not ok:
             errors.append(message)
     try:
+        projected = legacy_import is not None
+        if projected:
+            check_projection(registry, legacy_import)
         need(type(plan["schema_version"]) is int and plan["schema_version"] == 1, "plan version")
         need(plan["repository"] == REPOSITORY, "repository")
         requirements = {f"GF-R{i:02}" for i in range(1, 25)}
@@ -135,10 +228,16 @@ def check(plan, registry, *, projected=False):
             need(bool(a["issues"]) and len(a["issues"]) == len(set(a["issues"])) and set(a["issues"]) <= set(by_issue), "audit ownership")
         # This engineering goal must never become a hidden product prerequisite.
         goal_issues = set(by_issue) | {plan["goal_issue"]}
+        if projected:
+            engineering_gates = {phase["gate"] for phase in phases.values()}
+            goal_issues.update(row["issue_number"] for row in rows.values() if row["blocking_gate"] in engineering_gates)
+        # Any indirect prerequisite must also cross this boundary on one edge.
         for row in registry["issues"]:
-            if row["issue_number"] not in goal_issues and (not projected or row["blocking_gate"] not in {p["gate"] for p in phases.values()}):
+            if row["issue_number"] not in goal_issues:
                 need(not set(row["depends_on"]) & goal_issues, "product dependency contamination")
-    except (KeyError, TypeError, ValueError, AttributeError):
+    except ValueError as error:
+        errors.append(str(error))
+    except (KeyError, TypeError, AttributeError):
         errors.append("malformed plan/register shape")
     return errors
 
@@ -222,13 +321,65 @@ def self_test(plan, registry):
             raise ValueError("invalid plan accepted")
     r = copy.deepcopy(registry)
     gate = "GOAL_FRAMEWORK_P1"
-    r["issues"].append(dict(issue_number=999999, blocking_gate=gate, depends_on=[363]))
-    r["stage_gates"][gate]["required_issue_numbers"].append(999999)
-    if check(plan, r, projected=True) or not check(plan, r):
+    extra = 999999
+    r["issues"].append(dict(issue_number=extra, blocking_gate=gate, depends_on=[363],
+                            owner_stage="engineering-goal-framework", spec_requirement_ids=["GF-R01"],
+                            scope="Approved decomposition of contract verification."))
+    r["stage_gates"][gate]["required_issue_numbers"].append(extra)
+    baseline = copy.deepcopy(registry)
+    allocations = baseline.pop("issues")
+    consolidations = baseline.pop("closed_consolidations")
+    administrative = baseline.pop("legacy_open_task_reconciliation")
+    historical = administrative.pop("issue_numbers")
+    imported = {"version": 1, "repository": REPOSITORY, "header": baseline, "administrative": administrative,
+                "obligations": ([{"kind": "allocation", "row": row} for row in allocations] +
+                                [{"kind": "administrative", "row": {"issue_number": number}} for number in historical] +
+                                [{"kind": "consolidation", "row": row} for row in consolidations])}
+    snapshot = {"status": "LIVE_METADATA_TRACEABILITY_NON_AUTHORIZING", "authority": "issue_metadata",
+                "snapshot": {"origin": REPOSITORY, "generated_at": "2026-11-25T12:00:00.000Z", "registry": r}}
+    if check(plan, snapshot_registry(snapshot), legacy_import=imported) or not check(plan, r):
         raise ValueError("new metadata task must not require a committed register row")
-    r["stage_gates"][gate]["required_issue_numbers"].remove(363)
-    if not check(plan, r, projected=True):
-        raise ValueError("projected allocation dropped a planned obligation")
+
+    def add_dependency(r, dependency):
+        r["issues"].append(dict(r["issues"][-1], issue_number=extra + 1, depends_on=[dependency]))
+        r["stage_gates"][gate]["required_issue_numbers"].append(extra + 1)
+
+    def cycle(r):
+        add_dependency(r, extra)
+        r["issues"][-2]["depends_on"].append(extra + 1)
+
+    def product_contamination(r, indirect):
+        product = next(row for row in r["issues"] if row["issue_number"] == 120)
+        for step in range(1, 2 + int(indirect)):
+            new_product = dict(product, issue_number=extra + step, depends_on=[extra + step - 1])
+            r["issues"].append(new_product)
+            r["stage_gates"][product["blocking_gate"]]["required_issue_numbers"].append(extra + step)
+
+    projected_mutations = [
+        (lambda r: r["issues"][-1].pop("owner_stage"), "malformed plan/register shape"),
+        (lambda r: r["issues"][-1].update(scope=" "), "invalid projected allocation row"),
+        (lambda r: r["issues"][-1].update(spec_requirement_ids=[]), "invalid projected allocation row"),
+        (lambda r: r["issues"][-1].pop("depends_on"), "malformed plan/register shape"),
+        (lambda r: r["issues"][-1]["depends_on"].append(363), "invalid projected allocation row"),
+        (lambda r: r["issues"].append(copy.deepcopy(r["issues"][-1])), "invalid projected allocation row"),
+        (lambda r: r["issues"][-1]["depends_on"].append(extra + 1), "unknown or self projected dependency"),
+        (lambda r: r["issues"][-1]["depends_on"].append(extra), "unknown or self projected dependency"),
+        (cycle, "projected dependency cycle"),
+        (lambda r: r["stage_gates"][gate]["required_issue_numbers"].remove(363), "projected gate inventory mismatch"),
+        (lambda r: r["stage_gates"][gate]["required_issue_numbers"].remove(extra), "projected gate inventory mismatch"),
+        (lambda r: r["stage_gates"]["D1_U1"]["required_issue_numbers"].remove(120), "projected gate inventory mismatch"),
+        (lambda r: r["stage_gates"][gate].update(blocking_transition=" "), "projected register changed legacy controls"),
+        (lambda r: r["issues"][0].update(scope="Changed legacy scope."), "projected register changed legacy allocation"),
+        (lambda r: r["closed_consolidations"].pop(), "projected register changed historical obligations"),
+        (lambda r: r["legacy_open_task_reconciliation"]["issue_numbers"].pop(), "projected register changed historical obligations"),
+        (lambda r: product_contamination(r, False), "product dependency contamination"),
+        (lambda r: product_contamination(r, True), "product dependency contamination"),
+    ]
+    for mutation, expected in projected_mutations:
+        candidate = copy.deepcopy(r)
+        mutation(candidate)
+        if expected not in check(plan, candidate, legacy_import=imported):
+            raise ValueError("invalid projection did not report " + expected)
     unsafe = [".", "**", "*", "../x", "/tmp/x", "C:/x", "tools/../x", "tools//x", "tools/**", "docs/development/**", "src/x.ts", "ui/x.tsx", ".codex/runtime/a.json", "test/?.ts", "test/[ab].ts", "tools/codex", "docs/development", ".github/workflows"]
     if any(safe_path(p) for p in unsafe) or not safe_path("tools/codex/goal-framework/schemas/**"):
         raise ValueError("path negative failed")
@@ -258,7 +409,7 @@ def self_test(plan, registry):
         changed[name] = changed[name].replace(identifier, identifier + "-missing")
         if not check_documents(changed, plan):
             raise ValueError("missing reference definition accepted")
-    return {"positive": 4, "negative": len(mutations)+len(unsafe)+3+len(bad)+5}
+    return {"positive": 4, "negative": len(mutations)+len(unsafe)+3+len(bad)+4+len(projected_mutations)}
 
 
 def hook_parser():
@@ -306,6 +457,7 @@ def main():
     parser.add_argument("--self-test",action="store_true")
     parser.add_argument("--live-contracts",action="store_true")
     parser.add_argument("--allocation-snapshot", type=Path, help="check generated allocation offline, without a committed register")
+    parser.add_argument("--legacy-import", type=Path, help="reviewed immutable --export artifact for snapshot preservation checks")
     args = parser.parse_args()
     try:
         if hasattr(signal,"SIGALRM"):
@@ -318,13 +470,19 @@ def main():
                 raise ValueError("unsafe/oversized reference")
             return path.read_text()
         plan = decode(read(DOCS/"plan.json"))
+        if (args.allocation_snapshot is None) != (args.legacy_import is None):
+            raise ValueError("snapshot validation requires both --allocation-snapshot and --legacy-import")
+        imported = None
         if args.allocation_snapshot:
             if args.self_test:
                 raise ValueError("built-in fixtures require the baseline register")
             registry = snapshot_registry(decode(read(args.allocation_snapshot)))
+            imported = decode(read(args.legacy_import))
+            if not isinstance(imported, dict):
+                raise ValueError("invalid reviewed legacy import")
         else:
             registry = decode(read(ROOT/"docs/development/milestone-issue-register.json"))
-        errors = check(plan, registry, projected=args.allocation_snapshot is not None)
+        errors = check(plan, registry, legacy_import=imported)
         if errors:
             raise ValueError("; ".join(errors))
         contents = {name: read(DOCS/name) for name in plan["documents"]}

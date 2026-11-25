@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const modulePath = new URL("../tools/roadmap/goal-issue-metadata.mjs", import.meta.url).href;
 const tracePath = new URL("../tools/roadmap/verify-issue-stage-register.mjs", import.meta.url).href;
@@ -87,6 +87,25 @@ describe("legacy issue metadata shadow", () => {
       original.body.replace(repository, "other/repo"),
     ]) {
       expect(() => parseIssueMetadata({ ...original, body }, repository)).toThrow();
+    }
+  });
+
+  it("rejects marker-family comments anywhere on closed legacy issues and allows ordinary mentions", () => {
+    const legacy = issue(120, "Plain prose mentioning PFM_TASK_META_V1.", "closed");
+    expect(parseIssueMetadata(legacy, repository).metadata).toBeNull();
+    const canonical = issueWith(120, record(120), "closed").body;
+    for (const body of [
+      "Inline <!-- PFM_TASK_META_V1 -->",
+      canonical.replace("\n<!--", " <!--"),
+      "Inline <!-- PFM_TASK_META_V2\n{}\n-->",
+      "Inline <!-- PFM_TASK_META_V1",
+      "<!-- PFM_TASK_META -->",
+      canonical + "\nInline <!-- PFM_TASK_META_ -->",
+    ]) {
+      const observations = inventory();
+      observations.set(120, observeInventory([{ ...legacy, body }], repository).get(120));
+      expect(() => compareLiveShadow(register, imported, observations)).toThrow();
+      expect(() => metadataBody({ ...legacy, body }, repository, record(120))).toThrow();
     }
   });
 });
@@ -201,21 +220,105 @@ describe("bounded offline migration", () => {
 });
 
 describe("read-only issue pagination", () => {
-  it("reads every page and fails on denied reads, partial pages, missing links and duplicate rows", async () => {
-    const first = Array.from({ length: 50 }, (_, index) => issue(index + 1));
-    const link = `<https://api.github.com/repos/${repository}/issues?state=all&sort=created&direction=asc&per_page=50&page=2>; rel="next"`;
-    const pages = (final: ReturnType<typeof issue>[], status = 200) =>
-      (url: string, options: RequestInit) => {
-        expect(options.method).toBe("GET");
-        expect(options.redirect).toBe("error");
-        return new URL(url).searchParams.get("page") === "1"
-          ? Response.json(first, { headers: { link } }) : Response.json(final, { status });
-      };
-    expect((await readIssueInventory({ token: "read-only-test", request: pages([issue(51)]) })).size).toBe(51);
-    await expect(readIssueInventory({ token: "read-only-test", request: pages([], 403) })).rejects.toThrow("HTTP 403");
-    await expect(readIssueInventory({ token: "read-only-test", request: pages([issue(50)]) })).rejects.toThrow("duplicate");
-    await expect(readIssueInventory({ token: "read-only-test", request: () => Response.json(first) })).rejects.toThrow("no pagination proof");
-    await expect(readIssueInventory({ token: "read-only-test", request: () => Response.json([], { headers: { link } }) }))
-      .rejects.toThrow("Incomplete issue pagination");
+  const host = "https://api.github.com";
+  const endpoint = `${host}/repos/${repository}/issues`;
+  const numericEndpoint = `${host}/repositories/1343958499/issues`;
+  const next = (target: string) => `<${target}>; rel="next"`;
+  const numberedLink = next(`${numericEndpoint}?page=2&per_page=050&direction=asc`);
+  const cursorLink = next(`${numericEndpoint}?after=opaque,cursor%3D&sort=created`);
+  const fullPage = (page: number) => Array.from({ length: 50 }, (_, index) => issue((page - 1) * 50 + index + 1));
+
+  function read(respond: (page: number) => Response) {
+    let page = 0;
+    return readIssueInventory({ token: "read-only-test", request: (url: string, options: RequestInit) => {
+      expect(options.method).toBe("GET");
+      expect(options.redirect).toBe("error");
+      expect(url).toBe(`${endpoint}?state=all&sort=created&direction=asc&per_page=50&page=${++page}`);
+      return respond(page);
+    } });
+  }
+
+  it.each([[numberedLink, "next_numbered"], [cursorLink, "next_cursor"]])(
+    "uses provider Link evidence while retaining pinned numbered transport (%s)", async (link, classification) => {
+      const result = await read(page => page === 1
+        ? Response.json(fullPage(1), { headers: { link: `${link}, <${numericEndpoint}?page=2>; rel="last"` } })
+        : Response.json([issue(51)], { headers: { link: `<${endpoint}?state=all&page=1>; rel="prev"` } }));
+      expect(result.observations.size).toBe(51);
+      expect(result.pagination).toEqual({ pages: [
+        { page: 1, count: 50, continuation: classification },
+        { page: 2, count: 1, continuation: "short_terminal" },
+      ], provider_count: 51, issue_count: 51, inventory_sha256: expect.stringMatching(/^[a-f0-9]{64}$/) });
+      expect(JSON.stringify(result.pagination)).not.toContain("opaque");
+      expect(JSON.stringify(result.pagination)).not.toContain(source);
+    },
+  );
+
+  it("requires an empty numbered probe for a full page without next", async () => {
+    const result = await read(page => Response.json(page === 1 ? fullPage(1) : []));
+    expect(result.observations.size).toBe(50);
+    expect(result.pagination.pages.map(({ continuation }: { continuation: string }) => continuation))
+      .toEqual(["probe_required", "empty_probe"]);
+    await expect(read(page => Response.json(page === 1 ? fullPage(1) : [issue(51)]))).rejects.toThrow("no pagination proof");
+    await expect(read(page => Response.json(page === 1 ? fullPage(1) : [], page === 1 ? {} : { status: 403 })))
+      .rejects.toThrow("HTTP 403");
+  });
+
+  it("fails on denied, duplicate, out-of-order, partial and empty continuation pages", async () => {
+    const readSecond = (response: Response) => read(page => page === 1
+      ? Response.json(fullPage(1), { headers: { link: numberedLink } }) : response);
+    await expect(readSecond(Response.json([], { status: 403 }))).rejects.toThrow("HTTP 403");
+    await expect(readSecond(Response.json([issue(50)]))).rejects.toThrow("duplicate");
+    await expect(readSecond(Response.json([issue(52), issue(51)]))).rejects.toThrow("Unordered");
+    await expect(readSecond(Response.json([]))).rejects.toThrow("Empty issue page");
+    await expect(read(() => Response.json([], { headers: { link: numberedLink } }))).rejects.toThrow("Incomplete issue pagination");
+    await expect(read(() => Response.json([issue(1)], { headers: { link: numberedLink } }))).rejects.toThrow("Incomplete issue pagination");
+    await expect(read(() => Response.json([issue(1)], { headers: { link: `<${endpoint}?page=2>; rel="last"` } })))
+      .rejects.toThrow("Unexpected issue pagination target");
+  });
+
+  it.each([
+    next(`${host}/repositories/1343958500/issues?page=2`),
+    next(`${host}/repos/other/repo/issues?page=2`),
+    next(`${host}/repos/${repository}/unused/../issues?page=2`),
+    next(`https://api.github.com.example/repos/${repository}/issues?page=2`),
+    next(`https://user@api.github.com/repos/${repository}/issues?page=2`),
+    next(`http://api.github.com/repos/${repository}/issues?page=2`),
+    next(`${endpoint}?page=2#fragment`),
+    next(`${endpoint}?page=3`),
+    next(`${endpoint}?page=2&page=2`),
+    next(`${endpoint}?page=2&after=opaque`),
+    next(`${endpoint}?page=2&state=open`),
+    next(`${endpoint}?page=2&per_page=100`),
+    next(`${endpoint}?page=2&since=2026-11-25`),
+    numberedLink.slice(0, -1),
+    `${numberedLink}, ${cursorLink}`,
+    `<${endpoint}?page=2>; rel="next prev"`,
+  ])("rejects incompatible or ambiguous Link evidence (%s)", async link => {
+    await expect(read(() => Response.json(fullPage(1), { headers: { link } }))).rejects.toThrow("issue pagination");
+  });
+
+  it("rejects a repeated cursor and stops at the page and byte limits", async () => {
+    await expect(read(page => Response.json(fullPage(page), { headers: { link: cursorLink } })))
+      .rejects.toThrow("Unexpected issue pagination target on page 2");
+    await expect(read(page => Response.json(fullPage(page), { headers: { link: next(`${endpoint}?page=${page + 1}`) } })))
+      .rejects.toThrow("Issue pagination limit");
+    const chunk = new Uint8Array(1024 * 1024);
+    const oversized = new ReadableStream<Uint8Array>({ pull(controller) { controller.enqueue(chunk); } });
+    await expect(read(() => new Response(oversized))).rejects.toThrow("Issue inventory byte limit");
+  });
+
+  it.each([
+    { timeout: 95_000, expected: "Issue inventory deadline" },
+    { timeout: 8_000, expected: "Issue page 1 deadline" },
+  ])("rejects deadline exhaustion ($timeout ms)", async ({ timeout, expected }) => {
+    const nativeTimeout = AbortSignal.timeout.bind(AbortSignal);
+    const stub = vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => ms === timeout ? AbortSignal.abort() : nativeTimeout(ms));
+    try {
+      const request = vi.fn();
+      await expect(readIssueInventory({ token: "read-only-test", request })).rejects.toThrow(expected);
+      expect(request).not.toHaveBeenCalled();
+    } finally {
+      stub.mockRestore();
+    }
   });
 });
