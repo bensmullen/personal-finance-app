@@ -2,8 +2,12 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
-  // Manual UX captures must not enter normal CI discovery or reshuffle E2E shards.
-  testIgnore: process.env.PFM_UX_EVIDENCE === "1" ? [] : ["**/ux-evidence.spec.ts"],
+  // The household profile is an exclusive inventory. Keep both manual suites
+  // out of ordinary discovery and preserve the existing UX opt-in.
+  ...(process.env.PFM_HOUSEHOLD_EVIDENCE === "1"
+    ? { testMatch: "**/framework-household-readiness.spec.ts" }
+    : { testIgnore: ["**/framework-household-readiness.spec.ts",
+        ...(process.env.PFM_UX_EVIDENCE === "1" ? [] : ["**/ux-evidence.spec.ts"])] }),
   // Four independent runners provide concurrency. One worker per runner bounds
   // contention with next dev and real browser Workers. #207 measured ~1.17 GB
   // post-run Node heap; browser peak remains unmeasured.

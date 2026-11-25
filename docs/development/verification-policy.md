@@ -345,7 +345,11 @@ Profiles:
   neither feasibility nor an `incomplete` full-horizon result closes that gate;
 - `stochastic` → `stochastic:validate`;
 - `onboarding` → `onboarding:dry-run`;
-- `provider` → `calibration:integration`.
+- `provider` → `calibration:integration`;
+- `household-readiness` → one isolated Chromium worker for a short guided
+  household journey, with separate zero/missing and store-isolation cases.
+  Prior exact-compatible ordinary CI remains the source for the full flagship,
+  compiler and S8-5A evidence. See the [household evidence procedure](goal-framework/household-readiness.md).
 
 A profile fails clearly when its script has not yet been implemented.
 
