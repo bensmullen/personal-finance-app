@@ -345,7 +345,18 @@ Profiles:
   neither feasibility nor an `incomplete` full-horizon result closes that gate;
 - `stochastic` → `stochastic:validate`;
 - `onboarding` → `onboarding:dry-run`;
-- `provider` → `calibration:integration`.
+- `provider` → `calibration:integration`;
+- `household-readiness` → one isolated Chromium worker for a short guided
+  household journey, with separate zero/missing and store-isolation cases.
+  The profile uses ordinary Next dev with 120 seconds for HTTP readiness
+  within a 300-second execution deadline plus teardown. The 12-minute hosted
+  runner uses a 2 GiB Node heap, a 512-task runner-user limit, and sampled
+  filesystem guards with 4 GiB of growth and a 4 GiB free-space floor.
+  The upload is capped at 12 MiB and 12 files with seven-day retention.
+  A candidate-bound execution receipt, redacted server observations and
+  Playwright progress preserve early failures for review.
+  Prior exact-compatible ordinary CI remains the source for the full flagship,
+  compiler and S8-5A evidence. See the [household evidence procedure](goal-framework/household-readiness.md).
 
 A profile fails clearly when its script has not yet been implemented.
 
