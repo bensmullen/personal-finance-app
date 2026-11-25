@@ -1,0 +1,58 @@
+# Resource policy and manual V3 baseline
+
+GF-05 #367 implements offline controls for GF-R10, GF-R11, GF-R12 and GF-R19 under GF-A01, GF-A04 and GF-A07. Existing V3 receipts and financial verification gates govern manual execution. This development tooling has no application imports, scheduled work, provider calls or dependency changes. GF-06 #368 owns native certification.
+
+## Supervisor and accounting
+
+Use one trusted supervisor and one private ledger across all goals, workers and provider surfaces for the account. Provision a canonical absolute directory outside worker-writable roots, on a local filesystem with atomic rename and durable file and directory sync. Keep ledger data out of source control. Authenticate directory identity, permissions, policy and the shared ledger through the trusted host. Initialize explicitly in an empty directory. A new ledger is a new accounting authority and requires independent approval and carried liabilities.
+
+Use one canonical pool for shared Work and Codex allowance. Pin a goal's budget to one pool and integral unit. Preserve other units as separate measurements. Headroom defaults to 20%. Apply it to the tightest observed remaining bound for the epoch and subtract admitted liabilities. Stale, degraded and unknown telemetry preserve that bound, including zero, while limiting admissions to approved pilots. For a pool with no observed bound, an approved pilot uses the configured pool ceiling with headroom and its own cumulative pilot ceiling. To replace a prior epoch's bound, require complete observed coverage and independent authentication of provider identity, epoch and reset evidence at the rollover boundary. Carry previous-epoch unsettled, late and potentially cross-epoch charges. The host must authenticate a fresh clock and reject unproven jumps or skew.
+
+Use the approved deadline and stable goal/task lineage across issues, threads, retries, models and resets. The host authenticates canonical identity, live authority, budget limits and the logical-resource fence. The ledger pins cumulative ceilings, call limits and the deadline to the goal and task lineage. A budget change needs a newer operative revision and a separate authenticated approval reference bound to the previous and proposed limits. A task revision can revise its lineage ceiling within the goal budget. Repair caps are fixed by the ledger policy digest. The ledger computes and carries prior liabilities and attempts under lock through an approved revision. Recheck the governing limits before dispatch. Charge model calls and continuation slots at reservation, including no-start and failed attempts. Reserve planning, discovery, coordination, review, escalation, subagents and compaction. Give nested agents their own reservations within a live parent's lineage and deadline. Prove their closure before closing the parent. Preserve attempt classification against the original evidence. After at most two cumulative repairs, admit at most one separately charged reassessment with authenticated new material evidence. Exhaustion pauses cheaply using existing evidence.
+
+Reserve CPU millicores, memory MiB, process slots, disk MiB, CI runner-minutes and test/browser slots. Keep live allocations until terminal proof. CI minutes also have a lifetime ledger cap. Recheck foreground app development and UAT before reserve and start. Zero CI minutes or test slots excludes that activity from the admitted workload. Hold the cleanup allocation inside the same run liability and admitted call envelope. Reconciliation remains available when admissions are exhausted. Separate paid cleanup or diagnostic work needs its own admission.
+
+## Admission and recovery
+
+The host supplies bounded, redacted records and an independently implemented verifier that returns literal true for authenticated facts. Keep credentials, provider payloads, raw conversations and household data outside the ledger.
+
+1. Record a quota snapshot when available, with its source and immutable evidence. Reserve with a V1 reservation, canonical goal and fence, operation and attempt, host estimates and pilot designation. The lookup returns the V1 reservation with computed carries and a lifecycle view.
+2. Persist start intent immediately before dispatch. Only a newly committed intent permits a single start within its live expiry and control authority. Duplicate intent or lost delivery requires reconciliation. Expiry or a stop request retains the original allocation and fence.
+3. Record native acknowledgement and actual model, effort, surface and runtime. Reconcile mismatches and late acknowledgement while retaining quarantine. Record continued billing using authenticated cumulative totals scoped to the account, pool, epoch, unit and run. Out-of-order observations never reduce liability. Preserve other units, estimates and missing data with source, role, coverage and reason.
+4. Authenticate terminal evidence bound to the run, reservation and fence, including independent no-start proof where applicable. Terminal proof releases the fence. If it arrives before configuration evidence, the lookup reports actual configuration and profile compliance as unknown until authenticated evidence arrives. A late acknowledgement must match the terminal native run and any recorded configuration. It updates configuration evidence without changing terminal status or liability. Billing proof can release the difference between the held estimate plus cleanup reserve and the final observed bill. Repeated settlement produces no additional credit. Late higher bills immediately increase liability.
+
+Before reporting commit, the ledger syncs the private lock, writes and syncs a temporary entry, then renames and syncs the directory. The chain binds each entry to one ledger ID and policy digest. The writer checks the canonical UTF-8 header and complete entry, including the hash envelope, against the reader's 128 KiB payload limit plus a newline before writing. Malformed or oversized input is refused before publication. An ambiguous write keeps the lock and pending evidence. A held lock or damaged chain blocks admission. To recover, prove the old supervisor has stopped, preserve the ledger and partial evidence, reconcile the native side, and independently resolve the lock and commit before dispatch. Never initialize a damaged ledger in place. Retained bytes grow linearly. Each transaction, including read-only lookup and summary, enumerates the journal and reads and verifies the entire chain under lock. Cumulative replay across a growing sequence of appends is quadratic in entry count. Use this ledger for bounded first-wave sessions and account for replay I/O and lock time before expanding use.
+
+### Profiles and rollout
+
+The shipped registry contains zero verified native entries. A trusted host may supply its authenticated installed model/effort inventory. Pin each selected profile by ID and digest. Verify its operation, reviewed risk range and financial-review eligibility. Compare observed cost and independently accepted outcomes within equivalent risk and coverage. If a profile or required review quality cannot be verified, pause. Record actual configuration and reconcile mismatches without fallback.
+
+Missing quota telemetry or native enforcement allows only an explicitly approved supervised pilot with finite cumulative budget and deadline. Other admission requires a fresh observed quota and positive native enforcement attestation for the exact run envelope, including cumulative cap, deadlines, cancellation and terminal identity. This issue provides no native certification, automatic dispatch or paid fallback.
+
+## Checkpoint and compaction
+
+Use authenticated context telemetry in its stated unit and freshness window. When pressure is unknown, use a finite elapsed-session deadline. Pressure or deadline requests a checkpoint. At handoff and resume, re-fetch live goal/task authority, exact V3 body, Git head, clean workspace receipt and stopped-writer proof. Preserve approved decisions, criteria and blockers and the immutable inventory of evidence and open acceptance, PM and UAT gates. Observation-only updates preserve goal control identity. A changed operative issue or head requires fresh validation. Use deterministic projection for references or prove metered compaction has its own ledger reservation within the same lineage. Store large history and shared catalogs once.
+
+## Prospective manual V3 baseline with GF-04 #366
+
+Use records produced in ordinary work, including the original issue and scope census, saved V3 receipt, GitHub check attempts, independent review and authenticated PM events. Classify before execution as simple, standard or cross-cutting using semantic authorities, layers and verification demands. Classify after execution as clean-first-pass, blocked-repaired or incomplete, with first publication review and acceptance evidence where applicable. Include failed and paused work and count each independently accepted capability once.
+
+Measure APIV/scope preparation, bootstrap, model/coding, CI, independent review, routine PM intervention and necessary PM decisions or UAT. Track both overhead and elapsed time where supported. Record source, unit, pool where applicable, coverage and evidence. Missing values are null with a reason. An observed zero requires evidence. Report eligible task count, observed coverage, median and range, plus partial, estimated and missing counts. Retain the original per-task records by reference. Compare clean-simple and clean-cross-cutting overhead separately from repair recovery. Use up to five comparable earlier accepted tasks if adequately evidenced and prospectively classified. Compare the first three to five pilot outcomes when available and disclose confounders. Use no extra model call, issue, CI run or review just to fill this report.
+
+### Initial baseline report
+
+Status is **not measured**. This publication has zero qualifying completed manual-V3 records with authenticated pre-execution classification and independent outcome evidence. First-wave candidates #366 and #367 can contribute as their existing ordinary records become available. Earlier tasks without verified pre-execution classification are outside this cohort. Provider usage, stage costs and savings remain unmeasured.
+
+| Cohort | Eligible tasks | Complete observed per stage | Median / range |
+| --- | ---: | ---: | --- |
+| Clean simple | 0 | 0 of 0 | null / null |
+| Clean standard | 0 | 0 of 0 | null / null |
+| Clean cross-cutting | 0 | 0 of 0 | null / null |
+| Blocked/repaired, each complexity | 0 | 0 of 0 | null / null |
+| Incomplete, each complexity | 0 | 0 of 0 | null / null |
+
+Synthetic fixtures exercise the reporting and adversarial controls. They contribute no measurements to this baseline. See [verification-and-metrics.md](verification-and-metrics.md).
+
+## Evidence for independent review
+
+GF-V10, GF-V11, GF-V12 and GF-V19 run in the existing PR unit shards through [goalFrameworkResources.test.ts](../../../test/goalFrameworkResources.test.ts). The fixtures exercise contention, quota and clock changes, cancellation and late bills, partial storage, profile rejection, retry lineage, checkpoint gates and structural growth at 1, 10 and 100 records. Bind the PR source SHA, tested integration SHA, verification plan, all selected check attempts and independent disposition together for exact-head review.
