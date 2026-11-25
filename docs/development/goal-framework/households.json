@@ -1,0 +1,371 @@
+{
+  "schema": "GF04_HOUSEHOLDS_V1",
+  "revision": 2,
+  "applicable": [
+    {
+      "id": "flagship",
+      "owner": 120,
+      "requirements": [
+        "PFA-DET-001–014",
+        "PFA-UX-015–020"
+      ],
+      "evidence": [
+        {
+          "path": "e2e/u1b-low-input-forecast.spec.ts",
+          "fixtures": [
+            "src/application/goldenHousehold.ts"
+          ],
+          "oracle": "e2e/u1b-low-input-forecast.spec.ts",
+          "kind": "reconciliation",
+          "covers": "Original flagship input, actual compiler and worker, opening and posted cash, dates, period selection and cold worker recovery.",
+          "cases": [
+            "one click produces real retirement-planning coverage and financial readouts at 1440px",
+            "one click produces real retirement-planning coverage and financial readouts at 390px",
+            "cold worker recovery retains exact original evidence at 1440px",
+            "cold worker recovery retains exact original evidence at 390px",
+            "saved flagship recovers durable requested dates and paycheck bank without reauthorizing session choices"
+          ]
+        },
+        {
+          "path": "e2e/u1b-financial-charts.spec.ts",
+          "fixtures": [
+            "src/application/goldenHousehold.ts"
+          ],
+          "oracle": "e2e/u1b-financial-charts.spec.ts",
+          "kind": "reconciliation",
+          "covers": "Retained stale result and edit/rerun recovery through outward charts.",
+          "cases": [
+            "Read-only Overview to Cash export, retained stale result and edit recovery at 1440px",
+            "Read-only Overview to Cash export, retained stale result and edit recovery at 390px"
+          ]
+        },
+        {
+          "path": "e2e/u1b-financial-charts.spec.ts",
+          "fixtures": [
+            "src/application/goldenHousehold.ts"
+          ],
+          "oracle": "e2e/u1b-financial-charts.spec.ts",
+          "kind": "refusal",
+          "covers": "Shared chart pending and controlled worker transport failure on desktop and mobile.",
+          "cases": [
+            "Shared chart pending, completion and worker failure at 1440px",
+            "Shared chart pending, completion and worker failure at 390px"
+          ]
+        },
+        {
+          "path": "e2e/u1b-financial-charts.spec.ts",
+          "fixtures": [
+            "src/application/goldenHousehold.ts"
+          ],
+          "oracle": "e2e/u1b-financial-charts.spec.ts",
+          "kind": "reconciliation",
+          "covers": "Keyboard and 200% text chart interactions across widths and periods.",
+          "cases": [
+            "Shared charts with touch and enlarged text › Cash compact tap selection and local exact details at 390px with 200% text · annual",
+            "Shared charts with touch and enlarged text › Cash compact tap selection and local exact details at 390px with 200% text · monthly",
+            "Shared charts with touch and enlarged text › Cash compact tap selection and local exact details at 1440px with 200% text · annual",
+            "Shared charts with touch and enlarged text › Cash compact tap selection and local exact details at 1440px with 200% text · monthly"
+          ]
+        },
+        {
+          "path": "e2e/u1b-planning-experience.spec.ts",
+          "fixtures": [
+            "src/application/goldenHousehold.ts"
+          ],
+          "oracle": "e2e/u1b-planning-experience.spec.ts",
+          "kind": "refusal",
+          "covers": "Readable dates, single retirement owner and explicit V6 unavailable status.",
+          "cases": [
+            "Planning sourced dates, honest V6 gap and single retirement owner at 1440px",
+            "Planning sourced dates, honest V6 gap and single retirement owner at 390px"
+          ]
+        },
+        {
+          "path": "e2e/u1-guided-authoring.spec.ts",
+          "fixtures": [
+            "src/application/goldenHousehold.ts"
+          ],
+          "oracle": "e2e/u1-guided-authoring.spec.ts",
+          "kind": "reconciliation",
+          "covers": "Normal navigation, staged salary and direct repair.",
+          "cases": [
+            "U1 normal navigation, staged salary, direct repair, mortgage and horizon guidance"
+          ]
+        }
+      ],
+      "gaps": [],
+      "unsupported": [
+        "V6_RETIREMENT_INCOME_SOURCE_COVERAGE"
+      ]
+    },
+    {
+      "id": "low-input",
+      "owner": 120,
+      "requirements": [
+        "PFA-UX-016",
+        "PFA-UX-018–020"
+      ],
+      "evidence": [
+        {
+          "path": "e2e/framework-household-readiness.spec.ts",
+          "fixtures": [
+            "test/fixtures/goalFramework/households/guided.json"
+          ],
+          "oracle": "test/fixtures/goalFramework/households/guided.json",
+          "kind": "reconciliation",
+          "covers": "Literal source and owner, edit, cancel, discard, save, reload and isolated stores in both fixture orders.",
+          "cases": [
+            "guided household edits and reopens at desktop size",
+            "fresh stores preserve account ownership with Synthetic Amber first",
+            "fresh stores preserve account ownership with Synthetic Indigo first"
+          ]
+        },
+        {
+          "path": "e2e/u1b-low-input-forecast.spec.ts",
+          "fixtures": [
+            "src/application/goldenHousehold.ts"
+          ],
+          "oracle": "e2e/u1b-low-input-forecast.spec.ts",
+          "kind": "reconciliation",
+          "covers": "Explicit receiving bank selection and editable starter assumptions without invented balances.",
+          "cases": [
+            "imported non-unique banks need human choice and retain source facts",
+            "new plans accept one coherent editable starter set without inventing balances or benefits"
+          ]
+        }
+      ],
+      "gaps": [
+        "GUIDED_DRAFT_TO_SUPPORTED_FORECAST_RECONCILIATION"
+      ],
+      "unsupported": []
+    },
+    {
+      "id": "zero-investments",
+      "owner": 120,
+      "requirements": [
+        "PFA-UX-018–020"
+      ],
+      "evidence": [
+        {
+          "path": "e2e/u1b-financial-charts.spec.ts",
+          "fixtures": [
+            "e2e/u1b-financial-charts.spec.ts"
+          ],
+          "oracle": "e2e/u1b-financial-charts.spec.ts",
+          "kind": "reconciliation",
+          "covers": "Opening-only and zero-investment chart states in both viewports.",
+          "cases": [
+            "H04 opening-only, zero-investments and no-result state at 1440px",
+            "H04 opening-only, zero-investments and no-result state at 390px"
+          ]
+        },
+        {
+          "path": "e2e/framework-household-readiness.spec.ts",
+          "fixtures": [
+            "test/fixtures/goalFramework/households/guided.json"
+          ],
+          "oracle": "test/fixtures/goalFramework/households/guided.json",
+          "kind": "reconciliation",
+          "covers": "No holdings in canonical exports.",
+          "cases": [
+            "fresh stores preserve account ownership with Synthetic Amber first",
+            "fresh stores preserve account ownership with Synthetic Indigo first"
+          ]
+        }
+      ],
+      "gaps": [],
+      "unsupported": []
+    },
+    {
+      "id": "zero-income",
+      "owner": 120,
+      "requirements": [
+        "PFA-UX-014",
+        "PFA-UX-016",
+        "PFA-UX-019"
+      ],
+      "evidence": [
+        {
+          "path": "e2e/framework-household-readiness.spec.ts",
+          "fixtures": [
+            "test/fixtures/goalFramework/households/guided.json"
+          ],
+          "oracle": "test/fixtures/goalFramework/households/guided.json",
+          "kind": "reconciliation",
+          "covers": "Entered zero survives canonical export and remains readable on the Income surface.",
+          "cases": [
+            "entered zero income remains distinct from a blank input on mobile"
+          ]
+        }
+      ],
+      "gaps": [
+        "EXPLICIT_ZERO_SOURCE_TO_WORKER_RECONCILIATION"
+      ],
+      "unsupported": []
+    },
+    {
+      "id": "future-start-income",
+      "owner": 120,
+      "requirements": [
+        "PFA-DET-001–014",
+        "PFA-UX-014",
+        "PFA-UX-019"
+      ],
+      "evidence": [
+        {
+          "path": "test/verticalSlice2.test.ts",
+          "fixtures": [
+            "test/fixtures/modeledIncome.ts"
+          ],
+          "oracle": "test/verticalSlice2.test.ts",
+          "kind": "reconciliation",
+          "covers": "Checks dated source starts and no income before the original start.",
+          "cases": [
+            "Vertical Slice 2 growing household cash flow › keeps future open-ended income out of early periods and recognizes it once at its source date",
+            "Vertical Slice 2 growing household cash flow › accepts a valid finite future income range without in-window occurrences"
+          ]
+        },
+        {
+          "path": "e2e/u1b-low-input-forecast.spec.ts",
+          "fixtures": [
+            "src/application/goldenHousehold.ts"
+          ],
+          "oracle": "e2e/u1b-low-input-forecast.spec.ts",
+          "kind": "reconciliation",
+          "covers": "Exact zero posted before flagship salary starts and nonzero posted after its start.",
+          "cases": [
+            "one click produces real retirement-planning coverage and financial readouts at 1440px",
+            "one click produces real retirement-planning coverage and financial readouts at 390px"
+          ]
+        }
+      ],
+      "gaps": [],
+      "unsupported": []
+    },
+    {
+      "id": "missing-income",
+      "owner": 120,
+      "requirements": [
+        "PFA-UX-014",
+        "PFA-UX-016",
+        "PFA-UX-018–019"
+      ],
+      "evidence": [
+        {
+          "path": "e2e/framework-household-readiness.spec.ts",
+          "fixtures": [
+            "test/fixtures/goalFramework/households/guided.json"
+          ],
+          "oracle": "test/fixtures/goalFramework/households/guided.json",
+          "kind": "refusal",
+          "covers": "Omitted required amount blocks wizard progress before explicit zero is accepted.",
+          "cases": [
+            "entered zero income remains distinct from a blank input on mobile"
+          ]
+        },
+        {
+          "path": "e2e/u1b-planning-experience.spec.ts",
+          "fixtures": [
+            "src/application/goldenHousehold.ts"
+          ],
+          "oracle": "e2e/u1b-planning-experience.spec.ts",
+          "kind": "refusal",
+          "covers": "Missing sources remain uncomputed and keyboard-discoverable.",
+          "cases": [
+            "Planning keyboard disclosure and uncomputed resources at 1440px",
+            "Planning keyboard disclosure and uncomputed resources at 390px"
+          ]
+        }
+      ],
+      "gaps": [],
+      "unsupported": []
+    },
+    {
+      "id": "source-qualified-s8-5a",
+      "owner": 331,
+      "requirements": [
+        "PFA-DET-016–023"
+      ],
+      "evidence": [
+        {
+          "path": "test/d2/integrated/jointHousehold/s8Five/witness.test.ts",
+          "fixtures": [
+            "test/d2/integrated/jointHousehold/s8Five/scenario.ts",
+            "test/d2/integrated/jointHousehold/s8Five/wages.ts",
+            "test/d2/integrated/jointHousehold/s8Five/benefits.ts",
+            "test/d2/integrated/jointHousehold/s8Five/cashSources.ts",
+            "test/d2/integrated/jointHousehold/s8Five/healthAndRetirement.ts",
+            "test/d2/integrated/jointHousehold/s8Five/bank.ts",
+            "test/d2/integrated/jointHousehold/s8Five/portableWorker.ts"
+          ],
+          "oracle": "test/d2/integrated/jointHousehold/s8Five/oracle.ts",
+          "kind": "reconciliation",
+          "covers": "Original publishers, literal exact-cent postings and BANK balances, compiled execution, independent reference and fresh-process replay.",
+          "cases": [
+            "matches literal S1–S5 journals and separate BANK balances in one two-person run",
+            "checks built-in authenticated VS2 wages and VS4 fixed loans against the frozen reference",
+            "grows native wages, FSA, card, SSA/CMS, fixed loans and HELOC through 1/12/24 observations",
+            "replays earliest, sparse and terminal windows in a fresh publisher process",
+            "uses explicit policy when approved loan service and the insurer compete for the shared BANK"
+          ]
+        },
+        {
+          "path": "test/d2/integrated/jointHousehold/s8Five/witness.test.ts",
+          "fixtures": [
+            "test/d2/integrated/jointHousehold/s8Five/scenario.ts"
+          ],
+          "oracle": "test/d2/integrated/jointHousehold/s8Five/oracle.ts",
+          "kind": "refusal",
+          "covers": "Claim and funding conflicts, rollback, source substitutions, changed checkpoints and live warm replay reauthentication.",
+          "cases": [
+            "retains the preceding committed month when an elected source or a later active BANK payment fails",
+            "rejects mismatched run observation, a duplicate source, and a same-amount wrong issuer",
+            "rolls back when two distinct issuer originals consume the same payment authorization",
+            "rejects overlapping Section 125 and aftertax coverage with the entire elected period rolled back",
+            "reauthenticates warm replay against the live payroll insurer and medical originals",
+            "rejects a household-owned account on the legacy HELOC route",
+            "rejects an independently qualified later HELOC checkpoint that changes a committed prior row"
+          ]
+        },
+        {
+          "path": "test/d2/integrated/jointHousehold/s8Five/sparseEvidence.test.ts",
+          "fixtures": [
+            "test/d2/integrated/jointHousehold/s8Five/scenario.ts"
+          ],
+          "oracle": "test/d2/integrated/jointHousehold/s8Five/oracle.ts",
+          "kind": "refusal",
+          "covers": "Rejects sparse and terminal original omission with the same committed BANK cash.",
+          "cases": [
+            "rejects an omitted terminal SSA original and proof with the same committed BANK cash"
+          ]
+        }
+      ],
+      "gaps": [
+        "S8_5A_NORMAL_USER_BINDING_UNVERIFIED"
+      ],
+      "unsupported": [
+        "S8_5B_FINAL_COMPOSITION_OPEN_149"
+      ]
+    }
+  ],
+  "future_gate": {
+    "owner": 108,
+    "plan_dependency": 105,
+    "households": [
+      "H01",
+      "H02",
+      "H03",
+      "H04",
+      "H05",
+      "H06",
+      "H07",
+      "H08"
+    ],
+    "independently_saved_plans_per_household": 4,
+    "disposition": "REQUIRED_FOR_ALPHA_GATE"
+  },
+  "subjective_questions": [
+    "Could you tell when income is actually recorded, starts later, or is unavailable?",
+    "Could you reopen the saved household and find the same requested period and income source without coaching?"
+  ]
+}
