@@ -39,7 +39,11 @@ async function initialize(page: Page, household: Household, rejectMissingIncome 
   await field(page, "Projection horizon (years)").fill("1");
   await field(page, "Projection start date").fill(fixture.start);
   await action(page, "Finish setup").click();
-  await expect(page.getByText("Your starting financial picture is ready", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Know where you stand.", exact: true, level: 1 })).toBeVisible();
+  const recordedCash = page.getByRole("region", { name: "Your finances today", exact: true })
+    .getByRole("article", { name: "Cash and savings", exact: true });
+  await expect(recordedCash.locator(".calm-metric-value")).toHaveText(`$${household.cash}`);
+  await expect(page.getByText("Your forecast is not ready yet", { exact: true })).toBeVisible();
 }
 
 async function exported(page: Page) {
