@@ -1,0 +1,9 @@
+{
+  "unsafe_zip_paths": ["../report.json", "evidence/../report.json", "/report.json", "C:/report.json", "a\\report.json", "NUL.json"],
+  "provider_outcomes": [
+    {"conclusion": "failure", "outcome": "FAIL"},
+    {"conclusion": "skipped", "outcome": "SKIP"},
+    {"conclusion": "cancelled", "outcome": "INCOMPLETE"},
+    {"conclusion": "timed_out", "outcome": "TIMEOUT"}
+  ]
+}

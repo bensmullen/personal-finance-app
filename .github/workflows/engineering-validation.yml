@@ -1,4 +1,5 @@
 name: engineering-validation
+run-name: engineering-validation / ${{ inputs.profile }}
 
 on:
   workflow_dispatch:
@@ -13,6 +14,7 @@ on:
           - stochastic
           - onboarding
           - provider
+          - household-readiness
       warmups:
         description: Performance warmups when profile=performance
         required: false
@@ -26,11 +28,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: engineering-validation-${{ github.ref }}-${{ inputs.profile }}
+  group: engineering-validation-${{ inputs.profile == 'household-readiness' && 'household-readiness' || format('{0}-{1}', github.ref, inputs.profile) }}
   cancel-in-progress: false
 
 jobs:
   validate:
+    if: inputs.profile != 'household-readiness'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -68,10 +71,70 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+  household-readiness:
+    if: inputs.profile == 'household-readiness'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --prefer-offline --no-audit --no-fund
+      - run: node node_modules/@playwright/test/cli.js install --with-deps chromium
+      - name: Verify ordinary and manual browser discovery
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/pfm-household" engineering-validation-artifacts/household
+          for mode in ordinary ux household; do
+            export PFM_DISCOVERY="$RUNNER_TEMP/pfm-household/$mode.json"
+            PFM_UX_EVIDENCE="$([[ "$mode" == ux ]] && echo 1 || echo 0)" \
+            PFM_HOUSEHOLD_EVIDENCE="$([[ "$mode" == household ]] && echo 1 || echo 0)" \
+              node node_modules/@playwright/test/cli.js test --list --reporter=./tools/ci/collect-test-durations.mjs
+          done
+          node tools/ci/goal-framework-evidence.mjs browser-inventory \
+            "$RUNNER_TEMP/pfm-household/ordinary.json" "$RUNNER_TEMP/pfm-household/household.json" \
+            "$RUNNER_TEMP/pfm-household/ux.json" engineering-validation-artifacts/household/inventory.json
+      - name: Run bounded Chromium household journey
+        timeout-minutes: 6
+        env:
+          PFM_HOUSEHOLD_EVIDENCE: "1"
+          PFM_UX_EVIDENCE: "0"
+          NODE_OPTIONS: --max-old-space-size=2048
+        run: |
+          set -euo pipefail
+          # RLIMIT_NPROC counts runner-user threads as well as processes on Linux.
+          ulimit -u 512
+          export PFM_HOUSEHOLD_PROCESS_LIMIT="$(ulimit -u)"
+          output="$PWD/engineering-validation-artifacts/household"
+          /usr/bin/time -v -o "$output/resources.txt" \
+            timeout --kill-after=10s 310s node tools/ci/goal-framework-evidence.mjs household-run "$output"
+      - name: Check bounded upload size
+        id: artifact-size
+        if: always()
+        run: |
+          set -euo pipefail
+          directory=engineering-validation-artifacts/household
+          test -d "$directory"
+          test ! -L "$directory"
+          test -z "$(find "$directory" -mindepth 1 ! -type f -print -quit)"
+          test "$(du -sb "$directory" | cut -f1)" -le 12582912
+          test "$(find "$directory" -type f | wc -l)" -le 12
+      - name: Upload household review evidence
+        if: always() && steps.artifact-size.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: household-readiness-${{ github.run_id }}-${{ github.run_attempt }}
+          path: engineering-validation-artifacts/household/
+          if-no-files-found: error
+          retention-days: 7
+
   incident:
     name: agent-incident
-    needs: validate
-    if: always() && needs.validate.result != 'success'
+    needs: [validate, household-readiness]
+    if: always() && ((inputs.profile == 'household-readiness' && needs.household-readiness.result != 'success') || (inputs.profile != 'household-readiness' && needs.validate.result != 'success'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -86,7 +149,7 @@ jobs:
           INCIDENT_RUN_ID: ${{ github.run_id }}
           INCIDENT_EVENT: ${{ github.event_name }}
           INCIDENT_REPOSITORY: ${{ github.repository }}
-          INCIDENT_GATE_VALIDATE: ${{ needs.validate.result }}
+          INCIDENT_GATE_VALIDATE: ${{ inputs.profile == 'household-readiness' && needs.household-readiness.result || needs.validate.result }}
         run: node tools/ci/write-agent-incident.mjs
       - name: Upload agent process incident
         uses: actions/upload-artifact@v4
