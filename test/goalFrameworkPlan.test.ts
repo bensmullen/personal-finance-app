@@ -16,5 +16,5 @@ it("keeps the approved goal plan mapped and rejects unsafe allocation and contra
   expect(report.status).toBe("PLAN_VALID_NOT_IMPLEMENTED");
   expect(report.work_packages).toBe(9);
   expect(report.requirements).toBe(24);
-  expect(report.self_test).toEqual({ positive: 3, negative: 46 });
+  expect(report.self_test).toEqual({ positive: 4, negative: 64 });
 });

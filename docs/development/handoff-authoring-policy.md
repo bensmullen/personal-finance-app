@@ -33,11 +33,14 @@ number of files needed to implement it. Consult
    exact `ALLOWED_PATHS`, and verify real branch/receipt readiness. Do **not**
    require a scope-only register, roadmap or milestone-test PR, create a new
    implementation issue, or add a second PM decision gate.
-2. **Level 2 — milestone register:** A new non-learning issue, mandatory
+2. **Level 2 — delivery allocation:** During metadata shadow, a new non-learning issue, mandatory
    dependency/owner/gate change, consolidation or controlled requirement
    allocation must be reconciled in the register. Update the roadmap too **if
    and only if** delivery sequencing, stage commitments or release gates change.
    Review registration/CI and merge any required planning PR before dispatch.
+   After reviewed metadata cutover, ordinary assignments within approved work
+   packages and stages use authenticated live issue metadata. Changes to
+   controlled commitments require the same decisions and planning updates as before.
 3. **Level 3 — controlled product/architecture:** New or changed economic
    meaning, source/provenance/permission authority, tax/legal behavior,
    cross-domain interface commitments, supported behavior or release/UAT
@@ -118,7 +121,7 @@ Before emitting an implementation/repair handoff, ChatGPT SHALL:
    roadmap material needed for the task;
 2. consult `docs/development/agent-learning-policy.md` and the active lesson
    ledger before issuing implementation instructions;
-3. consult the live issue-to-milestone register at `docs/development/milestone-issue-register.json` and its policy, reconcile current GitHub issue statuses, and verify that the task's owner stage/dependencies/mandatory closeout gate are allocated; do not silently skip an unresolved required issue or treat a planning backlog entry as V3 task authorization;
+3. verify the task's owner stage, dependencies, mandatory closeout gate and requirement allocation using the milestone policy. During shadow use the register and current GitHub evidence. After approved cutover require a complete, fresh live metadata projection against authenticated control and admissions. Re-fetch the exact saved body and run the actual V3 parser at dispatch in both modes. Missing live state, a generated snapshot, an issue label or issue closure cannot establish readiness or acceptance;
 4. resolve material semantic/architectural decisions rather than delegating
    those decisions to Codex;
 5. identify the smallest defensible `ALLOWED_PATHS`;

@@ -7,7 +7,13 @@ on:
     paths:
       - docs/development/milestone-issue-register.json
       - docs/development/milestone-issue-policy.md
+      - docs/development/goal-framework/metadata-migration.md
+      - tools/roadmap/goal-issue-metadata.mjs
       - tools/roadmap/verify-issue-stage-register.mjs
+      - tools/codex/goal-framework/contracts.mjs
+      - tools/codex/goal-framework/schemas/v1.mjs
+      - test/goalIssueMetadata.test.ts
+      - test/fixtures/goalFramework/metadata/**
       - .github/workflows/issue-milestone-traceability.yml
   schedule:
     - cron: "15 11 * * 1"
@@ -17,16 +23,33 @@ permissions:
   contents: read
   issues: read
 
+concurrency:
+  group: issue-traceability-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   live-issue-register:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Validate open issues are stage-registered
+      - name: Compare the offline legacy export
+        run: node tools/roadmap/verify-issue-stage-register.mjs --offline-shadow > legacy-shadow.json
+      - name: Compare live issues with legacy obligations
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node tools/roadmap/verify-issue-stage-register.mjs
+        run: node tools/roadmap/verify-issue-stage-register.mjs --live-shadow > live-shadow.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issue-metadata-shadow-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            legacy-shadow.json
+            live-shadow.json
+          retention-days: 14
