@@ -124,12 +124,13 @@ const finish = (status, reason, timeoutObserved = false, retryEligible = false) 
     try {
       let started = 0;
       let completed = 0;
-      for (const event of readProgress().events) {
+      const { events, complete } = readProgress();
+      for (const event of events) {
         if (event.phase === 'start') started += 1;
         if (event.phase === 'end') completed += 1;
       }
       if (logPath) writeFileSync(logPath + '.summary.json', JSON.stringify({
-        status, reason, startedCases: started, completedCases: completed,
+        status, reason, startedCases: started, completedCases: completed, progressStreamIntact: complete,
         progress: relative(root, progressPath),
       }) + '\n', { flag: 'wx', mode: 0o600 });
     } catch { /* missing/corrupt diagnostics do not change execution truth */ }
@@ -173,7 +174,10 @@ if (fd !== undefined) {
         let child;
         let timedOut = false;
         let teardown;
+        let cleanupDeadline;
         let exitCode = null;
+        let exited = false;
+        let closed = false;
         let finished = false;
         const started = performance.now();
         if (started >= deadline) {
@@ -197,30 +201,66 @@ if (fd !== undefined) {
         }
         child.stdout.on('data', capture);
         child.stderr.on('data', capture);
-        const complete = (status, timeout = false) => {
+        const complete = (status, timeout = false, cleanupUnknown = false) => {
           if (finished) return;
           finished = true;
           clearTimeout(timer);
           clearTimeout(teardown);
           phaseEvent({ phase: 'stage-end', stage, status, elapsed_ms: Math.ceil(performance.now() - started) });
-          resolveResult({ status, timeout });
+          resolveResult({ status, timeout, cleanupUnknown });
         };
-        const timer = setTimeout(() => {
-          timedOut = true;
-          try { process.kill(-child.pid, 'SIGKILL'); } catch { /* terminal proof still required */ }
-          teardown = setTimeout(() => {
+        const groupGone = () => {
+          try {
+            process.kill(-child.pid, 0);
+            return false;
+          } catch (error) {
+            return error.code === 'ESRCH';
+          }
+        };
+        const finalize = () => {
+          clearTimeout(teardown);
+          const now = performance.now();
+          const timeout = timedOut || now >= deadline;
+          const failed = exitCode !== null && exitCode !== 0;
+          if (closed && groupGone()) {
+            complete(failed ? 'FAIL' : timeout ? 'TIMEOUT' : exitCode === 0 ? 'PASS' : 'INCOMPLETE', timeout);
+          } else if (now >= cleanupDeadline) {
             child.stdout.destroy();
             child.stderr.destroy();
             child.unref();
-            complete(exitCode !== null && exitCode !== 0 ? 'FAIL' : 'INCOMPLETE', true);
-          }, 1000);
+            complete(failed ? 'FAIL' : 'INCOMPLETE', timeout, true);
+          } else {
+            teardown = setTimeout(finalize, 25);
+          }
+        };
+        const startCleanup = () => {
+          cleanupDeadline ??= performance.now() + 1000;
+          finalize();
+        };
+        const timer = setTimeout(() => {
+          timedOut = true;
+          // Only signal the spawned group while its leader is still owned.
+          // After exit, a numeric group ID alone cannot authorize a signal.
+          if (!exited && child.pid !== undefined) {
+            try { process.kill(-child.pid, 'SIGKILL'); } catch { /* terminal proof still required */ }
+          }
+          startCleanup();
         }, Math.max(0, deadline - performance.now()));
-        child.once('exit', code => { exitCode = code; });
-        child.once('error', () => complete(child.pid === undefined ? 'SKIP' : 'INCOMPLETE', timedOut));
-        child.once('close', (code, signal) => {
-          const timeout = timedOut || performance.now() >= deadline;
-          complete(code !== null && code !== 0 ? 'FAIL' : timeout ? 'TIMEOUT'
-            : signal || code === null ? 'INCOMPLETE' : 'PASS', timeout);
+        child.once('exit', code => {
+          exited = true;
+          exitCode = code;
+          if (!finished) startCleanup();
+        });
+        child.once('error', () => {
+          if (finished) return;
+          if (child.pid === undefined) complete('SKIP', false);
+          else startCleanup();
+        });
+        child.once('close', code => {
+          if (finished) return;
+          closed = true;
+          exitCode ??= code;
+          startCleanup();
         });
       });
 
@@ -249,7 +289,7 @@ if (fd !== undefined) {
           const completedIds = new Set(outcomes.filter(({ phase }) => phase === 'end').map(({ id }) => id));
           const inventoryComplete = cases.some(({ phase }) => phase === 'case-limit')
             || cases.every(({ phase, id }) => phase !== 'start' || completedIds.has(id));
-          completeCaseEvidence = complete && ending?.phase === 'cases-complete'
+          completeCaseEvidence = !result.cleanupUnknown && complete && ending?.phase === 'cases-complete'
             && ending.status === (third === 'PASS' ? 'passed' : 'failed')
             && inventoryComplete
             && cases.filter(({ phase }) => phase === 'cases-complete').length === 1
@@ -260,8 +300,11 @@ if (fd !== undefined) {
         } catch { /* retain an actual nonzero exit or process timeout */ }
         if (third === 'PASS' && !completeCaseEvidence) third = 'INCOMPLETE';
       }
-      const retryEligible = third === 'FAIL' && result.status === 'FAIL' && !timeoutObserved && completeCaseEvidence;
-      finish(third, third === 'PASS'
+      const retryEligible = third === 'FAIL' && result.status === 'FAIL' && !timeoutObserved
+        && !result.cleanupUnknown && completeCaseEvidence;
+      finish(third, result.cleanupUnknown
+        ? 'process group termination unconfirmed; cleanup quarantined, no local retry'
+        : third === 'PASS'
         ? args[0] ? 'typecheck and selected unit passed' : 'typecheck passed'
         : third === 'TIMEOUT' ? 'bounded execution timed out; incomplete, no local retry'
           : third === 'SKIP' ? 'bounded verifier unavailable; no local retry'

@@ -49,9 +49,16 @@ export default class LocalPreflightProgressReporter {
     // Vitest's per-case timeout exits the file nonzero, but must not become an
     // ordinary FAIL eligible for a corrective local rerun. Inspect messages
     // only in-process; never serialize assertion content into progress logs.
-    const timedOut = state === 'failed' && (result?.errors ?? []).some(isTimeout);
+    const errors = result?.errors ?? [];
+    const timedOut = state === 'failed' && errors.some(isTimeout);
     record('end', testCase, timedOut ? 'timed_out' :
       ['passed', 'failed', 'skipped', 'todo'].includes(state) ? state : 'incomplete');
+    // Preserve a second failure fact without duplicating the case completion.
+    // The same bounded run marker also covers cases beyond the event limit.
+    if (progress && timedOut && errors.some(error => !isTimeout(error)) && !overflowStatuses.has('failed')) {
+      overflowStatuses.add('failed');
+      append({ phase: 'run-outcome', status: 'failed' });
+    }
   }
 
   onTestRunEnd(modules, errors, reason) {

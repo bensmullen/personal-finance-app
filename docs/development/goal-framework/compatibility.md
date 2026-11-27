@@ -54,8 +54,11 @@ runtime identifier, model, effort, credentials, config, permissions,
 merged parser/control revision, reservation and workspace fence. GF-05
 resolves the registry profile at reserve and begin. Existing unbound grants
 require fresh issuance for live use. The synthetic composition fixture uses
-both journals and exercises cross-surface resume. Actual native execution
-on both surfaces still requires independent certification.
+both journals and binds distinct local and cloud environments to separate
+workspaces when transferring a published checkpoint. Its quota refusal case
+keeps the lower bound after a higher same-epoch report and reconciles the
+reservation with authenticated nonstart evidence. Actual native execution on
+both surfaces still requires independent certification.
 
 ## Optional preflight and next gates
 

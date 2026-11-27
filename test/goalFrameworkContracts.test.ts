@@ -126,7 +126,7 @@ function fixture(uatPolicy = "not_required") {
   const runtimeIdentity = { surface: runner.surface, runtime: resourceProfile.runtime, product: runner.product,
     runtime_version: runner.runtime_version, tool_version: runner.tool_version, authentication_ref: runner.authentication_ref,
     transport: "fixture-transport", config_digest: digest("fixture-config"), permissions_digest: digest("fixture-permissions"),
-    control_revision: base };
+    control_revision: base, resource_profile: reference(resourceProfile) };
   const reservation = {
     ...envelope("BUDGET_RESERVATION_V1"), ...task, lineage_id: "original-task", risk: census.risk,
     runtime_profile_ref: reference(resourceProfile), limits, estimated_ceiling: 8,
@@ -344,7 +344,8 @@ describe("GF-V04 / GF-V23 census, V3 and workspace binding", () => {
         { ...f.grantInputs, runnerBinding: binding }, f.authority)).toThrow(/GRANT_(RUNNER_BINDING|RESOURCE_PROFILE|RUNTIME_IDENTITY)/);
     }
     for (const patch of [{ runtime_version: "changed" }, { tool_version: "changed" },
-      { authentication_ref: artifact("new-auth") }, { config_digest: digest("changed") }]) {
+      { authentication_ref: artifact("new-auth") }, { config_digest: digest("changed") },
+      { resource_profile: artifact("different-resource-profile") }, { resource_profile: undefined }]) {
       expect(() => validateExecutionGrant(f.grant, { ...f.grantInputs, runtimeIdentity: { ...runtimeIdentity, ...patch } }, f.authority))
         .toThrow("GRANT_RUNTIME_IDENTITY");
     }
@@ -463,6 +464,10 @@ describe("GF-V03 / GF-V23 evidence and lifecycle", () => {
     const legacy = { ...f.grant, references: [] };
     expect(() => proposeTaskTransition(state, event("READY", reference(legacy)), { ...input, grant: legacy }, f.authority))
       .toThrow("GRANT_RUNNER_BINDING");
+    expect(() => proposeTaskTransition(state, event("READY", reference(f.grant)), {
+      ...input, grantInputs: { ...f.grantInputs,
+        runtimeIdentity: { ...f.grantInputs.runtimeIdentity, resource_profile: reference(f.runner) } },
+    }, f.authority)).toThrow("GRANT_RUNTIME_IDENTITY");
     expect(state.status).toBe("PLANNED");
     apply(event("READY", reference(f.grant)));
     const start = event("RUNNING");

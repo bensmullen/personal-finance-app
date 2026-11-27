@@ -124,7 +124,7 @@ function fixture({ realResources = false } = {}) {
   function prepare({ issueNumber = 365, fence = 1, directory = firstDirectory, environment = "local",
     target = branch, base = head, paths = [primary], issueBody = body(paths, target), taskRevision = 1,
     upstream = true, resource = "shared-register", attempt = "initial", goalIssue = 362, reviewLimit = 2, expires = 40,
-    selectedProfile = profile } = {}) {
+    selectedProfile = profile, continuationSlots = attempt === "continuation" ? 1 : 0 } = {}) {
     const { goalKeys, goal, approval } = goalAuthority(goalIssue, reviewLimit);
     goalByTask.set(issueNumber, goalKeys);
     const issue = { repository, number: issueNumber, body: issueBody, kind: "issue", state: "open", evidence: ref("saved-issue") };
@@ -150,7 +150,7 @@ function fixture({ realResources = false } = {}) {
       task_issue: issueNumber, task_revision: taskRevision, lineage_id, limits, risk: "cross-cutting",
       runtime_profile_ref: realResources ? recordRef(selectedProfile) : ref("profile"), estimated_ceiling: 2,
       carries: { account_liability: 0, goal_liability: 0, task_liability: 0, model_calls: 0, continuations: 0 },
-      max_admitted_model_calls: 1, max_admitted_continuations: 0, expires_at: at(expires),
+      max_admitted_model_calls: 1, max_admitted_continuations: continuationSlots, expires_at: at(expires),
       state: "reserved", native_run_id: null, terminal_ack: null };
     let budget = recordRef(reservation);
     if (resourceLedger) {
@@ -232,17 +232,21 @@ function fixture({ realResources = false } = {}) {
 }
 
 describe("GF-06 offline adapter composition", () => {
-  it.each([profile, cloudProfile])("uses both journals and fresh authority when resuming on $surface", (targetProfile) => {
+  function exerciseComposition(targetProfile: typeof profile, quotaRefusal = false) {
     const f = fixture({ realResources: true });
     const resources = f.resourceLedger;
     const admissions = new Map<string, any>();
+    const launchIntents = new Map<string, string>();
     const effects = new Map<string, string>();
+    const runtimeWorkspaces = new Map<string, { directory: string; environment: string }>();
     const startProofs = new Set<string>();
-    const terminalProofs = new Map<string, { digest: string; nativeId: string }>();
+    const terminalProofs = new Map<string, { digest: string; nativeId: string | null }>();
+    const publishedStops = new Map<string, string>();
     let localEvidence = false;
     let killSwitch = false;
     let launchCount = 0;
     let checkpointCount = 0;
+    let controlActive = false;
     let previous: any;
     let publication: ReturnType<typeof f.publication>;
     f.boundaries.set("adapter_local_certification_before_cloud", (value) => localEvidence && value.repository === repository);
@@ -250,6 +254,10 @@ describe("GF-06 offline adapter composition", () => {
     f.boundaries.set("resource_terminal_ack", ({ data }) => terminalProofs.get(data.reservation_id)?.digest === digest(data));
     f.boundaries.set("adapter_run_binding", ({ admission }) =>
       digest(admissions.get(admission.reservation.id)) === digest(admission));
+    f.boundaries.set("adapter_transfer_stopped_and_published", ({ previous: prior, priorRun, priorAdmission, handoff, task }) =>
+      terminalProofs.get(prior.reservation.id)?.nativeId === priorRun.native_run_id
+      && publishedStops.get(prior.checkpoint.digest) === digest([prior.reservation, handoff.stopped_writer, priorAdmission.fence])
+      && task.fence > priorAdmission.fence);
     f.boundaries.set("lifecycle_admissions_open", () => !killSwitch);
     f.boundaries.set("resource_reservation_authority", (run) => run.operation === "implementation");
 
@@ -302,12 +310,18 @@ describe("GF-06 offline adapter composition", () => {
         runtime: metadata, reservation, workspace: input.workspace });
       const verify = (boundary: string, value: any) => {
         if (!f.verify(boundary, value)) return false;
-        if (boundary === "live_runner_resource_profile_binding") return digest(value) === expectedBinding;
+        if (boundary === "live_runner_resource_profile_binding") {
+          const mapped = runtimeWorkspaces.get(value.runtime.runtime);
+          return mapped?.directory === value.workspace.directory && mapped?.environment === value.workspace.environment
+            && digest(value) === expectedBinding;
+        }
         if (boundary === "adapter_native_admission") return !killSwitch && readyGrant?.digest === value.grant.digest;
         if (boundary === "adapter_checkpoint_stopped_writer") return value.run.native_run_id != null
           && terminalProofs.get(value.admission.reservation.id)?.nativeId === value.run.native_run_id
           && value.publication.intent_id === publication.result.intent_id;
-        if (boundary === "adapter_effect_receipt") return effects.get(value.intent.idempotency_key) === value.observed.intent_digest;
+        if (boundary === "adapter_effect_receipt") return effects.get(value.intent.idempotency_key) === value.observed.intent_digest
+          && value.observed.evidence.digest === digest(value.observed.evidence.id)
+          && ["effect-replay", "supervisor-effect"].includes(value.observed.evidence.id);
         return true;
       };
       let readyGrant: ReturnType<typeof ref> | undefined;
@@ -322,13 +336,12 @@ describe("GF-06 offline adapter composition", () => {
         expect(proposal.state.status).toBe("READY");
         readyGrant = proposal.state.grant_ref;
       };
-      let controlActive = false;
       let dropStartAck = true;
       let dropCheckpointAck = true;
       const host = {
         verify, clock: f.clock, parseSaved: f.parseSaved, consumedNonces: new Set(), resources, lifecycle: f.ledger,
         inventory: () => runtime, preparation: () => live,
-        resolveResourceProfile: (reference: ReturnType<typeof ref>) => registry.profiles.find((item) =>
+        resolveResourceProfile: (reference: ReturnType<typeof ref>) => registry.profiles.find((item: typeof profile) =>
           digest(recordRef(item)) === digest(reference)),
         readAdmission: (reference: ReturnType<typeof ref>) => admissions.get(reference.id),
         previousCheckpoint: () => previous,
@@ -351,8 +364,10 @@ describe("GF-06 offline adapter composition", () => {
                 || task.head_sha !== intent.head_sha || task.workspace.receipt_digest !== receipt.digest
                 || digest(recordRef(live.runnerBinding)) !== digest(intent.runner_binding)
                 || resources.lookup(intent.reservation.id).status !== "reserved") throw new Error("stale admission");
-              admissions.set(intent.reservation.id, intent);
+              if (launchIntents.has(key)) throw new Error("prior admission requires reconciliation");
+              launchIntents.set(key, intentDigest);
               if (resources.begin(key, intent.reservation.id).disposition !== "committed") throw new Error("uncertain begin");
+              admissions.set(intent.reservation.id, intent);
               effects.set(key, intentDigest);
               launchCount += 1;
               if (dropStartAck) throw new Error("lost start response");
@@ -367,6 +382,8 @@ describe("GF-06 offline adapter composition", () => {
               checkpointCount += 1;
               effects.set(key, intentDigest);
               f.submit("reconcile", `reconcile-${grantId}`, task.revision, publication.result, identity.task_issue, task.head_sha);
+              publishedStops.set(digest(publication.result.context_checkpoint),
+                digest([intent.reservation, publication.result.terminal, task.fence]));
               if (dropCheckpointAck) throw new Error("lost checkpoint response");
             }
             return { intent_digest: intentDigest, status: "recorded", evidence: ref("supervisor-effect") };
@@ -406,6 +423,7 @@ describe("GF-06 offline adapter composition", () => {
     }
 
     const first = f.prepare();
+    runtimeWorkspaces.set(profile.runtime, { directory: first.workspace.directory, environment: first.workspace.environment });
     const local = configured(first, profile);
     expect(local.adapter.prepare(local.request).status).toBe("observed");
     expect(f.ledger.inspect(repository, 365)).toBeNull();
@@ -429,15 +447,39 @@ describe("GF-06 offline adapter composition", () => {
     local.live.context.session.deadline = at(1);
     expect(() => local.adapter.launch(local.request)).toThrow("ADAPTER_CONTEXT");
     local.live.context.session.deadline = at(20);
-    const quota = (remaining: number) => ({ ...pool, account_epoch: 1, source: "fixture-counter", observed_at: f.clock(),
-      reset_at: at(90), evidence: ref(`quota-${remaining}`), quality: "observed", coverage: "complete", remaining });
-    f.time(2);
-    resources.snapshot("quota-depleted", quota(2));
-    expect(local.adapter.launch(local.request).status).toBe("reconcile");
-    expect(resources.lookup(first.budget.id)).toMatchObject({ status: "reserved", liability: 4 });
-    f.time(3);
-    resources.snapshot("quota-restored", quota(100));
+    runtimeWorkspaces.set(profile.runtime, { directory: f.otherDirectory, environment: "cloud" });
+    expect(() => local.adapter.launch(local.request)).toThrow("live_runner_resource_profile_binding");
+    runtimeWorkspaces.set(profile.runtime, { directory: first.workspace.directory, environment: first.workspace.environment });
+    expect(launchIntents.size).toBe(0);
     expect(launchCount).toBe(0);
+    if (quotaRefusal) {
+      const quota = (remaining: number) => ({ ...pool, account_epoch: 1, source: "fixture-counter", observed_at: f.clock(),
+        reset_at: at(90), evidence: ref(`quota-${remaining}`), quality: "observed", coverage: "complete", remaining });
+      f.time(2);
+      resources.snapshot("quota-depleted", quota(2));
+      f.time(3);
+      resources.snapshot("higher-same-epoch-counter", quota(100));
+      expect(resources.summary().pools[0].provider_remaining).toBe(2);
+      expect(() => resources.begin("independent-begin-check", first.budget.id)).toThrow("BUDGET_EXHAUSTED");
+      expect(local.adapter.launch(local.request).status).toBe("reconcile");
+      expect(local.adapter.launch(local.request).status).toBe("reconcile");
+      expect(launchIntents.size).toBe(1);
+      expect(admissions.size).toBe(0);
+      expect(effects.size).toBe(0);
+      expect(launchCount).toBe(0);
+      expect(resources.lookup(first.budget.id)).toMatchObject({ status: "reserved", liability: 4 });
+      const terminal = { reservation_id: first.budget.id, native_run_id: null,
+        outcome: "not_started", evidence: ref("supervisor-observed-no-native-call") };
+      expect(() => resources.terminal("verified-nonstart", terminal)).toThrow("resource_terminal_ack");
+      terminalProofs.set(first.budget.id, { digest: digest(terminal), nativeId: null });
+      resources.terminal("verified-nonstart", terminal);
+      expect(resources.lookup(first.budget.id)).toMatchObject({
+        status: "terminal", actual_profile_status: "not_started", liability: 4, billed: null,
+      });
+      resources.settle("verified-zero-usage", { ...terminal, billed: 0, evidence: ref("supervisor-confirmed-no-usage") });
+      expect(resources.lookup(first.budget.id)).toMatchObject({ status: "terminal", billed: 0, liability: 0 });
+      return;
+    }
     expect(local.adapter.launch(local.request).status).toBe("reconcile");
     expect(local.adapter.launch(local.request).status).toBe("reconcile");
     expect(local.adapter.observe(local.run)).toMatchObject({ status: "ambiguous", liability: 4 });
@@ -463,7 +505,19 @@ describe("GF-06 offline adapter composition", () => {
       compaction: { kind: "deterministic" },
     });
     previous = priorFrom(publication.result, first.budget);
-    const next = f.prepare({ fence: 2, base: nextHead, attempt: "continuation", selectedProfile: targetProfile });
+    expect(() => f.prepare({ fence: 2, base: nextHead, attempt: "continuation", continuationSlots: 0 }))
+      .toThrow("RESERVATION_REQUEST");
+    const next = f.prepare({ fence: 2, base: nextHead, attempt: "continuation", selectedProfile: targetProfile,
+      ...(targetProfile.surface === "cloud" ? { environment: "cloud", directory: f.otherDirectory } : {}) });
+    runtimeWorkspaces.set(targetProfile.runtime, { directory: next.workspace.directory, environment: next.workspace.environment });
+    if (targetProfile.surface === "cloud") {
+      expect(next.workspace.directory).not.toBe(first.workspace.directory);
+      expect(next.workspace.environment).not.toBe(first.workspace.environment);
+    }
+    expect(next.observation.receipt.authorization_id).not.toBe(first.observation.receipt.authorization_id);
+    expect(resources.lookup(next.budget.id).reservation).toMatchObject({
+      lineage_id: first.lineage_id, max_admitted_continuations: 1, carries: { model_calls: 1, continuations: 0 },
+    });
     const resumed = configured(next, targetProfile);
     f.submit("resume", "prepare-resume", 5, next, 365, nextHead);
     resumed.markReady();
@@ -495,6 +549,14 @@ describe("GF-06 offline adapter composition", () => {
     returned.start();
     returned.stop();
     expect(launchCount).toBe(3);
+  }
+
+  it.each([profile, cloudProfile])("uses both journals and fresh authority when resuming on $surface", (targetProfile) => {
+    exerciseComposition(targetProfile);
+  });
+
+  it("reconciles a refused pre-call admission without launching after a higher same-epoch quota report", () => {
+    exerciseComposition(profile, true);
   });
 });
 

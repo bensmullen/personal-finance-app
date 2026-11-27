@@ -546,7 +546,8 @@ export function validateExecutionGrant(value, input, authority) {
   const runtime = input.runtimeIdentity;
   requireContract(runtime && sameFields(binding, runtime, [
     'surface', 'transport', 'config_digest', 'permissions_digest', 'control_revision', 'runtime',
-  ]) && sameFields(runner, runtime, ['product', 'runtime_version', 'tool_version'])
+  ]) && runtime.resource_profile != null && same(binding.resource_profile_ref, runtime.resource_profile)
+    && sameFields(runner, runtime, ['product', 'runtime_version', 'tool_version'])
     && runtime.authentication_ref != null && same(runner.authentication_ref, runtime.authentication_ref),
   'GRANT_RUNTIME_IDENTITY');
   attest(verify, 'live_runner_resource_profile_binding', { grant, binding, runner, profile, runtime, reservation, workspace });

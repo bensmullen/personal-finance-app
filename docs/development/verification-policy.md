@@ -69,8 +69,13 @@ incompatibility can prevent execution. Only an authenticated unavailable
 environment clears a prior FAIL via SKIP. Bounded process or case timeout
 bars retry, including a nonzero exit observed at the deadline and mixed
 assertion failure with timeout. The helper retains both observed facts.
-Missing terminal evidence yields INCOMPLETE or preserves independently
-observed FAIL. A complete, bounded regular-file case stream is required to
+Before another phase or PASS, the helper requires child close and a positive
+observation that the process group is gone. Cleanup observation is bounded
+to one second after exit or teardown begins. A group ID alone cannot
+authorize signaling after the leader exits. If cleanup remains unconfirmed,
+the helper records quarantine as INCOMPLETE or preserves an observed FAIL
+and any timeout. Quarantined cleanup cannot qualify for a correction retry.
+A complete, bounded regular-file case stream is required to
 establish retry eligibility after a unit failure. Partial, malformed or
 oversized evidence preserves known outcomes and leaves timeout classification
 unknown when no timeout was observed. The hook distinguishes a sealed

@@ -1190,7 +1190,7 @@ function sealPreflightWitness({ f, state }, tool, result, report) {
 // Exercise the sandbox-safe helper with synthetic process shims. No real
 // compiler/test suite or package installation is run by these fixtures.
 for (const failure of ['none', 'typecheck', 'unit', 'unit-timeout', 'unit-mixed',
-  'unit-invalid', 'unit-truncated', 'unit-oversized', 'unit-overflow-mixed']) {
+  'unit-invalid', 'unit-truncated', 'unit-oversized', 'unit-overflow-mixed', 'unit-same-case-mixed', 'unit-overflow-same-case-mixed']) {
   const witness = preparePreflightHookFixture({ setup(directory) {
   for (const sub of ['node_modules/typescript/bin', 'node_modules/vitest']) fs.mkdirSync(path.join(directory, sub), { recursive: true });
   fs.writeFileSync(path.join(directory, 'package.json'), JSON.stringify({ scripts: {
@@ -1212,10 +1212,22 @@ for (const failure of ['none', 'typecheck', 'unit', 'unit-timeout', 'unit-mixed'
   if (failure === 'unit-invalid') progressCases = '{invalid}\n';
   if (failure === 'unit-oversized') progressCases = ' '.repeat(512 * 1024) + '\n';
   progressCases = failure === 'unit-truncated' ? completeCases.slice(0, -2) : progressCases + completeCases;
+  const sameCaseMixed = failure.endsWith('same-case-mixed');
   fs.writeFileSync(path.join(directory, 'node_modules/vitest/vitest.mjs'),
     `import { appendFileSync } from 'node:fs';
 console.log('unit', process.argv.slice(2).join(' '));
-if (process.env.PFM_PREFLIGHT_PROGRESS) appendFileSync(process.env.PFM_PREFLIGHT_PROGRESS, ${JSON.stringify(progressCases)});
+if (${sameCaseMixed}) {
+  const { default: Reporter } = await import('../../tools/codex/local-preflight-progress-reporter.mjs');
+  const reporter = new Reporter();
+  if (${failure === 'unit-overflow-same-case-mixed'}) {
+    for (let i = 0; i < 4096; i++) reporter.onTestCaseReady({ id: 'bounded-' + i });
+  }
+  const testCase = { id: 'same-case', result: () => ({ state: 'failed',
+    errors: [{ name: 'Error', message: 'Hook timed out' }, { name: 'AssertionError', message: 'private-assertion' }] }) };
+  reporter.onTestCaseReady(testCase);
+  reporter.onTestCaseResult(testCase);
+  reporter.onTestRunEnd([], [], 'failed');
+} else if (process.env.PFM_PREFLIGHT_PROGRESS) appendFileSync(process.env.PFM_PREFLIGHT_PROGRESS, ${JSON.stringify(progressCases)});
 process.exit(${failure === 'unit' || failure.startsWith('unit-') ? 1 : 0});`);
   } });
   const directory = witness.f.repository;
@@ -1228,15 +1240,32 @@ process.exit(${failure === 'unit' || failure.startsWith('unit-') ? 1 : 0});`);
   assert(result.status === (expected === 'FAIL' ? 1 : 0), 'bounded helper preserves process failure and classifies case timeout');
   const outcome = JSON.parse(result.stdout.split('PFM_PREFLIGHT_RESULT ')[1]?.trim() ?? 'null');
   assert(outcome?.status === expected, 'compact truthful host result');
-  assert(outcome.timeoutObserved === ['unit-timeout', 'unit-mixed', 'unit-overflow-mixed'].includes(failure),
+  assert(outcome.timeoutObserved === (failure === 'unit-timeout' || failure.endsWith('mixed')),
     'case timeout is explicit even when mixed with a separate assertion FAIL');
   assert(outcome.schema === 2 && outcome.retryEligible === ['typecheck', 'unit'].includes(failure),
     'only an ordinary failure with complete timeout classification admits a retry');
   const log = fs.readFileSync(path.join(directory, outcome.log), 'utf8');
-  const stages = fs.readFileSync(path.join(directory, outcome.progress), 'utf8').trim().split('\n')
-    .map(JSON.parse).filter(event => event.phase === 'stage-end');
-  assert(stages.map(event => event.stage).join(',') === (failure === 'typecheck'
-    ? 'typescript' : 'typescript,typescript-next,unit'), 'completed phase inventory follows the actual execution');
+  const progress = fs.readFileSync(path.join(directory, outcome.progress), 'utf8');
+  const summary = JSON.parse(fs.readFileSync(path.join(directory, outcome.log + '.summary.json'), 'utf8'));
+  const corrupt = ['unit-invalid', 'unit-truncated', 'unit-oversized'].includes(failure);
+  assert(summary.progressStreamIntact === !corrupt, 'corrupt streams cannot establish complete timeout classification');
+  const lines = progress.slice(0, -1).split('\n');
+  const events = [];
+  if (corrupt) {
+    const damaged = lines.filter(line => {
+      try { events.push(JSON.parse(line)); return false; }
+      catch { return true; }
+    });
+    const expectedDamage = failure === 'unit-invalid' ? '{invalid}' : failure === 'unit-oversized'
+      ? ' '.repeat(512 * 1024) : '"status":"failed"{"phase":"stage-end","stage":"unit"';
+    assert(damaged.length === 1 && damaged[0].includes(expectedDamage), 'diagnostics retain the deliberate corruption');
+  } else events.push(...lines.map(JSON.parse));
+  const stages = events.filter(event => event.phase === 'stage-end');
+  const expectedStages = failure === 'typecheck' ? 'typescript'
+    : failure === 'unit-truncated' ? 'typescript,typescript-next' : 'typescript,typescript-next,unit';
+  assert(stages.map(event => event.stage).join(',') === expectedStages,
+    'corrupt truncation explicitly lacks a unit end; intact stage evidence follows actual execution');
+  assert(!progress.includes('private-assertion'), 'case facts do not expose raw assertion content');
   assert(stages.every(event => Number.isSafeInteger(event.elapsed_ms) && event.elapsed_ms >= 0),
     'phase durations use bounded monotonic elapsed milliseconds');
   assert(log.includes('tsc --noEmit'), 'first complete project typecheck');
@@ -1252,6 +1281,65 @@ process.exit(${failure === 'unit' || failure.startsWith('unit-') ? 1 : 0});`);
     'test/affected.test.ts'], { cwd: directory });
   assert(repeated.status === 0 && repeated.stdout.includes('SKIP') && repeated.stdout.includes('no tests executed'),
     'the same reserved helper invocation cannot execute tests twice');
+  if (!outcome.retryEligible) {
+    witness.f.dirty();
+    assert(witness.f.invoke('PreToolUse', tool).hookSpecificOutput?.permissionDecisionReason?.includes('observed FAIL'),
+      'corrupt, mixed and other nonretryable observations cannot reserve another attempt');
+  }
+}
+// A successful direct-child close is insufficient when a real descendant
+// still occupies that process group. The fixture has its own bounded exit.
+for (const compilerExit of [0, 1]) {
+  const witness = preparePreflightHookFixture({ setup(directory) {
+    fs.mkdirSync(path.join(directory, 'node_modules/typescript/bin'), { recursive: true });
+    fs.mkdirSync(path.join(directory, 'node_modules/vitest'), { recursive: true });
+    fs.writeFileSync(path.join(directory, 'package.json'), JSON.stringify({
+      scripts: { typecheck: 'tsc --noEmit && tsc -p tsconfig.next.json' },
+    }));
+    fs.writeFileSync(path.join(directory, 'node_modules/vitest/vitest.mjs'), "console.log('unexpected unit');");
+    fs.writeFileSync(path.join(directory, 'node_modules/typescript/bin/tsc'), `
+const { spawn } = require('node:child_process');
+const { existsSync } = require('node:fs');
+console.log('tsc', process.argv.slice(2).join(' '));
+const descendant = spawn(process.execPath, ['-e', ${JSON.stringify(`
+const fs = require('node:fs');
+fs.writeFileSync('residual-ready', String(process.pid));
+const poll = setInterval(() => {
+  if (fs.existsSync('residual-release')) {
+    process.exit(0);
+  }
+}, 25);
+setTimeout(() => clearInterval(poll), 6000);
+`)}], { stdio: 'ignore' });
+descendant.unref();
+const wait = setInterval(() => {
+  if (existsSync('residual-ready')) process.exit(${compilerExit});
+}, 10);
+setTimeout(() => { clearInterval(wait); process.exit(2); }, 2000);
+`);
+    fs.appendFileSync(path.join(directory, '.gitignore'), '\nresidual-ready\nresidual-release\n');
+  } });
+  const directory = witness.f.repository;
+  const tool = reservePreflightWitness(witness);
+  try {
+    const result = run(process.execPath, [path.join(directory, witness.helper), 'test/affected.test.ts'],
+      { cwd: directory, timeout: 8000 });
+    const report = JSON.parse(result.stdout.split('PFM_PREFLIGHT_RESULT ')[1]?.trim() ?? 'null');
+    assert(report?.status === (compilerExit === 0 ? 'INCOMPLETE' : 'FAIL') && report.retryEligible === false
+      && report.timeoutObserved === false && report.reason.includes('cleanup quarantined'),
+    'unconfirmed process group blocks later checks and preserves known compiler failure');
+    const descendantPid = Number(fs.readFileSync(path.join(directory, 'residual-ready'), 'utf8'));
+    assert(Number.isSafeInteger(descendantPid) && descendantPid > 0 && process.kill(descendantPid, 0),
+      'direct child closed while a real same-group descendant was alive');
+    const log = fs.readFileSync(path.join(directory, report.log), 'utf8');
+    assert(log.trim() === 'tsc --noEmit', 'no subsequent phase after unconfirmed cleanup');
+    sealPreflightWitness(witness, tool, result, report);
+    witness.f.dirty();
+    assert(witness.f.invoke('PreToolUse', tool).hookSpecificOutput?.permissionDecisionReason?.includes('observed FAIL'),
+      'quarantined cleanup cannot reserve a correction');
+  } finally {
+    fs.writeFileSync(path.join(directory, 'residual-release'), '');
+  }
 }
 // Only these synthetic child processes see short timer deadlines. Check the
 // actual budgets passed to the timer independently from the test acceleration.
