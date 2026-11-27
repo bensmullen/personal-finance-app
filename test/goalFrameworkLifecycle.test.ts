@@ -947,10 +947,12 @@ function offlineBootstrap(git: GitFixture, f: ReturnType<typeof fixture>, fault?
           timeout: 100, maxBuffer: invocation.output_limit, killSignal: "SIGKILL",
         })
         : git.invoke(invocation, bytes);
+      const error = result.error;
+      const errorCode = error && "code" in error && typeof error.code === "string" ? error.code : undefined;
       if (fault === "timeout") {
-        timedOut = { status: result.status, signal: result.signal, error: { code: result.error?.code } };
+        timedOut = { status: result.status, signal: result.signal, error: { code: errorCode } };
       }
-      stages.add(result.error?.code === "ETIMEDOUT" ? "terminal:timeout" : result.status !== 0 ? "terminal:failed"
+      stages.add(errorCode === "ETIMEDOUT" ? "terminal:timeout" : result.status !== 0 ? "terminal:failed"
         : fault === "missing-terminal" ? "terminal:missing" : "terminal:success");
       if (fault === "lost-ack") {
         stages.add("reply:lost");
