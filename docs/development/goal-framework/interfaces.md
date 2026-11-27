@@ -104,7 +104,13 @@ restart. Only trusted terminal/cleanup or nonstart evidence can release it.
 The host authenticates journal identity and the committed generation and
 digest under the journal lock. A signed snapshot whose generation or digest
 differs from the independent current state leaves the disposition unknown.
-Commit advances the current-state witness after syncing the file and directory.
+The gate and journal lock invoke one synchronous callback and return its
+canonical data result. An independently serialized equivalent reply is valid.
+Journal open is a no-result operation. A rejected or missing reply leaves
+any durable intent in place for a later authenticated read. The current-state
+port advances its witness after the file and directory syncs. Its synchronous
+commit returns no value, and a separate authenticated read confirms the
+exact generation and digest before the journal reports success.
 
 `PFM_SUPERVISED_HANDOFF_V1` reports preparation-only readiness and includes
 the exact issue pointer, directory and observed trust disposition. Pending
@@ -113,7 +119,7 @@ review. A separate
 `PFM_PREPARED_HANDOFF_REVIEW_V1` binds the actual hook receipt to the
 authenticated session, turn, authorization ID, canonical workspace reference
 and independently observed Git state. It resolves the original journal
-evidence under the global gate and rechecks live authority, host and remote
+evidence by exact reference under the global gate and rechecks live authority, host and remote
 state, exact hook configuration and the approved worker's session mapping.
 This read-only review grants no mutation permit.
 The existing runner must still validate the grant, runner/resource profile

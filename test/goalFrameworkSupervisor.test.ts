@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 const load = (name: string) => import(new URL(`../tools/codex/goal-framework/${name}.mjs`, import.meta.url).href);
 const { canonicalJson, digest } = await load("contracts");
 const { parseBootstrapOutput, createBootstrapHost } = await load("adapters/bootstrap-host");
-const { readPreparationRequest } = await load("adapters/supervised-preparation");
+const { createSupervisedPreparation, readPreparationRequest } = await load("adapters/supervised-preparation");
 const { openPreparationJournal } = await load("adapters/preparation-journal");
 const { sha256: digestRaw } = await load("authorization");
 const { journalWitness } = await import(new URL("./fixtures/goalFramework/supervisor/disposable-git.mjs",
@@ -168,6 +168,97 @@ describe("GF-06 supervised preparation protocol", () => {
     currentState.fault("after");
     expect(() => journal.begin(binding(), gate)).toThrow("fixture lost commit acknowledgement");
     expect(reopen().begin(binding(), gate)).toMatchObject({ created: false, intent: { status: "unresolved" } });
+  });
+
+  it("binds the gate reply to its completed callback and closes the callback on return", () => {
+    const { journal, binding, gate } = journalFixture();
+    const { intent } = journal.begin(binding(), gate);
+    const bootstrap = { run: () => { throw new Error("unexpected bootstrap"); } };
+    type Action = (proof: typeof gate) => unknown;
+    const supervisor = (withGate: (action: Action) => unknown, verify = () => true) => createSupervisedPreparation({
+      journal, bootstrap, host: { withGate: (_request: unknown, _operation: string, action: Action) => withGate(action), verify },
+    });
+    const expected = supervisor((action) => JSON.parse(canonicalJson(action(gate)))).prepare(envelope());
+    expect(expected).toMatchObject({ status: "unresolved", effect_id: intent.effect_id });
+    const forged = { ...expected, status: "git-ready" };
+    let delayed: Action | undefined;
+    expect(() => supervisor((action) => { delayed = action; return forged; }).prepare(envelope()))
+      .toThrow("PREPARATION_GATE_UNAVAILABLE");
+    expect(() => delayed!(gate)).toThrow("PREPARATION_GATE_REPLAY");
+    expect(() => supervisor((action) => { action(gate); return forged; }).prepare(envelope()))
+      .toThrow("PREPARATION_GATE_RESULT");
+    expect(() => supervisor((action) => { action(gate); return undefined; }).prepare(envelope())).toThrow("JSON_TYPE");
+    expect(() => supervisor((action) => Promise.resolve(action(gate))).prepare(envelope())).toThrow("PREPARATION_PORT_ASYNC");
+    expect(() => supervisor((action) => { action(gate); return new Map(); }).prepare(envelope())).toThrow("JSON_OBJECT");
+    expect(() => supervisor((action) => {
+      const reply = action(gate);
+      try { action(gate); } catch { /* simulate a wrapper swallowing the rejection */ }
+      return reply;
+    }).prepare(envelope())).toThrow("PREPARATION_GATE_REPLAY");
+    expect(() => supervisor((action) => {
+      try { action(gate); } catch { /* simulate a wrapper swallowing the rejection */ }
+      return forged;
+    }, () => false).prepare(envelope())).toThrow("preparation_global_gate");
+    expect(journal.observe(binding())).toEqual(intent);
+  });
+
+  it("binds journal lock replies and recovers the durable result of an uncertain reply", () => {
+    const { options, binding, gate, reopen } = journalFixture();
+    type Action = (proof: ReturnType<typeof ref>) => unknown;
+    const lock = ref("supervisor-lock");
+    let reply = (action: Action) => action(lock);
+    const journal = openPreparationJournal({ ...options, withLock: (_directory: string, action: Action) => reply(action) });
+    let late: Action | undefined;
+    reply = (action) => { late = action; return { created: true }; };
+    expect(() => journal.begin(binding(), gate)).toThrow("PREPARATION_JOURNAL_LOCK_UNAVAILABLE");
+    expect(() => late!(lock)).toThrow("PREPARATION_JOURNAL_LOCK_REPLAY");
+    expect(reopen().observe(binding())).toBeNull();
+    reply = (action) => {
+      action(lock);
+      return { created: true, intent: { status: "git-ready" } };
+    };
+    expect(() => journal.begin(binding(), gate)).toThrow("PREPARATION_JOURNAL_LOCK_RESULT");
+    const actual = reopen().begin(binding(), gate);
+    expect(actual).toMatchObject({ created: false, intent: { status: "unresolved" } });
+    reply = (action) => JSON.parse(canonicalJson(action(lock)));
+    expect(journal.observe(binding())).toEqual(actual.intent);
+    reply = (action) => {
+      const result = action(lock);
+      try { action(lock); } catch { /* simulate a wrapper swallowing the rejection */ }
+      return result;
+    };
+    expect(() => journal.observe(binding())).toThrow("PREPARATION_JOURNAL_LOCK_REPLAY");
+    reply = (action) => {
+      try { action(lock); } catch { /* simulate a wrapper swallowing the rejection */ }
+      return true;
+    };
+    expect(() => journal.begin(binding(2), gate)).toThrow("PREPARATION_CAPACITY_UNAVAILABLE");
+    reply = (action) => Promise.resolve(action(lock));
+    expect(() => journal.observe(binding())).toThrow("PREPARATION_PORT_ASYNC");
+    expect(reopen().observe(binding(2))).toBeNull();
+  });
+
+  it("requires a closed synchronous current-state witness and authenticated matching commit readback", () => {
+    const { options, binding, gate, currentState, reopen } = journalFixture();
+    const original = currentState.read();
+    for (const invalid of [undefined, {}, { ...original, extra: true }, { ...original, generation: 0 },
+      { ...original, digest: "invalid" }, Promise.resolve(original)]) {
+      expect(() => openPreparationJournal({ ...options, currentState: { ...currentState, read: () => invalid } }))
+        .toThrow(/JSON_TYPE|PREPARATION_JOURNAL_WITNESS|PREPARATION_PORT_ASYNC/);
+    }
+    for (const stale of [null, { ...original, generation: original.generation + 1 }, { ...original, digest: digest("stale") }]) {
+      expect(() => openPreparationJournal({ ...options, currentState: { ...currentState, read: () => stale },
+        verify: (boundary: string, value: unknown) => boundary === "preparation_journal_current" || options.verify(boundary, value),
+      })).toThrow("PREPARATION_JOURNAL_COMMIT_UNKNOWN");
+    }
+    const commit = (...args: Parameters<typeof currentState.commit>) => {
+      currentState.commit(...args);
+      return Promise.resolve(undefined);
+    };
+    const asynchronous = openPreparationJournal({ ...options, currentState: { ...currentState, commit } });
+    expect(() => asynchronous.begin(binding(), gate)).toThrow("PREPARATION_PORT_ASYNC");
+    expect(reopen().begin(binding(), gate)).toMatchObject({ created: false, intent: { status: "unresolved" } });
+    expect(() => reopen().begin(binding(2), gate)).toThrow("PREPARATION_CAPACITY_UNAVAILABLE");
   });
 
   it.each(["after-write", "after-file-sync", "after-rename", "after-directory-sync"])(

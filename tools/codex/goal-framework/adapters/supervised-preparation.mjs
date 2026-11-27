@@ -1,9 +1,10 @@
 import { performance } from 'node:perf_hooks';
-import { goalControlDigest, digest, planAlignedTask, validateGoal, validateScopeCensus } from '../contracts.mjs';
+import { canonicalJson, goalControlDigest, digest, planAlignedTask, validateGoal, validateScopeCensus } from '../contracts.mjs';
 import { pinnedV3Parser, savedAuthorization, sha256 } from '../authorization.mjs';
 import { requireResource, resourceAttest, resourceRef, resourceTime } from '../resources.mjs';
 import { identifier, sha } from '../workspace.mjs';
 import { approvedPath, exactFields, parseBootstrapOutput, preparationHead } from './bootstrap-host.mjs';
+import { synchronousPreparationCallback } from './preparation-journal.mjs';
 
 const hash = /^[a-f0-9]{64}$/;
 const branchName = /^(codex|agent)\/[A-Za-z0-9_-][A-Za-z0-9._/-]{0,189}$/;
@@ -114,21 +115,13 @@ export function createSupervisedPreparation({ journal, bootstrap, host }) {
   const { verify, clock } = host;
 
   function underGate(request, operation, action) {
-    let invoked = false;
-    let open = true;
-    try {
-      const response = host.withGate(request, operation, (gate) => {
-        requireResource(open && !invoked, 'PREPARATION_GATE_REPLAY');
-        invoked = true;
+    return synchronousPreparationCallback(
+      (callback) => host.withGate(JSON.parse(canonicalJson(request)), operation, callback),
+      (gate) => {
         resourceRef(gate);
         resourceAttest(verify, 'preparation_global_gate', { request, operation, gate });
         return action(gate);
-      });
-      requireResource(invoked, 'PREPARATION_GATE_UNAVAILABLE');
-      return response;
-    } finally {
-      open = false;
-    }
+      }, 'PREPARATION_GATE');
   }
 
   function review(envelope, gate) {
