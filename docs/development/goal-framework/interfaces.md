@@ -75,6 +75,43 @@ Observed on 2026-11-24 by reading the installed application metadata, this sessi
 
 The local observations support continuing manual V3 and offline work. They yield no verified native writer profile. GF-06 owns live local/cloud compatibility and certification.
 
+## GF-06 supervised preparation and handoff
+
+This adapter-local protocol uses closed V1 records and immutable references.
+`PFM_PREPARATION_REQUEST_V1` binds repository, goal revision and control
+digest, task issue/revision/lineage, exact V3 body digest, reviewed census,
+worker principal, logical resource, host and environment, approved source
+and target paths, new/resume mode, expected main and optional published
+feature head, parser and helper commits and digests, host allowance,
+cleanup deadline, expiry and one-shot nonce.
+
+`PFM_PREPARATION_APPROVAL_V1` holds a distinct authenticated PM proof
+reference and SHA-256 of the canonical request payload. The proof envelope
+sits outside that payload. Serialized requests use canonical JSON to reject
+duplicate keys. The live goal approval is checked separately. A live issue
+observation, cached ref, receipt hash or shared account identity cannot
+authorize an effect. Authorization changes require a newly approved request.
+Changes to Git observations are evaluated against the existing pins.
+
+`PFM_PREPARATION_HOST_ALLOWANCE_V1` binds the repository, host, environment,
+resource and nonce to finite CPU, memory, process, disk, execution and
+cleanup limits. The trusted global gate coordinates the allowance with the
+native writer and host capacity controls. `PFM_PREPARATION_INTENT_V1`
+records only digests and scoped references. `PFM_PREPARATION_RESULT_V1`
+reports unresolved, nonstart, cleaned or git-ready with the corresponding
+evidence reference. An unresolved intent stays reserved across failures and
+restart. Only trusted terminal/cleanup or nonstart evidence can release it.
+
+`PFM_SUPERVISED_HANDOFF_V1` reports preparation-only readiness and includes
+the exact issue pointer and directory. A separate
+`PFM_PREPARED_HANDOFF_REVIEW_V1` binds the actual hook receipt to the
+authenticated session, turn, authorization ID, canonical workspace reference
+and independently observed Git state. This review grants no mutation permit.
+The existing runner must still validate the grant, runner/resource profile
+and GF-03 prepared state before admission. GF-05 accounts for a real native
+run. Its matching start acknowledgement and GF-03 claim/assertWriter gate
+the first mutation.
+
 ## Events and state
 
 Event fields: `event_id`, `source`, `goal_issue`, `task_issue`, `expected_revision`, `head_sha`, `kind`, `payload_ref`, `observed_at`. Authentication and replay protection precede interpretation. State transitions are deterministic and idempotent; external effects use a durable intent/result pair and reconcile uncertain outcomes.

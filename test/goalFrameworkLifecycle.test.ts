@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, type SpawnSyncReturns } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,9 +12,13 @@ const { levelOneBody, pinnedV3Parser, sha256 } = await load("authorization");
 const { openLifecycle } = await load("lifecycle");
 const { openResourceLedger } = await load("resources");
 const { inspectWorkspace, resolveScopedPaths } = await load("workspace");
+const { createBootstrapHost } = await load("adapters/bootstrap-host");
+const { openPreparationJournal } = await load("adapters/preparation-journal");
+const { createSupervisedPreparation } = await load("adapters/supervised-preparation");
+const { supervisedHandoff, reviewHookPreparedForAdmission } = await load("adapters/supervised-handoff");
 
-const repository = "fixture/pfm";
-const origin = "https://github.com/fixture/pfm.git";
+const repository = "bensmullen/personal-finance-app";
+const origin = `https://github.com/${repository}.git`;
 const branch = "codex/lifecycle";
 const head = "a".repeat(40);
 const nextHead = "b".repeat(40);
@@ -38,7 +42,22 @@ const profile = { ...actual, id: "fixture-profile", status: "verified", evidence
 const cloudProfile = { ...profile, id: "fixture-cloud-profile", surface: "cloud", runtime: "fixture-cloud-runtime" };
 const registry = { ...JSON.parse(readFileSync(new URL("../tools/codex/goal-framework/profiles.json", import.meta.url), "utf8")), profiles: [profile, cloudProfile] };
 const root = readFileSync(new URL("../.codex/hooks/pfm-policy.py", import.meta.url), "utf8");
+const parserRevision = "c".repeat(40);
 const roots: string[] = [];
+
+type Invocation = {
+  executable: string; argv: string[]; cwd: string; env: Record<string, string>; timeout_ms: number; output_limit: number;
+};
+type GitFixture = {
+  main: string; realGit: string; git: string; bash: string; python: string; checkout: string; remote: string;
+  env: Record<string, string>;
+  run: (cwd: string, ...args: string[]) => string;
+  read: (cwd: string, ...args: string[]) => SpawnSyncReturns<string>;
+  invoke: (invocation: Invocation, bytes: Buffer) => SpawnSyncReturns<Buffer>;
+};
+const { disposableGit }: { disposableGit: (directory: string) => GitFixture } = await import(
+  new URL("./fixtures/goalFramework/supervisor/disposable-git.mjs", import.meta.url).href
+);
 
 afterEach(() => {
   for (const path of roots.splice(0)) rmSync(path, { force: true, recursive: true });
@@ -81,7 +100,7 @@ type PrepareOptions = {
   continuationSlots?: number;
 };
 
-function fixture({ realResources = false } = {}) {
+function fixture({ realResources = false, parserPython }: { realResources?: boolean; parserPython?: string } = {}) {
   const journal = temporary();
   const firstDirectory = temporary();
   const otherDirectory = temporary();
@@ -106,8 +125,9 @@ function fixture({ realResources = false } = {}) {
     }
     return true;
   };
-  const parseSaved = (issue: { body: string }) => ({ ...inspectV3Body(issue.body),
-    parser_revision: "c".repeat(40), parser_digest: sha256(root) });
+  const parseSaved = parserPython === undefined
+    ? (issue: { body: string }) => ({ ...inspectV3Body(issue.body), parser_revision: parserRevision, parser_digest: sha256(root) })
+    : pinnedV3Parser({ source: root, revision: parserRevision, python: parserPython, verify });
   const resourceRuns = new Map<string, unknown>();
   const resourceLedger = realResources ? openResourceLedger({ directory: temporary(), ledgerId: "fixture-resources",
     initialize: true, verify, clock: () => now, registry, policy: {
@@ -252,8 +272,10 @@ function fixture({ realResources = false } = {}) {
 }
 
 describe("GF-06 offline adapter composition", () => {
-  function exerciseComposition(targetProfile: typeof profile, quotaRefusal = false) {
-    const f = fixture({ realResources: true });
+  function exerciseComposition(targetProfile: typeof profile, quotaRefusal = false, actualHook = false) {
+    const gitFixture = actualHook ? disposableGit(temporary()) : null;
+    const f = fixture(gitFixture
+      ? { realResources: true, parserPython: gitFixture.python } : { realResources: true });
     const resources = f.resourceLedger;
     const admissions = new Map<string, any>();
     const launchIntents = new Map<string, string>();
@@ -442,12 +464,13 @@ describe("GF-06 offline adapter composition", () => {
         retainAcks() { dropStartAck = false; dropCheckpointAck = false; } };
     }
 
-    const first = f.prepare();
+    const hookFixture = gitFixture && prepareWithActualHook(gitFixture, f);
+    const first = hookFixture?.input ?? f.prepare();
     runtimeWorkspaces.set(profile.runtime, { directory: first.workspace.directory, environment: first.workspace.environment });
     const local = configured(first, profile);
     expect(local.adapter.prepare(local.request).status).toBe("observed");
     expect(f.ledger.inspect(repository, 365)).toBeNull();
-    f.submit("prepare", "prepare-local", 0, first);
+    f.submit("prepare", "prepare-local", 0, first, 365, first.workspace.head_sha);
     expect(() => local.adapter.launch(local.request)).toThrow("adapter_native_admission");
     local.markReady();
     killSwitch = true;
@@ -504,6 +527,26 @@ describe("GF-06 offline adapter composition", () => {
     expect(local.adapter.launch(local.request).status).toBe("reconcile");
     expect(local.adapter.observe(local.run)).toMatchObject({ status: "ambiguous", liability: 4 });
     expect(launchCount).toBe(1);
+    if (hookFixture) {
+      const permit = { repository, issue: 365, fence: local.run.fence, native_run_id: `native-${first.budget.id}`,
+        authorization_id: first.observation.receipt.authorization_id, paths: [primary], evidence: ref("actual-hook-writer") };
+      expect(() => f.ledger.assertWriter(permit)).toThrow();
+      expect(hookFixture.mutation("foreign-session", "hook-turn").hookSpecificOutput?.permissionDecision).toBe("deny");
+      expect(hookFixture.mutation(worker, "foreign-turn").hookSpecificOutput?.permissionDecision).toBe("deny");
+      expect(hookFixture.observe().receipt.status).toBe("prepared");
+      local.start();
+      expect(() => f.ledger.assertWriter({ ...permit, fence: permit.fence + 1 })).toThrow();
+      expect(() => f.ledger.assertWriter({ ...permit, authorization_id: "foreign-authorization" })).toThrow();
+      expect(f.ledger.assertWriter(permit)).toBe(true);
+      expect(hookFixture.mutation(worker, "hook-turn")).toEqual({});
+      const active = hookFixture.observe().receipt;
+      expect(active).toMatchObject({ status: "active", owner: worker, authorization_id: permit.authorization_id });
+      // Repeated hook permission checks preserve the same receipt and writer.
+      expect(hookFixture.mutation(worker, "hook-turn")).toEqual({});
+      expect(hookFixture.observe().receipt).toEqual(active);
+      local.stop();
+      return;
+    }
     local.start();
     publication = f.publication(first, "checkpoint-local");
     f.submit("begin-checkpoint", "checkpoint-local", 2, publication.candidate);
@@ -578,7 +621,184 @@ describe("GF-06 offline adapter composition", () => {
   it("reconciles a refused pre-call admission without launching after a higher same-epoch quota report", () => {
     exerciseComposition(profile, true);
   });
+
+  it("composes actual bootstrap and hook preparation with canonical grant and writer admission", () => {
+    exerciseComposition(profile, false, true);
+  });
+
+  it.each(["lost-ack", "timeout", "missing-terminal", "partial-output", "forged-ready", "changed-issue"] as const)(
+    "retains the one-shot intent and refuses handoff after %s",
+    (failure) => {
+      const git = disposableGit(temporary());
+      const f = fixture({ parserPython: git.python });
+      const { supervisor, envelope, reopen, effects } = offlineBootstrap(git, f, failure);
+      const unresolved = supervisor.prepare(envelope);
+      expect(unresolved).toMatchObject({ status: "unresolved", evidence: null });
+      expect(reopen().prepare(envelope)).toEqual(unresolved);
+      expect(reopen().reconcile(envelope)).toEqual(unresolved);
+      expect(() => supervisedHandoff(envelope, reopen(), { verify: f.verify })).toThrow("PREPARATION_GIT_NOT_READY");
+      expect(effects()).toBe(1);
+    },
+  );
 });
+
+type HookResponse = { decision?: string; reason?: string; hookSpecificOutput?: { additionalContext?: string; permissionDecision?: string } };
+
+type BootstrapFault = "lost-ack" | "timeout" | "missing-terminal" | "partial-output" | "forged-ready" | "changed-issue";
+
+function offlineBootstrap(git: GitFixture, f: ReturnType<typeof fixture>, fault?: BootstrapFault) {
+  const parent = temporary();
+  const target = join(parent, "approved-worktree");
+  const input = f.prepare({ base: git.main, directory: target, upstream: false });
+  const script = realpathSync(new URL("../tools/codex/bootstrap-pr.sh", import.meta.url));
+  const allowance = { schema: "PFM_PREPARATION_HOST_ALLOWANCE_V1", id: "fixture-host-allowance",
+    repository, host_id: "supervised-host", environment: input.workspace.environment, resource: input.resource,
+    nonce: digest("one-shot"), expires_at: at(5), cleanup_deadline: at(6), execution_ms: 5000,
+    cleanup_ms: 1000, cpu_millicores: 100, memory_mib: 128, processes: 8, disk_mib: 32 };
+  const request = { schema: "PFM_PREPARATION_REQUEST_V1", id: "fixture-preparation",
+    goal_issue: input.goal.goal_issue, goal_revision: input.goal.control_revision, goal_control_digest: goalControlDigest(input.goal),
+    repository, task_issue: input.issue.number, task_revision: input.task_revision, lineage_id: input.lineage_id,
+    issue_body_digest: sha256(input.issue.body), branch, mode: "new", expected_main: git.main, expected_head: null,
+    census: recordRef(input.census), resource: input.resource, worker, host_id: allowance.host_id,
+    environment: allowance.environment, checkout: git.checkout, target, parser_revision: parserRevision,
+    parser_digest: sha256(root), bootstrap_revision: git.main, bootstrap_digest: sha256(readFileSync(script)),
+    nonce: allowance.nonce, host_allowance: recordRef(allowance), cleanup_deadline: allowance.cleanup_deadline, expires_at: allowance.expires_at };
+  const envelope = { request, approval: { schema: "PFM_PREPARATION_APPROVAL_V1", proof: ref("fixture-independent-pm"),
+    request_digest: digest(request) } };
+  let effects = 0;
+  f.boundaries.set("pm_exact_preparation_approval", (proof: { request: unknown; approval: unknown }) =>
+    digest(proof.request) === envelope.approval.request_digest && digest(proof.approval) === digest(envelope.approval));
+  const observe = () => inspectWorkspace({ directory: target, git: git.realGit, environment: request.environment,
+    repository, base: git.main, verify: f.verify });
+  const bootstrap = createBootstrapHost({ verify: f.verify, clock: f.clock, operator: {
+    observeGit(_request: typeof request, phase: string) {
+      const readRef = (refName: string) => {
+        const result = git.read(git.checkout, "--git-dir", git.remote, "rev-parse", "--verify", refName);
+        return result.status === 0 ? result.stdout.trim() : null;
+      };
+      const local = git.read(git.checkout, "rev-parse", "--verify", `refs/heads/${branch}`);
+      const registered = git.run(git.checkout, "worktree", "list", "--porcelain").split("\n").includes(`worktree ${target}`);
+      return { repository, main: readRef("refs/heads/main"), remote_head: readRef(`refs/heads/${branch}`),
+        branch, target, checkout: git.checkout, environment: allowance.environment, host_id: allowance.host_id,
+        git: git.git, local_head: local.status === 0 ? local.stdout.trim() : null, owner_path: registered ? target : null,
+        registered_target: registered, evidence: ref(`fixture-git-${phase}`) };
+    },
+    readMergedBootstrap() {
+      return { path: script, git: git.git, bash: git.bash, python: git.python, evidence: ref("fixture-pinned-tools") };
+    },
+    runIsolated(invocation: Invocation, bytes: Buffer) {
+      effects++;
+      if (fault === "forged-ready") {
+        return { stdout: Buffer.from([
+          `PR_WORKTREE_READY mode=new path=${target} branch=${branch} head=${git.main} origin_main=${git.main}`,
+          `PR_TASK_RECEIPT status=absent path=${target}`, `OPEN THIS EXACT WORKTREE IN CODEX: ${target}`, "",
+        ].join("\n")), stderr: Buffer.alloc(0), exit_code: 0, timed_out: false, terminal: ref("fixture-terminal") };
+      }
+      const result = git.invoke(invocation, bytes);
+      if (fault === "lost-ack") throw new Error("fixture lost response");
+      if (fault === "changed-issue") live = { ...live, issue: { ...live.issue, body: live.issue.body + "\nChanged" } };
+      return { stdout: fault === "partial-output" ? Buffer.from("PR_WORKTREE_READY") : result.stdout,
+        stderr: result.stderr, exit_code: result.status, timed_out: fault === "timeout" || result.error !== undefined,
+        terminal: result.status === 0 && fault !== "missing-terminal" ? ref("fixture-terminal") : null };
+    },
+  } });
+  type Locked<T> = (proof: ReturnType<typeof ref>) => T;
+  const options = { directory: temporary(), key: Buffer.alloc(32, 1), hostId: request.host_id,
+    verify: f.verify, withLock: <T>(_directory: string, action: Locked<T>) => action(ref("fixture-lock")) };
+  const journal = openPreparationJournal({ ...options, initialize: true });
+  const baseline = { issue: input.issue, goal: input.goal, goalApproval: input.approval, alignment: input.alignment,
+    routes: input.routes, census: input.census, allowance, parser: { source: root, revision: parserRevision, python: git.python },
+    task: { repository, task_issue: input.issue.number, task_revision: input.task_revision, lineage_id: input.lineage_id } };
+  let live = baseline;
+  const host = { verify: f.verify, clock: f.clock, consumedNonces: new Set<string>(),
+    withGate: <T>(_request: typeof request, operation: string, action: Locked<T>) => action(ref(`gate-${operation}`)),
+    loadLive: () => live,
+    recordGitReady: (proof: unknown) => ({ id: "fixture-preflight", digest: digest(proof) }),
+    reconcileReadOnly: () => undefined,
+  };
+  const supervisor = createSupervisedPreparation({ journal, bootstrap, host });
+  return { supervisor, reopen: () => createSupervisedPreparation({ journal: openPreparationJournal(options), bootstrap, host }),
+    baseline, update: (changes: Partial<typeof baseline>) => { live = { ...baseline, ...changes }; },
+    envelope, effects: () => effects, observe, input, target, parent };
+}
+
+function prepareWithActualHook(git: GitFixture, f: ReturnType<typeof fixture>) {
+  const { supervisor, baseline, update, envelope, effects, observe, input, target, parent } = offlineBootstrap(git, f);
+  const { request } = envelope;
+  const policy = realpathSync(new URL("../.codex/hooks/pfm-policy.py", import.meta.url));
+  const reject = (changes: Parameters<typeof update>[0], reason: string) => {
+    update(changes);
+    expect(() => supervisor.prepare(envelope)).toThrow(reason);
+    update({});
+  };
+  expect(() => supervisor.prepare({ ...envelope, approval: { ...envelope.approval, proof: ref("forged") } }))
+    .toThrow("pm_exact_preparation_approval");
+  expect(() => supervisor.prepare({ ...envelope, approval: input.approval })).toThrow("PREPARATION_APPROVAL_FIELDS");
+  reject({ issue: { ...baseline.issue, repository: "foreign/repository" } }, "SAVED_ISSUE_IDENTITY");
+  reject({ issue: { ...baseline.issue, number: 999 } }, "SAVED_ISSUE_IDENTITY");
+  reject({ issue: { ...baseline.issue, state: "closed" } }, "SAVED_ISSUE_IDENTITY");
+  reject({ issue: { ...baseline.issue, body: body([primary], "codex/other") } }, "PREPARATION_V3");
+  reject({ parser: { ...baseline.parser, source: root + "\n" } }, "PREPARATION_PARSER_PIN");
+  reject({ task: { ...baseline.task, task_revision: 2 } }, "PREPARATION_TASK");
+  reject({ task: { ...baseline.task, lineage_id: "foreign-lineage" } }, "PREPARATION_TASK");
+  reject({ alignment: { ...baseline.alignment, unresolved: ["missing-decision"] } }, "UNRESOLVED_OR_CONFLICTING_ALIGNMENT");
+  reject({ census: { ...baseline.census, id: "foreign-census" } }, "PREPARATION_TASK");
+  reject({ allowance: { ...baseline.allowance, processes: 0 } }, "PREPARATION_ALLOWANCE");
+  for (const boundary of ["pm_exact_preparation_approval", "preparation_live_control_and_host", "task_dependencies_satisfied",
+    "preparation_admissions_open", "preparation_host_allowance", "preparation_global_gate"]) {
+    f.denied.add(boundary);
+    expect(() => supervisor.prepare(envelope)).toThrow(boundary);
+    f.denied.delete(boundary);
+  }
+  f.time(5);
+  expect(() => supervisor.prepare(envelope)).toThrow("PREPARATION_ALLOWANCE");
+  f.time(1);
+  expect(effects()).toBe(0);
+  const readiness = supervisor.prepare(envelope);
+  expect(readiness).toMatchObject({ status: "git-ready" });
+  expect(supervisor.prepare(envelope)).toEqual(readiness);
+  expect(effects()).toBe(1);
+  expect(observe().receipt.status).toBe("absent");
+  const handoff = supervisedHandoff(envelope, supervisor, { verify: f.verify });
+  expect(handoff).toMatchObject({ status: "PREPARATION_ONLY", native: "HANDOFF_UNVERIFIED", session: null, directory: target,
+    prompt: "PFM_TASK_ISSUE: 365" });
+  expect(supervisedHandoff(envelope, supervisor, { verify: f.verify, inventory: () => ({
+    status: "unavailable", evidence: ref("no-local-handshake"),
+  }) }).native).toBe("HANDOFF_UNAVAILABLE");
+  update({ task: { ...baseline.task, lineage_id: "revised-lineage" } });
+  expect(() => supervisedHandoff(envelope, supervisor, { verify: f.verify })).toThrow("PREPARATION_TASK");
+  update({});
+  const host = { verify: f.verify, git: git.realGit, now: f.clock(), consumedNonces: new Set<string>(), parseSaved: f.parseSaved };
+  const workspaceInput = { ...input, workspace: { ...input.workspace, ready_proof: handoff.git_ready } };
+  const session = { session: worker, turn: "hook-turn", barrier: ref("fixture-write-barrier") };
+  let barrierAvailable = false;
+  f.boundaries.set("handoff_live_nonwriting_barrier", () => barrierAvailable);
+  expect(() => reviewHookPreparedForAdmission(envelope, handoff, session, workspaceInput, host)).toThrow("handoff_live_nonwriting_barrier");
+  barrierAvailable = true;
+  expect(() => reviewHookPreparedForAdmission(envelope, handoff, session, workspaceInput, host)).toThrow("HANDOFF_HOOK_PREPARED");
+  const issue = join(parent, "saved-issue.md");
+  writeFileSync(issue, input.issue.body);
+  function hook(hook_event_name: string, session_id: string, turn_id: string, fields: Record<string, unknown>): HookResponse {
+    const stdout = execFileSync(git.python, ["-I", "-B", policy], {
+      cwd: target, env: { ...git.env, PFM_POLICY_TEST_ISSUE_BODY_FILE: issue }, encoding: "utf8", timeout: 5000,
+      input: JSON.stringify({ hook_event_name, session_id, turn_id, cwd: target, ...fields }),
+    });
+    return JSON.parse(stdout) as HookResponse;
+  }
+  const submitted = hook("UserPromptSubmit", worker, "hook-turn", { prompt: handoff.prompt });
+  expect(submitted.hookSpecificOutput?.additionalContext).toContain("authorization accepted");
+  const observation: typeof input.observation = observe();
+  const prepared = { ...workspaceInput, observation };
+  for (const invalid of [{ ...session, turn: "wrong-turn" }, { ...session, session: "wrong-session" }]) {
+    expect(() => reviewHookPreparedForAdmission(envelope, handoff, invalid, prepared, host)).toThrow(/HANDOFF_HOOK_/);
+  }
+  const review = reviewHookPreparedForAdmission(envelope, handoff, session, prepared, host);
+  expect(review).toMatchObject({ status: "HOOK_PREPARED", authorization_id: observation.receipt.authorization_id,
+    receipt_digest: observation.receipt.digest, session: worker, turn: "hook-turn" });
+  return { input: prepared, observe, mutation: (sessionId: string, turnId: string) =>
+    hook("PreToolUse", sessionId, turnId, { tool_name: "apply_patch",
+      tool_input: { patch: "*** Begin Patch\n*** Update File: src/primary.ts\n@@\n-original\n+changed\n*** End Patch" } }) };
+}
 
 describe("GF-V03, GF-V04, GF-V07 and GF-V23: supervised lifecycle", () => {
   it("reserves prospective outcomes across goals and retains both slots through publication and journal replay", () => {

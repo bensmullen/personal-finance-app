@@ -38,6 +38,55 @@ The journal allows two outcome slots globally and honors any tighter approved pe
 
 The journal syncs a private temporary file before atomic replacement, then syncs the directory before issuing any permit. Disk-full before replacement preserves the last committed revision. Lost acknowledgement after replacement requires read-only reconciliation. A process crash may leave the transaction lock. Preserve the lock, committed snapshot and any pending file for diagnosis. A trusted operator must establish the prior lock owner's termination and reconcile any effect before restoring write access. No worker should remove a task receipt, reset, stash, clean, force-push or start a fallback writer. GF-05 retains and settles the associated liability using authenticated terminal and billing evidence.
 
+## External supervised Git preparation
+
+The offline #368 controller is installed outside the worker worktree.
+Continue ordinary operator-owned bootstrap and V3 until the external trust
+and host gates are independently accepted. The controller needs private,
+authenticated provider observations, a PM signature verifier and revocation
+source, a shared global gate, and an isolated effect port. The repository
+contains no production installation for those services.
+
+1. Re-fetch the live authorization, independently approved scope and current
+   host/remote state. Use the actual merged parser for saved V3 and bind the
+   census baseline to expected main for new, or the exact published head for
+   resume. Resolve source and target in the trusted host.
+2. Hold the global writer/capacity fence and persist one intent under a
+   separate OS-backed journal lock in a private host directory. The intent
+   consumes the exact request. A signed snapshot stores at most 100
+   reference-only records, including tombstones. A synced staging file,
+   atomic replacement and directory sync precede dispatch. Preserve any
+   staging bytes after failure for operator diagnosis.
+3. Re-fetch authority before effect. Pass reviewed helper bytes on stdin
+   to pinned absolute Bash with fixed mode, branch and explicit absolute
+   target arguments. Use `PFM_SUPERVISOR_BOOTSTRAP=1`,
+   `PFM_RECOVERY_MAIN_SHA`, `PFM_SUPERVISOR_EXPECTED_HEAD` (empty for new),
+   `PFM_SUPERVISOR_GIT`, `PFM_SUPERVISOR_PYTHON` and
+   `PFM_SUPERVISOR_RECEIPT` (absent or exact closed receipt SHA-256). These
+   are conditions supplied by the trusted host, not credentials. The port
+   attests isolation and repo configuration, uses bounded output and a
+   monotonic deadline, and proves terminal cleanup for the process group.
+   The strict helper rejects stale refs, existing new targets, ambiguous
+   ownership and unsafe resume. Ordinary manual and recovery mode keep
+   their existing invocation.
+4. Independently re-fetch the issue and remote refs, match the three
+   bootstrap stdout fields, and inspect the exact linked worktree, scoped
+   paths, head/upstream, index and actual receipt. Treat printed shell text
+   as data. Git readiness can have an absent receipt or a hash-bound closed
+   receipt with independently proven stopped owner. Revalidate again
+   before creating the manual handoff. A timeout, missing response or
+   partial effect holds the intent until bounded read-only reconciliation
+   proves nonstart or terminal cleanup. The journal allows up to four
+   reconciliation reads per intent. After that, resolution needs externally
+   recorded evidence authenticated by the same capacity-release verifier.
+   Never dispatch the same bootstrap
+   again or switch to another executor because the response was lost.
+5. Only an independently verified nonwriting handshake can carry an actual
+   UserPromptSubmit receipt to runner admission. The offline fixture uses
+   the real hook and parser on disposable Git repositories. It exercises
+   GF-03 and GF-05 with synthetic acknowledgement and budget evidence.
+   Manual V3 remains available through the exact worktree and issue pointer.
+
 ## Evidence and rollout
 
 Use the offline witnesses in `goalFrameworkLifecycle.test.ts` and the existing tooling self-test for GF-V03, GF-V04, GF-V05, GF-V07, GF-V14 and GF-V23. The tests exercise the pinned parser, a temporary linked worktree and fake remote, prospective review slots, and a temporary GF-05 ledger driven by synthetic supervisor and provider evidence. Live rollout requirements and safety controls are defined in [interfaces](interfaces.md), [requirements](requirements.md), [verification and metrics](verification-and-metrics.md) and [safety and rollout](safety-and-rollout.md).
