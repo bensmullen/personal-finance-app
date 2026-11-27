@@ -5,6 +5,9 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { candidateKey } from "./agent-candidate-key.mjs";
+import { disposableGit, repository as supervisorRepository } from "../../test/fixtures/goalFramework/supervisor/disposable-git.mjs";
+import { parseBootstrapOutput } from "./goal-framework/adapters/bootstrap-host.mjs";
+import { inspectWorkspace } from "./goal-framework/workspace.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const policy = path.join(root, ".codex", "hooks", "pfm-policy.py");
@@ -2282,6 +2285,117 @@ mustRun("git", ["-C", targetTwo, "add", "feature.txt"]);
 mustRun("git", ["-C", targetTwo, "commit", "-m", "feature"]);
 mustRun("git", ["-C", targetTwo, "push", "-u", "origin", "codex/task-two"]);
 const remoteFeatureHead = mustRun("git", ["-C", targetTwo, "rev-parse", "HEAD"]).stdout.trim();
+
+{
+  const directory = fs.realpathSync(fs.mkdtempSync(path.join(temp, "strict-")));
+  const fixture = disposableGit(directory);
+  const { checkout, main, remote, realGit } = fixture;
+  const bytes = fs.readFileSync(bootstrap);
+  const branch = "codex/strict-witness";
+  const target = path.join(directory, "exact worktree");
+  const branchRef = `refs/heads/${branch}`;
+  const git = fixture.run;
+  const strict = (mode, head = "", receipt = "absent", mainPin = main, destination = target) =>
+    fixture.strict(bytes, mode, branch, destination, head, receipt, mainPin);
+  const denied = (result, label) => {
+    assert(result.status !== 0 && !result.stdout.toString().includes("PR_WORKTREE_READY"), label);
+  };
+  function ready(result, mode, head = null, receipt = "absent", destination = target) {
+    assert(result.status === 0, result.stderr.toString());
+    parseBootstrapOutput(result.stdout, { mode, branch, target: destination, expected_main: main, expected_head: head }, receipt);
+    const observed = inspectWorkspace({ directory: destination, git: realGit, environment: "strict-fixture",
+      repository: supervisorRepository, base: head ?? main, verify: () => true });
+    assert(observed.branch === branch && observed.head === (head ?? main) && observed.linked
+      && !observed.conflicted && !observed.dirty && observed.receipt.status === receipt
+      && observed.upstream_head === head, "independent strict Git/receipt preflight");
+  }
+  denied(strict("new", "", "absent", "a".repeat(40)), "changed main refuses");
+  assert(fixture.read(checkout, "show-ref", "--verify", "refs/remotes/origin/main").status !== 0,
+    "main mismatch causes no fetch mutation");
+  fs.mkdirSync(target);
+  denied(strict("new"), "existing path refuses");
+  fs.rmdirSync(target);
+  fs.symlinkSync(checkout, target);
+  denied(strict("new"), "symlink target refuses");
+  fs.unlinkSync(target);
+  git(checkout, "config", "filter.untrusted.smudge", "never-run");
+  denied(strict("new"), "unsafe repository Git config refuses");
+  git(checkout, "config", "--remove-section", "filter.untrusted");
+  git(checkout, "branch", branch);
+  denied(strict("new"), "existing branch is preserved");
+  assert(git(checkout, "rev-parse", branch) === main, "no branch cleanup");
+  git(checkout, "branch", "-d", branch);
+  git(checkout, "push", remote, `HEAD:${branchRef}`);
+  denied(strict("new"), "existing live remote branch refuses even before fetch");
+  git(checkout, "push", remote, "--delete", branch);
+  ready(strict("new"), "new");
+  denied(strict("new"), "new never removes an existing linked checkout");
+  git(target, "push", remote, `HEAD:${branchRef}`);
+  denied(strict("resume", "b".repeat(40)), "changed target ref refuses");
+  denied(strict("resume", main, "absent", main, target + "-wrong"), "wrong owner path refuses");
+  ready(strict("resume", main), "resume", main);
+
+  const runtime = path.join(target, ".codex", "runtime");
+  fs.mkdirSync(runtime, { recursive: true });
+  const pointer = path.join(runtime, "latest-task.json");
+  const receiptPath = path.join(runtime, "fixture.json");
+  function witness(active, prepared, directory = target) {
+    const data = JSON.stringify({ WORKTREE: directory, TARGET_BRANCH: branch, ACTIVE: active, PREPARED: prepared,
+      SESSION_ID: "fixture-session", AUTHORIZATION_ID: "fixture-authorization" });
+    const digest = createHash("sha256").update(data).digest("hex");
+    fs.writeFileSync(receiptPath, data);
+    fs.writeFileSync(pointer, JSON.stringify({ path: "fixture.json", sha256: digest }));
+    return digest;
+  }
+  for (const [active, prepared, owner] of [[true, false, target], [false, true, target], [false, false, checkout]]) {
+    const digest = witness(active, prepared, owner);
+    denied(strict("resume", main, digest), "active, prepared and foreign receipts refuse at the identical head");
+    assert(createHash("sha256").update(fs.readFileSync(receiptPath)).digest("hex") === digest, "prior receipt bytes preserved");
+  }
+  const receipt = witness(false, false);
+  fs.appendFileSync(receiptPath, "\n");
+  denied(strict("resume", main, receipt), "tampered closed receipt refuses");
+  witness(false, false);
+  ready(strict("resume", main, receipt), "resume", main, "closed");
+
+  const publisher = path.join(directory, "publisher");
+  git(directory, "clone", remote, publisher);
+  git(publisher, "switch", branch);
+  git(publisher, "-c", "user.name=PFM Fixture", "-c", "user.email=pfm@example.invalid", "commit", "--allow-empty", "-m", "published");
+  git(publisher, "push", "origin", branch);
+  const published = git(publisher, "rev-parse", "HEAD");
+  denied(strict("resume", main, receipt), "advanced remote head refuses before moving the old worktree");
+  assert(git(target, "rev-parse", "HEAD") === main, "old worktree is unchanged on stale resume");
+  fs.writeFileSync(path.join(target, "untracked.txt"), "dirty");
+  denied(strict("resume", published, receipt), "dirty checkpoint refuses");
+  fs.unlinkSync(path.join(target, "untracked.txt"));
+  const drift = path.join(target, "changed-during-fetch.txt");
+  denied(fixture.strict(bytes, "resume", branch, target, published, receipt, main, drift),
+    "dirt created during fetch refuses before branch movement");
+  assert(fs.existsSync(drift) && git(target, "rev-parse", "HEAD") === main
+    && git(checkout, "rev-parse", `refs/remotes/origin/${branch}`) === published
+    && createHash("sha256").update(fs.readFileSync(receiptPath)).digest("hex") === receipt,
+  "fetch was observed but the target branch and receipt were preserved");
+  fs.unlinkSync(drift);
+  ready(strict("resume", published, receipt), "resume", published, "closed");
+  assert(createHash("sha256").update(fs.readFileSync(receiptPath)).digest("hex") === receipt, "fast-forward retains prior receipt");
+  const sibling = git(checkout, "commit-tree", `${main}^{tree}`, "-p", main, "-m", "unrelated published descendant");
+  git(checkout, "push", remote, `+${sibling}:${branchRef}`);
+  denied(strict("resume", sibling, receipt), "divergent local branch refuses");
+  assert(git(target, "rev-parse", "HEAD") === published, "divergent refusal preserves branch");
+  git(checkout, "push", remote, `+${published}:${branchRef}`);
+  git(target, "commit", "--allow-empty", "-m", "unpublished fixture commit");
+  const unpublished = git(target, "rev-parse", "HEAD");
+  denied(strict("resume", published, receipt), "locally ahead branch refuses");
+  assert(git(target, "rev-parse", "HEAD") === unpublished
+    && createHash("sha256").update(fs.readFileSync(receiptPath)).digest("hex") === receipt,
+  "resume preserves unpublished work and prior receipt");
+  git(checkout, "worktree", "remove", target);
+  denied(strict("resume", published), "existing unowned branch requires operator");
+  git(checkout, "branch", "-D", branch);
+  ready(strict("resume", published), "resume", published);
+}
+
 const existingResume = mustRun('bash', [bootstrap, 'resume', 'codex/task-two', targetTwo + '-resumed'],
   { cwd: source, env: bootstrapEnv });
 assertHandoff(existingResume, 'resume', targetTwo, 'codex/task-two');

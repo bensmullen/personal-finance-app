@@ -28,6 +28,26 @@ EOF
 mode="$1"
 branch="$2"
 target_arg="${3:-}"
+supervised="${PFM_SUPERVISOR_BOOTSTRAP:-0}"
+
+supervised_fail() {
+  printf 'PR_BOOTSTRAP_FAIL supervised %s\n' "$1" >&2
+  exit 1
+}
+
+if [ "$supervised" = 1 ]; then
+  case "$target_arg" in /*) ;; *) supervised_fail 'explicit absolute target required' ;; esac
+  case "${PFM_SUPERVISOR_GIT:-}" in /*) ;; *) supervised_fail 'pinned Git required' ;; esac
+  case "${PFM_SUPERVISOR_PYTHON:-}" in /*) ;; *) supervised_fail 'pinned Python required' ;; esac
+  [[ "${PFM_RECOVERY_MAIN_SHA:-}" =~ ^[a-f0-9]{40}$ ]] || supervised_fail 'main pin required'
+  [[ "${PFM_SUPERVISOR_RECEIPT:-}" =~ ^(absent|[a-f0-9]{64})$ ]] || supervised_fail 'receipt pin required'
+  [[ "${PFM_SUPERVISOR_LOCAL_HEAD:-}" =~ ^(absent|[a-f0-9]{40})$ ]] || supervised_fail 'local head pin required'
+  [ -z "${PFM_RECOVERY_HEAD:-}" ] && [ "${PFM_BOOTSTRAP_TEST_ALLOW_ANY_ORIGIN:-0}" = 0 ] ||
+    supervised_fail 'incompatible recovery or test environment'
+  git() {
+    "$PFM_SUPERVISOR_GIT" --no-optional-locks -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.untrackedCache=false "$@"
+  }
+fi
 
 case "$mode" in
   new|resume) ;;
@@ -43,6 +63,9 @@ root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 if [ -z "$root" ]; then
   printf 'PR_BOOTSTRAP_FAIL not inside a Git repository\n' >&2
   exit 1
+fi
+if [ "$supervised" = 1 ]; then
+  [ "$(pwd -P)" = "$root" ] || supervised_fail 'source checkout root changed'
 fi
 cd "$root"
 
@@ -78,17 +101,18 @@ if [ "$target_abs" = "$root_abs" ]; then
 fi
 
 printf 'PR_BOOTSTRAP_FETCH origin=%s\n' "$origin"
-git fetch --prune origin
-
 remote_main="refs/remotes/origin/main"
-if ! git show-ref --verify --quiet "$remote_main"; then
-  printf 'PR_BOOTSTRAP_FAIL origin/main is unavailable after fetch\n' >&2
-  exit 1
-fi
-origin_main="$(git rev-parse "$remote_main")"
-if [ -n "${PFM_RECOVERY_MAIN_SHA:-}" ] && [ "$origin_main" != "$PFM_RECOVERY_MAIN_SHA" ]; then
-  printf 'PR_BOOTSTRAP_FAIL origin/main changed during recovery\n' >&2
-  exit 1
+if [ "$supervised" != 1 ]; then
+  git fetch --prune origin
+  if ! git show-ref --verify --quiet "$remote_main"; then
+    printf 'PR_BOOTSTRAP_FAIL origin/main is unavailable after fetch\n' >&2
+    exit 1
+  fi
+  origin_main="$(git rev-parse "$remote_main")"
+  if [ -n "${PFM_RECOVERY_MAIN_SHA:-}" ] && [ "$origin_main" != "$PFM_RECOVERY_MAIN_SHA" ]; then
+    printf 'PR_BOOTSTRAP_FAIL origin/main changed during recovery\n' >&2
+    exit 1
+  fi
 fi
 
 branch_owner() {
@@ -220,14 +244,270 @@ verify_ready() {
       "$path" "${actual_branch:-DETACHED}" "$actual" "${dirty:+yes}" >&2
     exit 1
   fi
+  local verified_receipt
+  if [ "$supervised" = 1 ]; then
+    verified_receipt="$(supervised_receipt "$path")"
+    supervised_remote
+  else
+    verified_receipt="$(receipt_status "$path")"
+  fi
   printf 'PR_WORKTREE_READY mode=%s path=%s branch=%s head=%s origin_main=%s\n' \
     "$mode" "$path" "$actual_branch" "$actual" "$origin_main"
-  printf 'PR_TASK_RECEIPT status=%s path=%s\n' "$(receipt_status "$path")" "$path"
+  printf 'PR_TASK_RECEIPT status=%s path=%s\n' "$verified_receipt" "$path"
   printf '\nOPEN THIS EXACT WORKTREE IN CODEX: %s\n' "$path"
   printf 'Git readiness does not grant receipt ownership or change the folder selected in Codex. Run this read-only preflight from its terminal before submitting TARGET_BRANCH=%s:\n' "$branch"
   preflight='test "$(pwd -P)" = "$(cd -- "$1" && pwd -P)" && test "$(git rev-parse --show-toplevel)" = "$(pwd -P)" && test "$(git branch --show-current)" = "$2" && test "$(git rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>/dev/null || true)" = "$3" && test "$(git rev-parse HEAD)" = "$(git rev-parse "$4")" && test -z "$(git status --porcelain=v1 --untracked-files=normal)" && printf "PREFLIGHT_OK path=%s branch=%s\n" "$(pwd -P)" "$2"'
   printf 'bash -c %q -- %q %q %q %q\n' "$preflight" "$path" "$branch" "$expected_upstream" "$expected_ref"
 }
+
+supervised_receipt() {
+  "$PFM_SUPERVISOR_PYTHON" -I -B - "$1" "$branch" "$PFM_SUPERVISOR_RECEIPT" <<'PY'
+import hashlib
+import json
+import os
+import re
+import stat
+import sys
+from pathlib import Path
+
+root, branch, expected = sys.argv[1:]
+
+def read(path, limit):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, 'rb') as file:
+        info = os.fstat(file.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > limit:
+            raise ValueError()
+        data = file.read(limit + 1)
+        if len(data) != info.st_size:
+            raise ValueError()
+        return data
+
+def unique(pairs):
+    obj = dict(pairs)
+    if len(obj) != len(pairs):
+        raise ValueError()
+    return obj
+
+def receipt():
+    directory = Path(root)
+    for name in ('.codex', 'runtime'):
+        directory /= name
+        if not os.path.lexists(directory):
+            if expected == 'absent':
+                return 'absent'
+            raise ValueError()
+        if not stat.S_ISDIR(directory.lstat().st_mode):
+            raise ValueError()
+    pointer = directory / 'latest-task.json'
+    if expected == 'absent':
+        with os.scandir(directory) as entries:
+            if any(entry.name != 'policy.lock' for entry in entries):
+                raise ValueError()
+        return 'absent'
+    raw = read(pointer, 1024)
+    ref = json.loads(raw, object_pairs_hook=unique)
+    name = ref['path']
+    if not re.fullmatch(r'[A-Za-z0-9_.-]{1,200}\.json', name) or name == pointer.name:
+        raise ValueError()
+    data = read(directory / name, 512 * 1024)
+    state = json.loads(data, object_pairs_hook=unique)
+    if (hashlib.sha256(data).hexdigest() != expected or ref['sha256'] != expected or
+            state.get('WORKTREE') != root or state.get('TARGET_BRANCH') != branch or
+            state.get('ACTIVE') is not False or state.get('PREPARED', False) is not False or
+            not all(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}', state.get(k, ''))
+                    for k in ('SESSION_ID', 'AUTHORIZATION_ID')) or read(pointer, 1024) != raw):
+        raise ValueError()
+    return 'closed'
+
+try:
+    print(receipt())
+except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError):
+    sys.exit('PR_BOOTSTRAP_FAIL supervised receipt changed or is ambiguous')
+PY
+}
+
+supervised_remote() {
+  local refs expected
+  refs="$(git ls-remote --refs --sort=refname origin refs/heads/main "refs/heads/$branch")"
+  expected="$(printf '%s\trefs/heads/main' "$origin_main")"
+  if [ "$mode" = resume ]; then
+    expected="$(printf '%s\trefs/heads/%s\n%s\n' "$remote_head" "$branch" "$expected")"
+  fi
+  [ "$refs" = "$expected" ] || supervised_fail 'live remote refs changed'
+}
+
+supervised_ref_absent() {
+  local code
+  if git show-ref --verify --quiet "$1"; then
+    return 1
+  else
+    code=$?
+    [ "$code" = 1 ] || supervised_fail 'cannot check local ref absence'
+  fi
+}
+
+supervised_check_target() {
+  local registered clean git_dir upstream worktrees keys key common name owner_check config_root
+  [[ "$target_abs" =~ ^/[a-zA-Z0-9_./\ -]+$ ]] &&
+    [ "$(cd -- "$(dirname -- "$target_abs")" && pwd -P)/$(basename -- "$target_abs")" = "$target_abs" ] &&
+    [ "$target_abs" != "$root_abs" ] && [ ! -L "$target_abs" ] ||
+    supervised_fail 'target path alias'
+  case "$target_abs/" in "$root_abs/"*) supervised_fail 'target inside the source checkout' ;; esac
+  [ -z "$owner" ] || [ "$owner" = "$target_abs" ] || supervised_fail 'worktree at wrong target'
+  git check-ref-format "refs/heads/$branch" || supervised_fail 'invalid branch'
+  [ "$(git remote get-url --all origin)" = "$origin" ] &&
+    [ "$(git remote get-url --push --all origin)" = "$origin" ] || supervised_fail 'ambiguous origin'
+  # The host independently attests inherited config, executable identities, and
+  # isolation. Refuse repository helpers, filters, includes, rewrites or custom
+  # transports here as well. The command-line safety overrides above are fixed.
+  keys="$(git config --no-includes --name-only --list)"
+  while IFS= read -r key; do
+    case "$key" in
+      core.hookspath|core.fsmonitor|core.untrackedcache|core.repositoryformatversion|core.filemode|core.bare|core.logallrefupdates|core.ignorecase|core.precomposeunicode|core.symlinks|\
+      user.name|user.email|remote.origin.url|remote.origin.fetch|branch.*.remote|branch.*.merge) ;;
+      *) supervised_fail 'repository Git configuration outside strict allowlist' ;;
+    esac
+  done <<< "$keys"
+  for config_root in "$root_abs" ${owner:+"$owner"}; do
+    keys="$(git -C "$config_root" config --no-includes --local --name-only --list)"
+    while IFS= read -r key; do
+      case "$key" in
+        core.repositoryformatversion|core.filemode|core.bare|core.logallrefupdates|core.ignorecase|core.precomposeunicode|core.symlinks|\
+        user.name|user.email|remote.origin.url|remote.origin.fetch|branch.*.remote|branch.*.merge) ;;
+        *) supervised_fail 'unsafe local Git configuration' ;;
+      esac
+    done <<< "$keys"
+    [ "$(git -C "$config_root" config --get core.hooksPath)" = /dev/null ] &&
+      [ "$(git -C "$config_root" config --get core.fsmonitor)" = false ] &&
+      [ "$(git -C "$config_root" config --get core.untrackedCache)" = false ] ||
+      supervised_fail 'unsafe effective Git configuration'
+  done
+  [ "$(git config --local --get-all remote.origin.fetch)" = '+refs/heads/*:refs/remotes/origin/*' ] ||
+    supervised_fail 'unexpected origin ref mapping'
+
+  owner_check="$(branch_owner)"
+  [ "$owner_check" = "$owner" ] || supervised_fail 'branch owner changed'
+  registered="$(registered_at_target)"
+  if [ "$mode" = new ] && [ "${1:-}" != created ]; then
+    [ -z "$remote_head" ] && [ "$PFM_SUPERVISOR_RECEIPT" = absent ] && [ -z "$owner" ] &&
+      [ -z "$registered" ] && [ ! -e "$target_abs" ] &&
+      supervised_ref_absent "$local_ref" ||
+      supervised_fail 'new branch, worktree or target already exists'
+  else
+    [ "$mode" = new ] || [[ "$remote_head" =~ ^[a-f0-9]{40}$ ]] || supervised_fail 'resume head pin required'
+    if [ -z "$owner" ]; then
+      [ -z "$registered" ] && [ ! -e "$target_abs" ] && [ "$PFM_SUPERVISOR_RECEIPT" = absent ] &&
+        supervised_ref_absent "$local_ref" || supervised_fail 'unowned branch or target needs operator'
+    else
+      [ "$owner" = "$target_abs" ] && [ "$registered" = "$target_abs" ] ||
+        supervised_fail 'worktree at wrong target'
+      worktrees="$(git worktree list --porcelain)"
+      awk -v path="$target_abs" -v ref="$local_ref" '
+        /^worktree / { target=substr($0,10)==path; paths+=target }
+        /^branch / { if (substr($0,8)==ref) branches++ }
+        /^(locked|prunable)( |$)/ { if (target) unsafe=1 }
+        END { exit !(paths==1 && branches==1 && !unsafe) }
+      ' <<< "$worktrees" || supervised_fail 'ambiguous or locked worktree'
+      [ "$(git -C "$owner" rev-parse --show-toplevel)" = "$owner" ] &&
+        [ "$(git -C "$owner" symbolic-ref HEAD)" = "$local_ref" ] || supervised_fail 'worktree identity'
+      git_dir="$(git -C "$owner" rev-parse --absolute-git-dir)"
+      common="$(git rev-parse --path-format=absolute --git-common-dir)"
+      [ "$common" = "$(git -C "$owner" rev-parse --path-format=absolute --git-common-dir)" ] &&
+        [ "$git_dir" != "$common" ] || supervised_fail 'foreign Git common directory'
+      for name in MERGE_HEAD rebase-merge rebase-apply CHERRY_PICK_HEAD REVERT_HEAD sequencer BISECT_LOG AUTO_MERGE index.lock; do
+        [ ! -e "$git_dir/$name" ] && [ ! -L "$git_dir/$name" ] || supervised_fail 'worktree operation in progress'
+      done
+      clean="$(git -C "$owner" status --porcelain=v1 --untracked-files=all --ignore-submodules=none)"
+      [ -z "$clean" ] || supervised_fail 'dirty target'
+      clean="$(git -C "$owner" ls-files -u -z | git hash-object --stdin)"
+      [ "$clean" = "$(git hash-object --stdin </dev/null)" ] || supervised_fail 'unmerged index'
+      upstream="$(git -C "$owner" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
+      [ -z "$upstream" ] || [ "$upstream" = "origin/$branch" ] || supervised_fail 'foreign upstream'
+      supervised_receipt "$owner" >/dev/null
+      [ "$(git -C "$owner" rev-parse HEAD)" = "$local_head" ] &&
+        [ "$(git rev-parse --verify "$local_ref")" = "$local_head" ] || supervised_fail 'local head changed'
+    fi
+  fi
+}
+
+supervised_index() {
+  if [ -n "$owner" ]; then
+    git -C "$owner" ls-files --stage -v -z | git hash-object --stdin
+  fi
+}
+
+supervised_bootstrap() {
+  local owner local_ref local_head prior_config prior_index
+  remote_target="refs/remotes/origin/$branch"
+  remote_head="${PFM_SUPERVISOR_EXPECTED_HEAD:-}"
+  origin_main="$PFM_RECOVERY_MAIN_SHA"
+  local_ref="refs/heads/$branch"
+  owner="$(branch_owner)"
+  local_head=""
+  if [ "$owner" = "$target_abs" ]; then
+    local_head="$(git rev-parse --verify "$local_ref")"
+  fi
+  [ "${local_head:-absent}" = "$PFM_SUPERVISOR_LOCAL_HEAD" ] || supervised_fail 'observed local head changed'
+  supervised_check_target
+  prior_config="$(git config --no-includes --null --list | git hash-object --stdin)"
+  prior_index="$(supervised_index)"
+  if [ "$mode" = new ]; then
+    supervised_ref_absent "$remote_target" || supervised_fail 'unexpected tracking ref for new branch'
+  fi
+
+  supervised_remote
+  local specs=("+refs/heads/main:$remote_main")
+  if [ "$mode" = resume ]; then specs+=("+refs/heads/$branch:$remote_target"); fi
+  git fetch --no-prune --no-tags --no-recurse-submodules --no-auto-gc origin "${specs[@]}"
+  [ "$(git rev-parse "$remote_main")" = "$origin_main" ] || supervised_fail 'fetched main changed'
+  if [ "$mode" = resume ]; then
+    [ "$(git rev-parse "$remote_target")" = "$remote_head" ] || supervised_fail 'fetched branch changed'
+    if [ -n "$owner" ]; then
+      git merge-base --is-ancestor "$local_head" "$remote_head" || supervised_fail 'unpublished or divergent branch'
+      supervised_receipt "$owner" >/dev/null
+    fi
+  fi
+  supervised_remote
+  supervised_check_target
+  if [ "$mode" = new ]; then
+    supervised_ref_absent "$remote_target" || supervised_fail 'tracking ref appeared for new branch'
+  fi
+  [ "$(git config --no-includes --null --list | git hash-object --stdin)" = "$prior_config" ] &&
+    [ "$(supervised_index)" = "$prior_index" ] || supervised_fail 'Git configuration or index changed'
+  if [ "$mode" = new ]; then
+    git worktree add --no-track -b "$branch" "$target_abs" "$origin_main"
+    owner="$target_abs"
+    local_head="$origin_main"
+    # After creation check the exact registered owner using the same path,
+    # config, index and operation checks as strict resume.
+    supervised_check_target created
+    verify_ready "$target_abs" "$origin_main"
+  else
+    if [ -n "$owner" ]; then
+      [ "$(git -C "$owner" rev-parse HEAD)" = "$local_head" ] || supervised_fail 'local head changed'
+      if [ "$local_head" != "$remote_head" ]; then
+        git -C "$owner" -c merge.autostash=false merge --ff-only "$remote_head" >/dev/null
+        local_head="$remote_head"
+      fi
+      supervised_check_target
+      [ "$(git config --no-includes --null --list | git hash-object --stdin)" = "$prior_config" ] ||
+        supervised_fail 'Git configuration changed'
+      git -C "$owner" branch --set-upstream-to="origin/$branch" "$branch" >/dev/null
+    else
+      git worktree add --track -b "$branch" "$target_abs" "$remote_target"
+    fi
+    owner="$target_abs"
+    local_head="$remote_head"
+    supervised_check_target
+    verify_ready "$target_abs" "$remote_head"
+  fi
+}
+
+if [ "$supervised" = 1 ]; then
+  supervised_bootstrap
+  exit 0
+fi
 
 if [ "$mode" = "new" ]; then
   remote_target="refs/remotes/origin/$branch"

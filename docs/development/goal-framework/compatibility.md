@@ -23,6 +23,47 @@ Documented candidates include [CLI, SDK and app-server](https://developers.opena
 [plan-specific usage limits](https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan).
 The inventory used no native launch, stop, paid probe or API fallback.
 
+### Supervised local preparation and Remote
+
+The offline #368 increment keeps the read-only capability inventory separate
+from the Git preparation result and the actual hook receipt.
+
+| Interface | Documented capability | Evidence still needed for this host |
+| --- | --- | --- |
+| Desktop Remote in the ChatGPT mobile app | Connect to a desktop running Codex, start or continue supported desktop work, and inspect progress. [Remote guide](https://developers.openai.com/blog/mastering-codex-remote-for-engineering) · [ChatGPT Work and Codex](https://help.openai.com/en/articles/20001275-chatgpt-work-and-codex) | A trusted exact-worktree/session binding visible on the phone, the installed version and permissions, and an independently authenticated pre-write barrier. Account entitlement and host configuration are unknown for the proposed deployment. |
+| Codex app-server and SDK | Programmatic local thread and turn operations. [Codex as a platform](https://developers.openai.com/blog/codex-as-a-platform) | A versioned, installed and permissioned bridge that exposes a matching prepared receipt before a charged turn or any possible write, along with separate credentials, hard resource limits, stop and terminal proof. Programmatic thread support alone establishes none of these. |
+| Repository hook | Actual policy source creates a non-owning PREPARED receipt in `UserPromptSubmit` and claims it at the first allowed mutation in `PreToolUse`. [Hooks documentation](https://developers.openai.com/docs/hooks) | Synthetic CI composition can exercise these two events. The installed transport still needs authenticated delivery, fencing and enforcement across every mutation entry point. |
+| Cloud | A separate documented execution surface. [Using Codex Cloud](https://help.openai.com/en/articles/20001545-using-codex-cloud) | Separate certification after local certification. |
+
+Bootstrap and independent preflight can yield `PREPARATION_ONLY`. The
+handoff returns the exact issue pointer and worktree path for manual
+selection. Authenticated inventory that shows pending project or hook trust
+produces `HANDOFF_APPROVAL_REQUIRED`. The operator reviews the hook definitions
+and configuration in Codex and can then continue in the same prepared worktree
+when review is required. Unknown trust or handshake evidence produces
+`HANDOFF_UNVERIFIED`. Authenticated evidence that the capability is absent
+produces `HANDOFF_UNAVAILABLE`. Observed trust leaves the result
+preparation-only. Admission requires independent evidence of the exact hook
+configuration, SessionStart root, actual UserPromptSubmit receipt, approved
+worker and session/turn mapping, and a nonwriting barrier.
+Desktop metadata and chat tool descriptions supply no proof of this
+transition. There is no phone endpoint or native start/stop port in the
+supervised preparation controller.
+
+After independent review and PM merge, inventory the actual installed
+transport, app/CLI versions, active config and permissions, credential
+separation, hooks, session visibility and pre-write barrier. A finite local
+canary requires separate PM approval, a host allowance including cleanup, a
+real GF-05 reservation for any native turn, and evidence of external
+nonwriting enforcement through prepared receipt, grant, native start and
+GF-03 claim. Test actual first-party phone initiation on new and resume
+worktrees, exact Remote session selection, stale and replay denial, bounded
+cancellation and terminal proof, publication, late usage and retained
+artifacts. Record host idle time and operator interventions. If the installed
+surface requires manual workspace selection, report that intervention and
+retain preparation-only status. Local then cloud certification still gates
+#368 acceptance and #369 dispatch.
+
 ## Supervisor contract
 
 `createRunnerAdapter` returns versioned probe, prepare, launch, observe,
