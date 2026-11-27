@@ -222,6 +222,7 @@ def limited_preflight(command, root, state, tool_use_id=None):
         return ("Bounded helper/reporter pair is not one complete trusted "
                 "origin/main version; operator-owned reviewed framework "
                 "synchronization required, never bypass hooks")
+    report_schema = 2 if "schema: 2, authorization:" in local_tools[0] else 1
     test = match.group(1)
     if test:
         path = root / test
@@ -256,8 +257,7 @@ def limited_preflight(command, root, state, tool_use_id=None):
                     f"preflight-{state['AUTHORIZATION_ID']}.json").read_text())
             except (OSError, ValueError):
                 previous = {"status": "INCOMPLETE"}
-        if (used.get("count", 0) >= 2 or previous.get("status") != "FAIL" or
-                previous.get("timeout_observed", False) or
+        if (used.get("count", 0) >= 2 or not preflight_retry_eligible(used, previous) or
                 previous.get("patch", used.get("patch")) != used.get("patch") or
                 fingerprint == used.get("patch") or test != used.get("test")):
             return ("Only a corrected, observed FAIL permits one local retry. "
@@ -265,13 +265,23 @@ def limited_preflight(command, root, state, tool_use_id=None):
     count = used.get("count", 0) + 1
     state["PREFLIGHT"] = {
         "count": count, "patch": fingerprint, "test": test,
+        "command": command, "report_schema": report_schema,
         "nonce": secrets.token_hex(16),
         "tool_use_id": str(tool_use_id) if tool_use_id else None,
         "prior_failure": bool(used and previous.get("status") == "FAIL"),
         "result": {"status": "INCOMPLETE", "patch": fingerprint, "attempt": count,
+                   "host_observed": False, "retry_eligible": False,
                    "reason": "No verified host result; no local retry"},
     }
     return None
+
+
+def preflight_retry_eligible(used, result):
+    if result.get("status") != "FAIL" or result.get("timeout_observed"):
+        return False
+    if "retry_eligible" in result or used.get("report_schema") == 2:
+        return result.get("host_observed") is True and result.get("retry_eligible") is True
+    return used.get("report_schema", 1) == 1
 
 
 def actionable_preflight_failure(root, state):
@@ -295,15 +305,16 @@ def actionable_preflight_failure(root, state):
     status = receipt.get("status")
     if (receipt.get("attempt") == used.get("count") and
             receipt.get("patch") == used.get("patch")):
-        if used.get("prior_failure") and status in ("TIMEOUT", "INCOMPLETE"):
+        if used.get("prior_failure") and (status in ("TIMEOUT", "INCOMPLETE") or
+                (status == "SKIP" and used.get("report_schema") == 2 and not receipt.get("environment_skip"))):
             return ("LOCAL_PREFLIGHT_FAILED: an earlier executed FAIL remains unresolved; "
-                    "the one correction attempt timed out or was unobserved. "
+                    "the one correction attempt did not establish a result or an unavailable environment. "
                     "No further local retry is permitted. Report TASK_STATUS: BLOCKED "
                     "and preserve the checkpoint for reviewer investigation.")
         if status == "FAIL":
-            if used.get("count", 0) >= 2 or receipt.get("timeout_observed"):
+            if used.get("count", 0) >= 2 or not preflight_retry_eligible(used, receipt):
                 return ("LOCAL_PREFLIGHT_FAILED: executed checks failed; local retry "
-                        "budget is exhausted or a case timed out. Report TASK_STATUS: BLOCKED "
+                        "is unavailable. Report TASK_STATUS: BLOCKED "
                         "and preserve the checkpoint.")
             return ("LOCAL_PREFLIGHT_FAILED: bounded verification executed and failed; "
                     "correct the authorized patch and use the permitted single retry. "
@@ -313,11 +324,12 @@ def actionable_preflight_failure(root, state):
 
 
 
-def observe_preflight_response(response, state, tool_use_id=None):
+def observe_preflight_response(response, state, tool_use_id=None, command=None):
     """Only the host-provided Bash result may become a protected test receipt."""
     used = state.get("PREFLIGHT") or {}
     fallback = {"status": "INCOMPLETE", "patch": used.get("patch"),
-                "attempt": used.get("count"), "reason": "No verifiable host result; no local retry"}
+                "attempt": used.get("count"), "host_observed": False, "retry_eligible": False,
+                "reason": "No verifiable host result; no local retry"}
     if used.get("tool_use_id") and str(tool_use_id) != used["tool_use_id"]:
         return fallback
 
@@ -352,6 +364,10 @@ def observe_preflight_response(response, state, tool_use_id=None):
             observed_exit = int(code.group(1))
 
     prefix = f".pfm-preflight/preflight-{state['AUTHORIZATION_ID']}-{used.get('count')}/"
+    expected_schema = used.get("report_schema", 1)
+    outcomes = ("PASS", "FAIL", "SKIP", "TIMEOUT")
+    if expected_schema == 2:
+        outcomes += ("INCOMPLETE",)
     for output in texts:
         for line in output.splitlines():
             if "PFM_PREFLIGHT_RESULT " not in line:
@@ -362,8 +378,16 @@ def observe_preflight_response(response, state, tool_use_id=None):
                 continue
             if not isinstance(report, dict):
                 continue
+            if type(report.get("schema")) is not int:
+                continue
             status = report.get("status")
-            if (report.get("schema") != 1 or status not in ("PASS", "FAIL", "SKIP", "TIMEOUT") or
+            reason = report.get("reason")
+            launcher_skip = (report.get("schema") == 1 and status == "SKIP" and
+                isinstance(command, str) and command.startswith("python3 tools/codex/limited-local-verification-launcher.py") and
+                report.get("log") is None and report.get("progress") is None and
+                reason == "Node 22 executable unavailable in Codex environment; no tests executed" and
+                report.get("timeoutObserved") is False)
+            if ((report.get("schema") != expected_schema and not launcher_skip) or status not in outcomes or
                 report.get("authorization") != state.get("AUTHORIZATION_ID") or
                 report.get("attempt") != used.get("count") or
                 report.get("patch") != used.get("patch") or
@@ -380,12 +404,19 @@ def observe_preflight_response(response, state, tool_use_id=None):
                 continue
             if observed_exit is not None and ((status == "FAIL") != (observed_exit != 0)):
                 continue
-            timeout_observed = report.get("timeoutObserved", False)
-            if type(timeout_observed) is not bool or (timeout_observed and status not in ("FAIL", "TIMEOUT")):
+            timeout_evidence = report.get("timeoutObserved", False if expected_schema == 1 else None)
+            timeout_observed = timeout_evidence is True or status == "TIMEOUT"
+            if (type(timeout_evidence) is not bool and status not in ("FAIL", "TIMEOUT")) or (
+                    timeout_observed and status not in ("FAIL", "TIMEOUT", "INCOMPLETE")):
                 continue
+            retry_eligible = (status == "FAIL" and timeout_evidence is False and
+                              (expected_schema == 1 or report.get("retryEligible") is True))
+            environment_skip = status == "SKIP" and (launcher_skip or
+                reason == "Node 22/npm/node_modules unavailable; no installation attempted")
             return {"status": status, "patch": used["patch"], "attempt": used["count"],
-                    "timeout_observed": timeout_observed,
-                    "reason": str(report.get("reason") or "")[:200],
+                    "host_observed": True, "timeout_observed": timeout_observed, "retry_eligible": retry_eligible,
+                    "environment_skip": environment_skip, "report_schema": report.get("schema"),
+                    "reason": reason[:200] if isinstance(reason, str) else "",
                     "log": report.get("log"), "progress": report.get("progress")}
     return fallback
 
@@ -1721,10 +1752,13 @@ def post_tool(payload, root):
                 r"(?:node tools/codex/limited-local-verification\.mjs|"
                 r"python3 tools/codex/limited-local-verification-launcher\.py)"
                 r"(?: test/[A-Za-z0-9_/-]+\.test\.ts)?", command) and
-            used.get("result", {}).get("status") == "INCOMPLETE"):
-        used["result"] = observe_preflight_response(payload.get("tool_response"), state,
-                                                     payload.get("tool_use_id"))
-        save_state(root, payload, state)
+            used.get("command", command) == command and
+            used.get("result", {}).get("status") == "INCOMPLETE" and
+            not used["result"].get("host_observed")):
+        result = observe_preflight_response(payload.get("tool_response"), state, payload.get("tool_use_id"), command)
+        if result["host_observed"]:
+            used["result"] = result
+            save_state(root, payload, state)
 
     attachment_error = attachment_integrity_error(state)
     if attachment_error:

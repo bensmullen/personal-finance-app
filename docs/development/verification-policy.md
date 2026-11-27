@@ -31,15 +31,20 @@ contains tests and either changed itself or directly imports changed source.
 It runs the complete package typecheck API (`tsc --noEmit` then
 `tsc -p tsconfig.next.json`) within 60 seconds total, then that unit file within
 30 seconds. It invokes local binaries directly, avoiding npm lifecycle hooks.
-One simple tool call per coherent patch; at most one correction retry after
-a hook-observed FAIL, requiring changed content and the same test. No local
+One simple tool call per coherent patch. A hook-observed ordinary FAIL may
+permit one correction retry with changed content and the same test. No local
 retry is permitted after process-level or individual Vitest-case TIMEOUT, SKIP, PASS, missing PostToolUse result or
 any interrupted/unrecorded execution. The hook reserves each attempt BEFORE
 the sandboxed command runs; an unobserved outcome is INCOMPLETE, not a license
 to retry. The sandboxed helper may write only ignored `.pfm-preflight/`
-diagnostic logs and case-level progress. The separate PostToolUse hook seals
-the host-returned outcome in protected, hash-bound `.codex/runtime/` state;
-local diagnostic files are never acceptance or authorization receipts. No
+diagnostic logs and progress. The private progress stream records both
+compiler phases and the unit phase with monotonic elapsed times, alongside
+append-only case events. The runner log has a 1 MiB aggregate cap per
+attempt. The separate PostToolUse hook seals matching host results, including
+observed INCOMPLETE, in protected, hash-bound `.codex/runtime/` state.
+The attempt binds the command, nonce, patch and tool-use identity. The
+trusted toolset determines the report schema at reservation. New reports must
+explicitly attest retry eligibility. Diagnostic files are advisory. No
 flags, wrappers, shell chaining, arbitrary test selection, installers or
 alternate runners. Launcher, helper and progress reporter must together match **one complete trusted
 version** from either the task branch's unique merged-main ancestor or the
@@ -55,18 +60,27 @@ fast-forwards its own branch; it does **not** merge main, replace tooling, or
 implicitly update the active Codex worktree. Neither helper nor reporter may
 execute during its own framework implementation turn.
 
-**Execution truth:** A nonzero exit from an executed bounded typecheck or
-selected unit test is FAIL, and a matching persisted FAIL blocks ordinary
+An ordinary nonzero exit from an executed bounded typecheck or selected unit
+test is FAIL. A matching persisted FAIL blocks ordinary
 Codex push/COMPLETE until an authorized correction retry yields PASS or a
 genuine environment SKIP. Do not deliberately skip a known failure. Missing
 Node/npm/node_modules, unavailable writable diagnostics, spawn error or helper/API
-incompatibility is SKIP/unverified. Bounded execution timeout is explicitly
-TIMEOUT/INCOMPLETE; missing host evidence is INCOMPLETE. Neither constitutes
-an assertion PASS/FAIL or by itself prevents publication. Each started and
-completed Vitest case has an append-only diagnostic event; a process kill keeps
-already-written case outcomes but never satisfies full-file acceptance.
-Completed cases must not cause automatic local retries of an incomplete run.
-If a correction retry following a real FAIL times out or lacks a host result,
+incompatibility can prevent execution. Only an authenticated unavailable
+environment clears a prior FAIL via SKIP. Bounded process or case timeout
+bars retry, including a nonzero exit observed at the deadline and mixed
+assertion failure with timeout. The helper retains both observed facts.
+Before another phase or PASS, the helper requires child close and a positive
+observation that the process group is gone. Cleanup observation is bounded
+to one second after exit or teardown begins. A group ID alone cannot
+authorize signaling after the leader exits. If cleanup remains unconfirmed,
+the helper records quarantine as INCOMPLETE or preserves an observed FAIL
+and any timeout. Quarantined cleanup cannot qualify for a correction retry.
+A complete, bounded regular-file case stream is required to
+establish retry eligibility after a unit failure. Partial, malformed or
+oversized evidence preserves known outcomes and leaves timeout classification
+unknown when no timeout was observed. The hook distinguishes a sealed
+interruption from a missing host result. If a correction following a real
+FAIL times out, is interrupted or lacks a result,
 the original observed failure continues to block ordinary push/COMPLETE; Codex
 must report BLOCKED with a preserved checkpoint, not rerun locally.
 A BLOCKED task may still checkpoint authorized WIP to the task branch with
