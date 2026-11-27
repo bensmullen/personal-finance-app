@@ -61,6 +61,26 @@ function envelope(schema: string, id = schema.toLowerCase()) {
   return { schema, repository, id, revision: 1, created_at: at(0), producer, references: [] };
 }
 
+type PrepareOptions = {
+  issueNumber?: number;
+  fence?: number;
+  directory?: string;
+  environment?: string;
+  target?: string;
+  base?: string;
+  paths?: string[];
+  issueBody?: string;
+  taskRevision?: number;
+  upstream?: boolean;
+  resource?: string;
+  attempt?: "initial" | "continuation" | "repair" | "reassessment";
+  goalIssue?: number;
+  reviewLimit?: number;
+  expires?: number;
+  selectedProfile?: typeof profile;
+  continuationSlots?: number;
+};
+
 function fixture({ realResources = false } = {}) {
   const journal = temporary();
   const firstDirectory = temporary();
@@ -124,7 +144,7 @@ function fixture({ realResources = false } = {}) {
   function prepare({ issueNumber = 365, fence = 1, directory = firstDirectory, environment = "local",
     target = branch, base = head, paths = [primary], issueBody = body(paths, target), taskRevision = 1,
     upstream = true, resource = "shared-register", attempt = "initial", goalIssue = 362, reviewLimit = 2, expires = 40,
-    selectedProfile = profile, continuationSlots = attempt === "continuation" ? 1 : 0 } = {}) {
+    selectedProfile = profile, continuationSlots = attempt === "continuation" ? 1 : 0 }: PrepareOptions = {}) {
     const { goalKeys, goal, approval } = goalAuthority(goalIssue, reviewLimit);
     goalByTask.set(issueNumber, goalKeys);
     const issue = { repository, number: issueNumber, body: issueBody, kind: "issue", state: "open", evidence: ref("saved-issue") };
