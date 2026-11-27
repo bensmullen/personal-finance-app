@@ -37,10 +37,15 @@ from the Git preparation result and the actual hook receipt.
 
 Bootstrap and independent preflight can yield `PREPARATION_ONLY`. The
 handoff returns the exact issue pointer and worktree path for manual
-selection. With no verified nonwriting handshake it reports
-`HANDOFF_UNVERIFIED`, or `HANDOFF_UNAVAILABLE` when authenticated inventory
-establishes that the capability is absent. The actual hook receipt must match
-the selected session and turn before canonical Runner/GF-03/GF-05 admission.
+selection. Authenticated inventory that shows pending project or hook trust
+produces `HANDOFF_APPROVAL_REQUIRED`. The operator reviews the hook definitions
+and configuration in Codex and can then continue in the same prepared worktree
+when review is required. Unknown trust or handshake evidence produces
+`HANDOFF_UNVERIFIED`. Authenticated evidence that the capability is absent
+produces `HANDOFF_UNAVAILABLE`. Observed trust leaves the result
+preparation-only. Admission requires independent evidence of the exact hook
+configuration, SessionStart root, actual UserPromptSubmit receipt, approved
+worker and session/turn mapping, and a nonwriting barrier.
 Desktop metadata and chat tool descriptions supply no proof of this
 transition. There is no phone endpoint or native start/stop port in the
 supervised preparation controller.

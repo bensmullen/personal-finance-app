@@ -101,12 +101,21 @@ records only digests and scoped references. `PFM_PREPARATION_RESULT_V1`
 reports unresolved, nonstart, cleaned or git-ready with the corresponding
 evidence reference. An unresolved intent stays reserved across failures and
 restart. Only trusted terminal/cleanup or nonstart evidence can release it.
+The host authenticates journal identity and the committed generation and
+digest under the journal lock. A signed snapshot whose generation or digest
+differs from the independent current state leaves the disposition unknown.
+Commit advances the current-state witness after syncing the file and directory.
 
 `PFM_SUPERVISED_HANDOFF_V1` reports preparation-only readiness and includes
-the exact issue pointer and directory. A separate
+the exact issue pointer, directory and observed trust disposition. Pending
+project or hook approval produces `HANDOFF_APPROVAL_REQUIRED` for manual
+review. A separate
 `PFM_PREPARED_HANDOFF_REVIEW_V1` binds the actual hook receipt to the
 authenticated session, turn, authorization ID, canonical workspace reference
-and independently observed Git state. This review grants no mutation permit.
+and independently observed Git state. It resolves the original journal
+evidence under the global gate and rechecks live authority, host and remote
+state, exact hook configuration and the approved worker's session mapping.
+This read-only review grants no mutation permit.
 The existing runner must still validate the grant, runner/resource profile
 and GF-03 prepared state before admission. GF-05 accounts for a real native
 run. Its matching start acknowledgement and GF-03 claim/assertWriter gate

@@ -9,6 +9,8 @@ const { parseBootstrapOutput, createBootstrapHost } = await load("adapters/boots
 const { readPreparationRequest } = await load("adapters/supervised-preparation");
 const { openPreparationJournal } = await load("adapters/preparation-journal");
 const { sha256: digestRaw } = await load("authorization");
+const { journalWitness } = await import(new URL("./fixtures/goalFramework/supervisor/disposable-git.mjs",
+  import.meta.url).href);
 
 const ref = (id: string) => ({ id, digest: digest(id) as string });
 const head = "a".repeat(40);
@@ -39,10 +41,15 @@ function journalFixture() {
   roots.push(directory);
   let release = false;
   let acquired = false;
+  let writeFault: string | null = null;
   const gate = ref("global-gate");
   const evidence = ref("terminal-cleanup-evidence");
   const lock = ref("supervisor-lock");
+  const currentState = journalWitness(digest);
   const options = { directory, key: Buffer.alloc(32, 7), hostId: request.host_id,
+    currentState, fault: (phase: string) => {
+      if (phase === writeFault) throw Object.assign(new Error(phase), { code: "ENOSPC" });
+    },
     withLock: <T>(_directory: string, action: (proof: typeof lock) => T) => {
       if (acquired) throw new Error("lock already held");
       acquired = true;
@@ -53,6 +60,7 @@ function journalFixture() {
       }
     },
     verify: (boundary: string, value: unknown) => {
+      if (boundary === "preparation_journal_current") return currentState.verify(value);
       if (boundary !== "preparation_capacity_release") return true;
       const observed = value as { evidence: typeof evidence; gate: typeof gate };
       return release && observed.evidence.digest === evidence.digest && observed.gate.digest === gate.digest;
@@ -62,7 +70,8 @@ function journalFixture() {
   const binding = (index = 1) => readPreparationRequest(envelope({
     ...request, id: `request-${index}`, nonce: digest(`nonce-${index}`),
   })).binding;
-  return { journal, reopen: () => openPreparationJournal(options), options, binding, gate, evidence,
+  return { journal, reopen: () => openPreparationJournal(options), options, binding, gate, evidence, currentState,
+    failWrite: (phase: string) => { writeFault = phase; },
     file: join(directory, "preparations.json"), staged: join(directory, "preparations.next"),
     allowRelease: () => { release = true; } };
 }
@@ -135,6 +144,50 @@ describe("GF-06 supervised preparation protocol", () => {
     writeFileSync(file, readFileSync(file, "utf8").replace('"status":"unresolved"', '"status":"cleaned"'));
     expect(() => reopen()).toThrow("PREPARATION_JOURNAL_STATE");
   });
+
+  it("refuses an older authenticated snapshot and a visible rename without confirmed durability", () => {
+    const rollback = journalFixture();
+    const old = readFileSync(rollback.file);
+    rollback.journal.begin(rollback.binding(), rollback.gate);
+    writeFileSync(rollback.file, old);
+    expect(() => rollback.reopen()).toThrow("PREPARATION_JOURNAL_COMMIT_UNKNOWN");
+    const uncertain = journalFixture();
+    const item = uncertain.binding();
+    uncertain.journal.begin(item, uncertain.gate);
+    uncertain.allowRelease();
+    uncertain.currentState.fault("before");
+    expect(() => uncertain.journal.finish(item, "git-ready", uncertain.evidence, uncertain.gate))
+      .toThrow("fixture durability unconfirmed");
+    expect(readFileSync(uncertain.file, "utf8")).toContain('"status":"git-ready"');
+    expect(() => uncertain.reopen()).toThrow("PREPARATION_JOURNAL_COMMIT_UNKNOWN");
+    expect(() => uncertain.journal.begin(uncertain.binding(2), uncertain.gate)).toThrow("PREPARATION_JOURNAL_COMMIT_UNKNOWN");
+  });
+
+  it("reopens a durable intent after a lost commit response without creating a second effect", () => {
+    const { journal, reopen, currentState, binding, gate } = journalFixture();
+    currentState.fault("after");
+    expect(() => journal.begin(binding(), gate)).toThrow("fixture lost commit acknowledgement");
+    expect(reopen().begin(binding(), gate)).toMatchObject({ created: false, intent: { status: "unresolved" } });
+  });
+
+  it.each(["after-write", "after-file-sync", "after-rename", "after-directory-sync"])(
+    "holds capacity across the %s journal failure",
+    (phase) => {
+      const { journal, reopen, binding, gate, evidence, failWrite, allowRelease } = journalFixture();
+      const item = binding();
+      const { intent } = journal.begin(item, gate);
+      allowRelease();
+      failWrite(phase);
+      expect(() => journal.finish(item, "git-ready", evidence, gate)).toThrow(phase);
+      if (phase === "after-write" || phase === "after-file-sync") {
+        const restarted = reopen();
+        expect(restarted.observe(item)).toEqual(intent);
+        expect(() => restarted.begin(binding(2), gate)).toThrow("PREPARATION_JOURNAL_RECOVERY");
+      } else {
+        expect(() => reopen()).toThrow("PREPARATION_JOURNAL_COMMIT_UNKNOWN");
+      }
+    },
+  );
 
   it("bounds reference-only journal growth at 1, 10 and 100 tombstones", () => {
     const { journal, binding, gate, evidence, file, allowRelease } = journalFixture();

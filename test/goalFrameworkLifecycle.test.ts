@@ -1,4 +1,4 @@
-import { execFileSync, type SpawnSyncReturns } from "node:child_process";
+import { execFileSync, spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -51,13 +51,15 @@ type Invocation = {
 type GitFixture = {
   main: string; realGit: string; git: string; bash: string; python: string; checkout: string; remote: string;
   env: Record<string, string>;
+  hookEnv: Record<string, string>;
   run: (cwd: string, ...args: string[]) => string;
   read: (cwd: string, ...args: string[]) => SpawnSyncReturns<string>;
   invoke: (invocation: Invocation, bytes: Buffer) => SpawnSyncReturns<Buffer>;
 };
-const { disposableGit }: { disposableGit: (directory: string) => GitFixture } = await import(
-  new URL("./fixtures/goalFramework/supervisor/disposable-git.mjs", import.meta.url).href
-);
+const { disposableGit, journalWitness } = await import(new URL("./fixtures/goalFramework/supervisor/disposable-git.mjs",
+  import.meta.url).href) as { disposableGit: (directory: string) => GitFixture; journalWitness: (hash: typeof digest) => {
+    verify: (value: unknown) => boolean;
+  } };
 
 afterEach(() => {
   for (const path of roots.splice(0)) rmSync(path, { force: true, recursive: true });
@@ -161,14 +163,52 @@ function fixture({ realResources = false, parserPython }: { realResources?: bool
   }
   const goalByTask = new Map<number, ReturnType<typeof goalAuthority>["goalKeys"]>();
 
-  function prepare({ issueNumber = 365, fence = 1, directory = firstDirectory, environment = "local",
-    target = branch, base = head, paths = [primary], issueBody = body(paths, target), taskRevision = 1,
-    upstream = true, resource = "shared-register", attempt = "initial", goalIssue = 362, reviewLimit = 2, expires = 40,
-    selectedProfile = profile, continuationSlots = attempt === "continuation" ? 1 : 0 }: PrepareOptions = {}) {
+  function preparationInputs({ issueNumber = 365, target = branch, base = head, paths = [primary],
+    issueBody = body(paths, target), taskRevision = 1, resource = "shared-register", goalIssue = 362, reviewLimit = 2,
+  }: PrepareOptions = {}) {
     const { goalKeys, goal, approval } = goalAuthority(goalIssue, reviewLimit);
     goalByTask.set(issueNumber, goalKeys);
     const issue = { repository, number: issueNumber, body: issueBody, kind: "issue", state: "open", evidence: ref("saved-issue") };
-    const bodyDigest = sha256(issueBody);
+    const routes = paths.map((_, index) => ({ entry: `route-${index}`, alternative: index === 0 ? "primary" : "fallback" }));
+    const boundaries = Object.fromEntries((censusBoundaries as string[]).map((name) =>
+      [name, { disposition: "covered", detail: "Independent synthetic witness" }]));
+    const census = { ...envelope("SCOPE_CENSUS_V1"), ...goalKeys, task_issue: issueNumber, baseline_sha: base,
+      risk: "cross-cutting", review: ref("scope-review"), unresolved: [], required_write_paths: paths, read_only_exclusions: [],
+      rows: routes.map((route, index) => ({ ...route, id: `row-${index}`, guard: "Fixture guard", path: paths[index],
+        symbol: "writer", ownership: "task_write", boundaries, positive_evidence: [ref("positive")], negative_evidence: [ref("negative")] })) };
+    const lineage_id = `lineage-${issueNumber}`;
+    return { issue, goal, approval, census, routes, lineage_id, resource, task_revision: taskRevision, audit: ref("full-audit"),
+      alignment: { approved_goal_revision: 1, goal_control_digest: goalKeys.goal_control_digest, decisions: [decision],
+        unresolved: [] as string[], risk: "cross-cutting", independentOutcome: true, coherent: true, relatedBatch: false } };
+  }
+
+  function reserve(input: ReturnType<typeof preparationInputs>,
+    { fence = 1, attempt = "initial", expires = 40, selectedProfile = profile,
+      continuationSlots = attempt === "continuation" ? 1 : 0 }: PrepareOptions = {}) {
+    const { issue, goal, lineage_id, task_revision } = input;
+    const goalKeys = { goal_issue: goal.goal_issue, goal_revision: goal.control_revision, goal_control_digest: goalControlDigest(goal) };
+    const reservation = { ...envelope("BUDGET_RESERVATION_V1", `reservation-${fence}`), ...goalKeys,
+      task_issue: issue.number, task_revision, lineage_id, limits, risk: "cross-cutting",
+      runtime_profile_ref: realResources ? recordRef(selectedProfile) : ref("profile"), estimated_ceiling: 2,
+      carries: { account_liability: 0, goal_liability: 0, task_liability: 0, model_calls: 0, continuations: 0 },
+      max_admitted_model_calls: 1, max_admitted_continuations: continuationSlots, expires_at: at(expires),
+      state: "reserved", native_run_id: null, terminal_ack: null };
+    let budget = recordRef(reservation);
+    if (resourceLedger) {
+      resourceLedger.reserve(`reserve-${fence}`, { reservation, operation: "implementation", attempt, pilot: true,
+        host: hostEstimate, fence: `writer-${fence}`, goal_key: `goal-${goal.goal_issue}`, parent: null });
+      budget = recordRef(resourceLedger.lookup(reservation.id).reservation);
+    } else {
+      resourceRuns.set(reservation.id, { reservation, status: "reserved" });
+    }
+    return { budget, attempt };
+  }
+
+  function prepare(options: PrepareOptions = {}) {
+    const { issueNumber = 365, fence = 1, directory = firstDirectory, environment = "local",
+      target = branch, base = head, upstream = true } = options;
+    const input = preparationInputs(options);
+    const bodyDigest = sha256(input.issue.body);
     const workspace = { ...envelope("WORKSPACE_RECEIPT_V1"), task_issue: issueNumber, directory, environment,
       origin_repository: repository, branch: target, issue_body_digest: bodyDigest, head_sha: base,
       upstream_head_sha: upstream ? base : null, state: "ready", receipt_owner: worker, ready_proof: ref("bootstrap-preflight"), writer_fence: fence };
@@ -178,32 +218,7 @@ function fixture({ realResources = false, parserPython }: { realResources?: bool
       upstream: upstream ? `origin/${target}` : null, upstream_head: upstream ? base : null, conflicted: false, dirty: false,
       receipt, paths: [] as string[] };
     const remote = { repository, branch: target, base, head: upstream ? base : null, evidence: ref("remote-head") };
-    const routes = paths.map((_, index) => ({ entry: `route-${index}`, alternative: index === 0 ? "primary" : "fallback" }));
-    const boundaries = Object.fromEntries((censusBoundaries as string[]).map((name) =>
-      [name, { disposition: "covered", detail: "Independent synthetic witness" }]));
-    const census = { ...envelope("SCOPE_CENSUS_V1"), ...goalKeys, task_issue: issueNumber, baseline_sha: base,
-      risk: "cross-cutting", review: ref("scope-review"), unresolved: [], required_write_paths: paths, read_only_exclusions: [],
-      rows: routes.map((route, index) => ({ ...route, id: `row-${index}`, guard: "Fixture guard", path: paths[index],
-        symbol: "writer", ownership: "task_write", boundaries, positive_evidence: [ref("positive")], negative_evidence: [ref("negative")] })) };
-    const lineage_id = `lineage-${issueNumber}`;
-    const reservation = { ...envelope("BUDGET_RESERVATION_V1", `reservation-${fence}`), ...goalKeys,
-      task_issue: issueNumber, task_revision: taskRevision, lineage_id, limits, risk: "cross-cutting",
-      runtime_profile_ref: realResources ? recordRef(selectedProfile) : ref("profile"), estimated_ceiling: 2,
-      carries: { account_liability: 0, goal_liability: 0, task_liability: 0, model_calls: 0, continuations: 0 },
-      max_admitted_model_calls: 1, max_admitted_continuations: continuationSlots, expires_at: at(expires),
-      state: "reserved", native_run_id: null, terminal_ack: null };
-    let budget = recordRef(reservation);
-    if (resourceLedger) {
-      resourceLedger.reserve(`reserve-${fence}`, { reservation, operation: "implementation", attempt, pilot: true,
-        host: hostEstimate, fence: `writer-${fence}`, goal_key: `goal-${goalIssue}`, parent: null });
-      budget = recordRef(resourceLedger.lookup(reservation.id).reservation);
-    } else {
-      resourceRuns.set(reservation.id, { reservation, status: "reserved" });
-    }
-    return { issue, goal, approval, workspace, observation, remote, census, routes, lineage_id, resource, attempt,
-      task_revision: taskRevision, budget, audit: ref("full-audit"),
-      alignment: { approved_goal_revision: 1, goal_control_digest: goalKeys.goal_control_digest, decisions: [decision],
-        unresolved: [], risk: "cross-cutting", independentOutcome: true, coherent: true, relatedBatch: false } };
+    return { ...input, workspace, observation, remote, ...reserve(input, options) };
   }
 
   function started(input: ReturnType<typeof prepare>) {
@@ -266,7 +281,7 @@ function fixture({ realResources = false, parserPython }: { realResources?: bool
     return { candidate, result };
   }
 
-  return { journal, ledger, resourceLedger, prepare, started, claimed, closeUnpublished, withContext, publication, event, submit, reopen, denied, otherDirectory,
+  return { journal, ledger, resourceLedger, preparationInputs, reserve, prepare, started, claimed, closeUnpublished, withContext, publication, event, submit, reopen, denied, otherDirectory,
     verify, boundaries, parseSaved, clock: () => now,
     fault: (phase: string | null) => { phaseFault = phase; }, time: (minutes: number) => { now = at(minutes); } };
 }
@@ -459,6 +474,7 @@ describe("GF-06 offline adapter composition", () => {
         resources.settle(`bill-${grantId}`, { ...terminal, billed: 1 });
         resources.settle(`late-bill-${grantId}`, { ...terminal, billed: 3 });
         expect(adapter.observe(run)).toMatchObject({ status: "terminal", billed: 3, liability: 3 });
+        return terminal.evidence;
       };
       return { adapter, host, live, runtime, request, run, markReady, start, stop,
         retainAcks() { dropStartAck = false; dropCheckpointAck = false; } };
@@ -530,21 +546,63 @@ describe("GF-06 offline adapter composition", () => {
     if (hookFixture) {
       const permit = { repository, issue: 365, fence: local.run.fence, native_run_id: `native-${first.budget.id}`,
         authorization_id: first.observation.receipt.authorization_id, paths: [primary], evidence: ref("actual-hook-writer") };
+      let revoked = false;
+      const guarded = (permissionCheck: () => HookResponse): HookResponse => {
+        if (revoked) return { decision: "barrier-deny" };
+        try {
+          f.ledger.assertWriter(permit);
+        } catch {
+          return { decision: "barrier-deny" };
+        }
+        return permissionCheck();
+      };
+      const mutation = (sessionId = worker, turnId = "hook-turn", path = primary) =>
+        guarded(() => hookFixture.mutation(sessionId, turnId, path));
       expect(() => f.ledger.assertWriter(permit)).toThrow();
-      expect(hookFixture.mutation("foreign-session", "hook-turn").hookSpecificOutput?.permissionDecision).toBe("deny");
-      expect(hookFixture.mutation(worker, "foreign-turn").hookSpecificOutput?.permissionDecision).toBe("deny");
+      expect(mutation()).toEqual({ decision: "barrier-deny" });
+      expect(hookFixture.mutationCalls()).toBe(0);
       expect(hookFixture.observe().receipt.status).toBe("prepared");
       local.start();
       expect(() => f.ledger.assertWriter({ ...permit, fence: permit.fence + 1 })).toThrow();
       expect(() => f.ledger.assertWriter({ ...permit, authorization_id: "foreign-authorization" })).toThrow();
       expect(f.ledger.assertWriter(permit)).toBe(true);
-      expect(hookFixture.mutation(worker, "hook-turn")).toEqual({});
+      expect(mutation("foreign-session").hookSpecificOutput?.permissionDecision).toBe("deny");
+      expect(mutation(worker, "foreign-turn").hookSpecificOutput?.permissionDecision).toBe("deny");
+      expect(mutation(worker, "hook-turn", sibling).hookSpecificOutput?.permissionDecision).toBe("deny");
+      hookFixture.setRemote(gitFixture!.run(gitFixture!.checkout, "commit-tree", `${first.workspace.head_sha}^{tree}`,
+        "-p", first.workspace.head_sha, "-m", "Independently moved published ref"));
+      expect(hookFixture.remoteProbe().status).toBe(0);
+      expect(mutation().hookSpecificOutput?.permissionDecision).toBe("deny");
+      expect(hookFixture.observe().receipt.status).toBe("prepared");
+      hookFixture.setRemote(null);
+      expect(hookFixture.remoteProbe()).toMatchObject({ status: 2, stdout: "" });
+      expect(hookFixture.remoteProbe("unapproved").status).toBe(126);
+      const admitted = mutation();
+      expect(admitted, JSON.stringify(admitted).slice(0, 1024)).toEqual({});
       const active = hookFixture.observe().receipt;
       expect(active).toMatchObject({ status: "active", owner: worker, authorization_id: permit.authorization_id });
       // Repeated hook permission checks preserve the same receipt and writer.
-      expect(hookFixture.mutation(worker, "hook-turn")).toEqual({});
+      expect(mutation()).toEqual({});
       expect(hookFixture.observe().receipt).toEqual(active);
-      local.stop();
+      expect(f.ledger.inspect(repository, 365).fence).toBe(permit.fence);
+      const permission = guarded(() => hookFixture.permission(worker));
+      expect(permission.hookSpecificOutput?.decision?.behavior).toBe("allow");
+      expect(guarded(() => hookFixture.permission(worker))).toEqual(permission);
+      expect(guarded(() => hookFixture.permission("foreign-session")).hookSpecificOutput?.decision?.behavior).toBe("deny");
+      expect(hookFixture.observe().receipt).toEqual(active);
+      revoked = true;
+      expect(mutation()).toEqual({ decision: "barrier-deny" });
+      expect(hookFixture.stop()).toEqual({ continue: true });
+      const closed = hookFixture.observe();
+      expect(closed.receipt).toMatchObject({ status: "closed", owner: worker, authorization_id: permit.authorization_id });
+      expect(mutation()).toEqual({ decision: "barrier-deny" });
+      const terminal = local.stop();
+      f.boundaries.set("terminal_no_publication_or_live_writer", ({ checkpoint, evidence }) =>
+        checkpoint.receipt_digest === closed.receipt.digest && digest(evidence) === digest(terminal));
+      const stop = f.withContext({ fence: permit.fence, workspace: first.workspace, observation: closed,
+        remote: first.remote, terminal });
+      expect(f.submit("acknowledge-stop", "actual-hook-stop", 2, stop, 365, first.workspace.head_sha).phase).toBe("closed");
+      expect(() => f.ledger.assertWriter(permit)).toThrow();
       return;
     }
     local.start();
@@ -624,52 +682,180 @@ describe("GF-06 offline adapter composition", () => {
 
   it("composes actual bootstrap and hook preparation with canonical grant and writer admission", () => {
     exerciseComposition(profile, false, true);
-  });
+  }, 20_000);
+
+  it("resumes an actual closed same-head and behind workspace under fresh stopped-owner authority", () => {
+    const git = disposableGit(temporary());
+    const f = fixture({ parserPython: git.python });
+    const initial = offlineBootstrap(git, f);
+    const newResult = initial.supervisor.prepare(initial.envelope);
+    expect(newResult.status).toBe("git-ready");
+    const { target, parent, journalOptions } = initial;
+    const issueFile = join(parent, "prior-issue.md");
+    writeFileSync(issueFile, initial.input.issue.body);
+    const hook = actualHook(git, target, issueFile);
+    expect(hook("UserPromptSubmit", worker, "prior-turn", { prompt: "PFM_TASK_ISSUE: 365" })
+      .hookSpecificOutput?.additionalContext).toContain("authorization accepted");
+    expect(hook("Stop", worker, "prior-turn", { last_assistant_message: "TASK_STATUS: BLOCKED\nBLOCKER: disposable witness" }))
+      .toEqual({ continue: true });
+    const { receipt: prior } = initial.observe();
+    expect(prior.status).toBe("closed");
+    const pointerPath = join(target, ".codex", "runtime", "latest-task.json");
+    const pointerBytes = readFileSync(pointerPath);
+    const statePath = join(target, ".codex", "runtime", (JSON.parse(pointerBytes.toString()) as { path: string }).path);
+    const stateBytes = readFileSync(statePath);
+    const refName = `refs/heads/${branch}`;
+    git.run(target, "push", git.remote, `HEAD:${refName}`);
+    const sameHead = offlineBootstrap(git, f, undefined, { target, published: git.main, prior }, journalOptions);
+    f.denied.add("bootstrap_stopped_published_owner");
+    expect(() => sameHead.supervisor.prepare(sameHead.envelope)).toThrow("bootstrap_stopped_published_owner");
+    expect(sameHead.effects()).toBe(0);
+    f.denied.delete("bootstrap_stopped_published_owner");
+    const result = sameHead.supervisor.prepare(sameHead.envelope);
+    expect(result.status).toBe("git-ready");
+    expect(sameHead.reopen().prepare(sameHead.envelope)).toEqual(result);
+    expect(sameHead.effects()).toBe(1);
+    expect(sameHead.observe()).toMatchObject({ receipt: prior, upstream: `origin/${branch}`, upstream_head: git.main });
+    expect(supervisedHandoff(sameHead.envelope, sameHead.reopen(), {})).toMatchObject({ status: "PREPARATION_ONLY", head: git.main });
+
+    const published = git.run(git.checkout, "commit-tree", `${git.main}^{tree}`, "-p", git.main, "-m", "Published descendant");
+    git.run(git.checkout, "push", git.remote, `${published}:${refName}`);
+    expect(() => supervisedHandoff(sameHead.envelope, sameHead.reopen(), {})).toThrow("BOOTSTRAP_GIT_IDENTITY");
+    const behind = offlineBootstrap(git, f, undefined, { target, published, prior }, journalOptions);
+    const untracked = join(target, "untracked.txt");
+    writeFileSync(untracked, "dirty");
+    expect(() => behind.supervisor.prepare(behind.envelope)).toThrow("BOOTSTRAP_PREFLIGHT");
+    rmSync(untracked);
+    git.run(git.checkout, "worktree", "lock", target);
+    expect(() => behind.supervisor.prepare(behind.envelope)).toThrow("BOOTSTRAP_TARGET_OWNERSHIP");
+    git.run(git.checkout, "worktree", "unlock", target);
+    expect(behind.effects()).toBe(0);
+    const advanced = behind.supervisor.prepare(behind.envelope);
+    expect(advanced.status).toBe("git-ready");
+    expect(behind.reopen().prepare(behind.envelope)).toEqual(advanced);
+    expect(behind.effects()).toBe(1);
+    expect(behind.observe()).toMatchObject({ receipt: prior, head: published, upstream_head: published });
+    expect(readFileSync(pointerPath)).toEqual(pointerBytes);
+    expect(readFileSync(statePath)).toEqual(stateBytes);
+    expect(supervisedHandoff(behind.envelope, behind.reopen(), {})).toMatchObject({ status: "PREPARATION_ONLY", head: published });
+    git.run(git.checkout, "config", "user.name", "Changed fixture operator");
+    expect(() => supervisedHandoff(behind.envelope, behind.reopen(), {})).toThrow("PREPARATION_GIT_READY_CHANGED");
+  }, 20_000);
+
+  it("requires prior stopped-owner evidence for an absent resume target", () => {
+    const git = disposableGit(temporary());
+    const f = fixture({ parserPython: git.python });
+    git.run(git.checkout, "push", git.remote, `HEAD:refs/heads/${branch}`);
+    const target = join(temporary(), "fresh-resume");
+    const missing = offlineBootstrap(git, f, undefined, { target, published: git.main });
+    expect(() => missing.supervisor.prepare(missing.envelope)).toThrow("BOOTSTRAP_PRIOR_OWNER");
+    expect(missing.effects()).toBe(0);
+    const prior = { owner: "stopped-principal", authorization_id: "previous-task" };
+    const confirmed = offlineBootstrap(git, f, undefined, { target, published: git.main, prior }, missing.journalOptions);
+    const result = confirmed.supervisor.prepare(confirmed.envelope);
+    expect(result.status).toBe("git-ready");
+    expect(confirmed.reopen().prepare(confirmed.envelope)).toEqual(result);
+    expect(confirmed.observe()).toMatchObject({ head: git.main, upstream: `origin/${branch}`, receipt: { status: "absent" } });
+    expect(supervisedHandoff(confirmed.envelope, confirmed.reopen(), {})).toMatchObject({ status: "PREPARATION_ONLY", directory: target });
+    expect(confirmed.effects()).toBe(1);
+  }, 10_000);
 
   it.each(["lost-ack", "timeout", "missing-terminal", "partial-output", "forged-ready", "changed-issue"] as const)(
     "retains the one-shot intent and refuses handoff after %s",
-    (failure) => {
+    async (failure) => {
       const git = disposableGit(temporary());
       const f = fixture({ parserPython: git.python });
-      const { supervisor, envelope, reopen, effects } = offlineBootstrap(git, f, failure);
+      const { supervisor, envelope, reopen, effects, timeoutWitness } = offlineBootstrap(git, f, failure);
       const unresolved = supervisor.prepare(envelope);
       expect(unresolved).toMatchObject({ status: "unresolved", evidence: null });
       expect(reopen().prepare(envelope)).toEqual(unresolved);
-      expect(reopen().reconcile(envelope)).toEqual(unresolved);
+      expect(await reopen().reconcile(envelope)).toEqual(unresolved);
       expect(() => supervisedHandoff(envelope, reopen(), { verify: f.verify })).toThrow("PREPARATION_GIT_NOT_READY");
       expect(effects()).toBe(1);
+      if (failure === "timeout") expect(timeoutWitness()).toMatchObject({
+        status: null, signal: "SIGKILL", error: { code: "ETIMEDOUT" },
+      });
     },
   );
+
+  it("times out a pending reconciliation read, limits its horizon, and accepts separately authenticated late evidence", async () => {
+    const git = disposableGit(temporary());
+    const f = fixture({ parserPython: git.python });
+    const offline = offlineBootstrap(git, f, "timeout");
+    const { supervisor, envelope, reopen, effects } = offline;
+    const unresolved = supervisor.prepare(envelope);
+    const second = offlineBootstrap(git, f, undefined, undefined, offline.journalOptions);
+    expect(() => second.supervisor.prepare(second.envelope)).toThrow("PREPARATION_CAPACITY_UNAVAILABLE");
+    expect(second.effects()).toBe(0);
+    let reads = 0;
+    let aborted = false;
+    offline.reconcileUsing(({ signal }) => {
+      reads++;
+      if (reads > 1) return undefined;
+      signal.addEventListener("abort", () => { aborted = true; }, { once: true });
+      return new Promise(() => {});
+    });
+    expect(await supervisor.reconcile(envelope)).toEqual(unresolved);
+    expect(aborted).toBe(true);
+    for (let index = 0; index < 5; index++) expect(await reopen().reconcile(envelope)).toEqual(unresolved);
+    expect(reads).toBe(4);
+    f.time(6);
+    expect(await reopen().reconcile(envelope)).toEqual(unresolved);
+    expect(reads).toBe(4);
+    const evidence = ref("independent-disposable-terminal");
+    f.boundaries.set("preparation_capacity_release", (value) => value.status === "cleaned"
+      && digest(value.evidence) === digest(evidence) && value.intent.effect_id === unresolved.effect_id);
+    await expect(reopen().reconcile(envelope, { status: "cleaned", evidence: ref("forged-late-outcome") }))
+      .rejects.toThrow("preparation_capacity_release");
+    await expect(reopen().reconcile(envelope, { status: "cleaned", evidence })).resolves.toMatchObject({ status: "cleaned", evidence });
+    expect(effects()).toBe(1);
+  }, 10_000);
 });
 
-type HookResponse = { decision?: string; reason?: string; hookSpecificOutput?: { additionalContext?: string; permissionDecision?: string } };
+type HookResponse = { continue?: boolean; decision?: string; reason?: string;
+  hookSpecificOutput?: { additionalContext?: string; permissionDecision?: string; permissionDecisionReason?: string;
+    decision?: { behavior: string } } };
 
 type BootstrapFault = "lost-ack" | "timeout" | "missing-terminal" | "partial-output" | "forged-ready" | "changed-issue";
 
-function offlineBootstrap(git: GitFixture, f: ReturnType<typeof fixture>, fault?: BootstrapFault) {
+function offlineBootstrap(git: GitFixture, f: ReturnType<typeof fixture>, fault?: BootstrapFault,
+  resume?: { target: string; published: string; prior?: { owner: string; authorization_id: string } },
+  journalOptions?: { directory: string; key: Buffer; hostId: string; verify: typeof f.verify;
+    currentState: ReturnType<typeof journalWitness>; withLock: <T>(directory: string, action: (proof: ReturnType<typeof ref>) => T) => T }) {
   const parent = temporary();
-  const target = join(parent, "approved-worktree");
-  const input = f.prepare({ base: git.main, directory: target, upstream: false });
+  const target = resume?.target ?? join(parent, "approved-worktree");
+  const base = resume?.published ?? git.main;
+  const input = f.preparationInputs({ base });
   const script = realpathSync(new URL("../tools/codex/bootstrap-pr.sh", import.meta.url));
   const allowance = { schema: "PFM_PREPARATION_HOST_ALLOWANCE_V1", id: "fixture-host-allowance",
-    repository, host_id: "supervised-host", environment: input.workspace.environment, resource: input.resource,
-    nonce: digest("one-shot"), expires_at: at(5), cleanup_deadline: at(6), execution_ms: 5000,
+    repository, host_id: "supervised-host", environment: "local", resource: input.resource,
+    nonce: digest([target, base, resume ? "resume" : "new"]), expires_at: at(5), cleanup_deadline: at(6), execution_ms: 5000,
     cleanup_ms: 1000, cpu_millicores: 100, memory_mib: 128, processes: 8, disk_mib: 32 };
-  const request = { schema: "PFM_PREPARATION_REQUEST_V1", id: "fixture-preparation",
+  const request = { schema: "PFM_PREPARATION_REQUEST_V1", id: `fixture-${allowance.nonce.slice(0, 24)}`,
     goal_issue: input.goal.goal_issue, goal_revision: input.goal.control_revision, goal_control_digest: goalControlDigest(input.goal),
     repository, task_issue: input.issue.number, task_revision: input.task_revision, lineage_id: input.lineage_id,
-    issue_body_digest: sha256(input.issue.body), branch, mode: "new", expected_main: git.main, expected_head: null,
-    census: recordRef(input.census), resource: input.resource, worker, host_id: allowance.host_id,
+    issue_body_digest: sha256(input.issue.body), branch, mode: resume ? "resume" : "new", expected_main: git.main,
+    expected_head: resume?.published ?? null,
+    census: recordRef(input.census), resource: input.resource, worker: "approved-worker-principal", host_id: allowance.host_id,
     environment: allowance.environment, checkout: git.checkout, target, parser_revision: parserRevision,
     parser_digest: sha256(root), bootstrap_revision: git.main, bootstrap_digest: sha256(readFileSync(script)),
     nonce: allowance.nonce, host_allowance: recordRef(allowance), cleanup_deadline: allowance.cleanup_deadline, expires_at: allowance.expires_at };
   const envelope = { request, approval: { schema: "PFM_PREPARATION_APPROVAL_V1", proof: ref("fixture-independent-pm"),
     request_digest: digest(request) } };
   let effects = 0;
+  let timedOut: SpawnSyncReturns<Buffer> | undefined;
+  const observations = new Map<string, string>();
+  f.boundaries.set("supervised_git_observation", ({ request: current, phase, snapshot }) =>
+    digest(current) === envelope.approval.request_digest && observations.get(phase) === digest(snapshot));
   f.boundaries.set("pm_exact_preparation_approval", (proof: { request: unknown; approval: unknown }) =>
     digest(proof.request) === envelope.approval.request_digest && digest(proof.approval) === digest(envelope.approval));
   const observe = () => inspectWorkspace({ directory: target, git: git.realGit, environment: request.environment,
-    repository, base: git.main, verify: f.verify });
+    repository, base, verify: f.verify });
+  const priorOwner = resume?.prior && { repository, task_issue: request.task_issue, lineage_id: request.lineage_id,
+    branch, published_head: resume.published, resource: request.resource, terminal: ref("prior-terminal"),
+    owner: resume.prior.owner, authorization_id: resume.prior.authorization_id };
+  f.boundaries.set("bootstrap_stopped_published_owner", ({ priorOwner: observed }) =>
+    priorOwner !== undefined && digest(observed) === digest(priorOwner));
   const bootstrap = createBootstrapHost({ verify: f.verify, clock: f.clock, operator: {
     observeGit(_request: typeof request, phase: string) {
       const readRef = (refName: string) => {
@@ -678,11 +864,14 @@ function offlineBootstrap(git: GitFixture, f: ReturnType<typeof fixture>, fault?
       };
       const local = git.read(git.checkout, "rev-parse", "--verify", `refs/heads/${branch}`);
       const registered = git.run(git.checkout, "worktree", "list", "--porcelain").split("\n").includes(`worktree ${target}`);
-      return { repository, main: readRef("refs/heads/main"), remote_head: readRef(`refs/heads/${branch}`),
+      const snapshot = { repository, main: readRef("refs/heads/main"), remote_head: readRef(`refs/heads/${branch}`),
         branch, target, checkout: git.checkout, environment: allowance.environment, host_id: allowance.host_id,
         git: git.git, local_head: local.status === 0 ? local.stdout.trim() : null, owner_path: registered ? target : null,
         registered_target: registered, evidence: ref(`fixture-git-${phase}`) };
+      observations.set(phase, digest(snapshot));
+      return snapshot;
     },
+    readPriorOwner: () => priorOwner,
     readMergedBootstrap() {
       return { path: script, git: git.git, bash: git.bash, python: git.python, evidence: ref("fixture-pinned-tools") };
     },
@@ -694,38 +883,72 @@ function offlineBootstrap(git: GitFixture, f: ReturnType<typeof fixture>, fault?
           `PR_TASK_RECEIPT status=absent path=${target}`, `OPEN THIS EXACT WORKTREE IN CODEX: ${target}`, "",
         ].join("\n")), stderr: Buffer.alloc(0), exit_code: 0, timed_out: false, terminal: ref("fixture-terminal") };
       }
-      const result = git.invoke(invocation, bytes);
+      const result = fault === "timeout"
+        ? spawnSync(git.python, ["-I", "-B", "-c", "import time; time.sleep(30)"], {
+          timeout: 100, maxBuffer: invocation.output_limit, killSignal: "SIGKILL",
+        })
+        : git.invoke(invocation, bytes);
+      if (fault === "timeout") {
+        timedOut = result;
+      }
       if (fault === "lost-ack") throw new Error("fixture lost response");
       if (fault === "changed-issue") live = { ...live, issue: { ...live.issue, body: live.issue.body + "\nChanged" } };
       return { stdout: fault === "partial-output" ? Buffer.from("PR_WORKTREE_READY") : result.stdout,
-        stderr: result.stderr, exit_code: result.status, timed_out: fault === "timeout" || result.error !== undefined,
+        stderr: result.stderr, exit_code: result.status, timed_out: result.error !== undefined,
         terminal: result.status === 0 && fault !== "missing-terminal" ? ref("fixture-terminal") : null };
     },
   } });
   type Locked<T> = (proof: ReturnType<typeof ref>) => T;
-  const options = { directory: temporary(), key: Buffer.alloc(32, 1), hostId: request.host_id,
-    verify: f.verify, withLock: <T>(_directory: string, action: Locked<T>) => action(ref("fixture-lock")) };
-  const journal = openPreparationJournal({ ...options, initialize: true });
+  const currentState = journalOptions?.currentState ?? journalWitness(digest);
+  f.boundaries.set("preparation_journal_current", currentState.verify);
+  const options = journalOptions ?? { directory: temporary(), key: Buffer.alloc(32, 1), hostId: request.host_id,
+    verify: f.verify, currentState, withLock: <T>(_directory: string, action: Locked<T>) => action(ref("fixture-lock")) };
+  const journal = openPreparationJournal({ ...options, initialize: journalOptions === undefined });
   const baseline = { issue: input.issue, goal: input.goal, goalApproval: input.approval, alignment: input.alignment,
     routes: input.routes, census: input.census, allowance, parser: { source: root, revision: parserRevision, python: git.python },
     task: { repository, task_issue: input.issue.number, task_revision: input.task_revision, lineage_id: input.lineage_id } };
   let live = baseline;
+  const readyRecords = new Map<string, unknown>();
+  type ReconcileRead = (limits: { signal: AbortSignal; timeout_ms: number; max_observations: number }) => unknown;
+  let readReconciliation: ReconcileRead = () => undefined;
   const host = { verify: f.verify, clock: f.clock, consumedNonces: new Set<string>(),
     withGate: <T>(_request: typeof request, operation: string, action: Locked<T>) => action(ref(`gate-${operation}`)),
     loadLive: () => live,
-    recordGitReady: (proof: unknown) => ({ id: "fixture-preflight", digest: digest(proof) }),
-    reconcileReadOnly: () => undefined,
+    recordGitReady(proof: unknown) {
+      const evidence = { id: "fixture-preflight", digest: digest(proof) };
+      readyRecords.set(evidence.digest, proof);
+      return evidence;
+    },
+    loadGitReady: (evidence: ReturnType<typeof ref>) => readyRecords.get(evidence.digest),
+    reconcileReadOnly: (_intent: unknown, _gate: unknown, limits: Parameters<ReconcileRead>[0]) => readReconciliation(limits),
   };
+  f.boundaries.set("preparation_git_ready_current", ({ intent, readiness, observed, request: current }) =>
+    digest(current) === envelope.approval.request_digest && readyRecords.get(intent.evidence.digest) === readiness
+    && digest(readiness) === intent.evidence.digest && digest(observed.workspace) === digest(observe()));
+  f.boundaries.set("preparation_git_ready_evidence", ({ readiness, evidence }) =>
+    readyRecords.get(evidence.digest) === readiness && digest(readiness) === evidence.digest);
   const supervisor = createSupervisedPreparation({ journal, bootstrap, host });
   return { supervisor, reopen: () => createSupervisedPreparation({ journal: openPreparationJournal(options), bootstrap, host }),
     baseline, update: (changes: Partial<typeof baseline>) => { live = { ...baseline, ...changes }; },
-    envelope, effects: () => effects, observe, input, target, parent };
+    envelope, effects: () => effects, observe, input, target, parent, journalOptions: options,
+    timeoutWitness: () => timedOut,
+    reconcileUsing: (read: ReconcileRead) => { readReconciliation = read; } };
+}
+
+function actualHook(git: GitFixture, target: string, issue: string) {
+  const policy = realpathSync(new URL("../.codex/hooks/pfm-policy.py", import.meta.url));
+  return (hook_event_name: string, session_id: string, turn_id: string, fields: Record<string, unknown>): HookResponse => {
+    const stdout = execFileSync(git.python, ["-I", "-B", policy], {
+      cwd: target, env: { ...git.hookEnv, PFM_POLICY_TEST_ISSUE_BODY_FILE: issue }, encoding: "utf8", timeout: 5000,
+      input: JSON.stringify({ hook_event_name, session_id, turn_id, cwd: target, ...fields }),
+    });
+    return JSON.parse(stdout) as HookResponse;
+  };
 }
 
 function prepareWithActualHook(git: GitFixture, f: ReturnType<typeof fixture>) {
   const { supervisor, baseline, update, envelope, effects, observe, input, target, parent } = offlineBootstrap(git, f);
   const { request } = envelope;
-  const policy = realpathSync(new URL("../.codex/hooks/pfm-policy.py", import.meta.url));
   const reject = (changes: Parameters<typeof update>[0], reason: string) => {
     update(changes);
     expect(() => supervisor.prepare(envelope)).toThrow(reason);
@@ -745,7 +968,8 @@ function prepareWithActualHook(git: GitFixture, f: ReturnType<typeof fixture>) {
   reject({ census: { ...baseline.census, id: "foreign-census" } }, "PREPARATION_TASK");
   reject({ allowance: { ...baseline.allowance, processes: 0 } }, "PREPARATION_ALLOWANCE");
   for (const boundary of ["pm_exact_preparation_approval", "preparation_live_control_and_host", "task_dependencies_satisfied",
-    "preparation_admissions_open", "preparation_host_allowance", "preparation_global_gate"]) {
+    "preparation_admissions_open", "preparation_host_allowance", "preparation_global_gate", "bootstrap_readonly_host_isolation",
+    "merged_supervised_bootstrap"]) {
     f.denied.add(boundary);
     expect(() => supervisor.prepare(envelope)).toThrow(boundary);
     f.denied.delete(boundary);
@@ -759,45 +983,108 @@ function prepareWithActualHook(git: GitFixture, f: ReturnType<typeof fixture>) {
   expect(supervisor.prepare(envelope)).toEqual(readiness);
   expect(effects()).toBe(1);
   expect(observe().receipt.status).toBe("absent");
+  if (f.resourceLedger) expect(() => f.resourceLedger.lookup("reservation-1")).toThrow("UNKNOWN_RESERVATION");
+  expect(f.ledger.inspect(repository, request.task_issue)).toBeNull();
   const handoff = supervisedHandoff(envelope, supervisor, { verify: f.verify });
-  expect(handoff).toMatchObject({ status: "PREPARATION_ONLY", native: "HANDOFF_UNVERIFIED", session: null, directory: target,
+  expect(handoff).toMatchObject({ status: "PREPARATION_ONLY", native: "HANDOFF_UNVERIFIED", trust: "unknown", session: null, directory: target,
     prompt: "PFM_TASK_ISSUE: 365" });
+  const config = readFileSync(new URL("../.codex/config.toml", import.meta.url));
+  const inventoryEvidence = { id: "fixture-hook-inventory", digest: digest([sha256(root), sha256(config), target]) };
+  const inventory = { status: "observed", trust: "observed", evidence: inventoryEvidence };
+  const pending = { ...inventory, trust: "pending" };
+  f.boundaries.set("handoff_readonly_inventory", ({ request: current, inventory: observed }) =>
+    digest(current) === envelope.approval.request_digest && [inventory, pending,
+      { status: "unavailable", trust: "unknown", evidence: ref("no-local-handshake") }]
+      .some((known) => digest(known) === digest(observed)));
+  expect(supervisedHandoff(envelope, supervisor, { inventory: () => pending })).toMatchObject({
+    status: "PREPARATION_ONLY", native: "HANDOFF_APPROVAL_REQUIRED", trust: "pending", session: null,
+  });
+  expect(supervisedHandoff(envelope, supervisor, { inventory: () => inventory })).toMatchObject({
+    status: "PREPARATION_ONLY", native: "HANDOFF_UNVERIFIED", trust: "observed", session: null,
+  });
   expect(supervisedHandoff(envelope, supervisor, { verify: f.verify, inventory: () => ({
-    status: "unavailable", evidence: ref("no-local-handshake"),
+    status: "unavailable", trust: "unknown", evidence: ref("no-local-handshake"),
   }) }).native).toBe("HANDOFF_UNAVAILABLE");
   update({ task: { ...baseline.task, lineage_id: "revised-lineage" } });
   expect(() => supervisedHandoff(envelope, supervisor, { verify: f.verify })).toThrow("PREPARATION_TASK");
   update({});
-  const host = { verify: f.verify, git: git.realGit, now: f.clock(), consumedNonces: new Set<string>(), parseSaved: f.parseSaved };
-  const workspaceInput = { ...input, workspace: { ...input.workspace, ready_proof: handoff.git_ready } };
+  const host = { inventory: () => inventory };
   const session = { session: worker, turn: "hook-turn", barrier: ref("fixture-write-barrier") };
-  let barrierAvailable = false;
-  f.boundaries.set("handoff_live_nonwriting_barrier", () => barrierAvailable);
-  expect(() => reviewHookPreparedForAdmission(envelope, handoff, session, workspaceInput, host)).toThrow("handoff_live_nonwriting_barrier");
-  barrierAvailable = true;
-  expect(() => reviewHookPreparedForAdmission(envelope, handoff, session, workspaceInput, host)).toThrow("HANDOFF_HOOK_PREPARED");
+  expect(() => reviewHookPreparedForAdmission(envelope, supervisor, handoff, session, input, host)).toThrow("HANDOFF_HOOK_PREPARED");
   const issue = join(parent, "saved-issue.md");
   writeFileSync(issue, input.issue.body);
-  function hook(hook_event_name: string, session_id: string, turn_id: string, fields: Record<string, unknown>): HookResponse {
-    const stdout = execFileSync(git.python, ["-I", "-B", policy], {
-      cwd: target, env: { ...git.env, PFM_POLICY_TEST_ISSUE_BODY_FILE: issue }, encoding: "utf8", timeout: 5000,
-      input: JSON.stringify({ hook_event_name, session_id, turn_id, cwd: target, ...fields }),
-    });
-    return JSON.parse(stdout) as HookResponse;
-  }
+  const hook = actualHook(git, target, issue);
+  const startedSession = hook("SessionStart", worker, "hook-turn", {});
+  expect(startedSession.hookSpecificOutput?.additionalContext).toContain(
+    `root=${target} branch=${branch} head=${git.main} dirty=no linked_worktree=yes`);
   const submitted = hook("UserPromptSubmit", worker, "hook-turn", { prompt: handoff.prompt });
   expect(submitted.hookSpecificOutput?.additionalContext).toContain("authorization accepted");
-  const observation: typeof input.observation = observe();
-  const prepared = { ...workspaceInput, observation };
+  const observation: ReturnType<typeof f.prepare>["observation"] = observe();
+  const observedHook = digest([startedSession, submitted, observation.receipt]);
+  let configDigest = inventoryEvidence.digest;
+  f.boundaries.set("handoff_actual_hook_configuration", (value) => value.inventory.evidence.digest === configDigest);
+  f.boundaries.set("handoff_actual_hook_preparation", (value) => observedHook === digest([startedSession, submitted, value.receipt])
+    && value.identity.head_sha === git.main);
+  f.boundaries.set("handoff_worker_session", (value) => value.worker === request.worker && value.session.session === worker
+    && value.session.turn === session.turn && value.workspace.receipt_owner === worker && value.workspace.writer_fence === 1
+    && digest(value.receipt) === digest(observation.receipt));
+  let barrierAvailable = false;
+  f.boundaries.set("handoff_live_nonwriting_barrier", (value) =>
+    barrierAvailable && digest(value.session.barrier) === digest(session.barrier));
+  const workspace = { schema: "WORKSPACE_RECEIPT_V1", repository, id: "workspace_receipt_v1", revision: 1,
+    created_at: at(0), producer, references: [], task_issue: request.task_issue, directory: target,
+    environment: observation.environment, origin_repository: repository, branch, issue_body_digest: request.issue_body_digest,
+    head_sha: observation.head, upstream_head_sha: observation.upstream_head, state: "ready", receipt_owner: observation.receipt.owner,
+    ready_proof: handoff.git_ready, writer_fence: 1 };
+  const remote = { repository, branch, base: git.main, head: null, evidence: ref("fixture-git-prepared") };
+  const prepared = { ...input, workspace, observation, remote };
+  const reviewWith = (candidate = handoff, identity = session, supplied = prepared) =>
+    reviewHookPreparedForAdmission(envelope, supervisor, candidate, identity, supplied, host);
+  expect(() => reviewWith()).toThrow("handoff_live_nonwriting_barrier");
+  barrierAvailable = true;
+  configDigest = digest("mismatched-hook-config");
+  expect(() => reviewWith()).toThrow("handoff_actual_hook_configuration");
+  configDigest = inventoryEvidence.digest;
+  expect(() => reviewHookPreparedForAdmission(envelope, supervisor, handoff, session, prepared, { inventory: () => pending }))
+    .toThrow("HANDOFF_NATIVE_TRUST");
   for (const invalid of [{ ...session, turn: "wrong-turn" }, { ...session, session: "wrong-session" }]) {
-    expect(() => reviewHookPreparedForAdmission(envelope, handoff, invalid, prepared, host)).toThrow(/HANDOFF_HOOK_/);
+    expect(() => reviewWith(handoff, invalid)).toThrow(/HANDOFF_HOOK_/);
   }
-  const review = reviewHookPreparedForAdmission(envelope, handoff, session, prepared, host);
+  const forged = ref("copied-substitute-readiness");
+  expect(() => reviewWith({ ...handoff, git_ready: forged }, session,
+    { ...prepared, workspace: { ...workspace, ready_proof: forged } })).toThrow("HANDOFF_IDENTITY");
+  expect(() => reviewWith(handoff, session, { ...prepared, observation: { ...observation, dirty: true } }))
+    .toThrow("HANDOFF_OBSERVATION_CHANGED");
+  expect(() => reviewWith(handoff, session, { ...prepared, workspace: { ...workspace, writer_fence: 2 } }))
+    .toThrow("handoff_worker_session");
+  expect(() => reviewWith(handoff, session, { ...prepared, workspace: { ...workspace, receipt_owner: "foreign-owner" } }))
+    .toThrow("handoff_worker_session");
+  f.denied.add("preparation_admissions_open");
+  expect(() => reviewWith()).toThrow("preparation_admissions_open");
+  f.denied.delete("preparation_admissions_open");
+  const review = reviewWith();
   expect(review).toMatchObject({ status: "HOOK_PREPARED", authorization_id: observation.receipt.authorization_id,
     receipt_digest: observation.receipt.digest, session: worker, turn: "hook-turn" });
-  return { input: prepared, observe, mutation: (sessionId: string, turnId: string) =>
-    hook("PreToolUse", sessionId, turnId, { tool_name: "apply_patch",
-      tool_input: { patch: "*** Begin Patch\n*** Update File: src/primary.ts\n@@\n-original\n+changed\n*** End Patch" } }) };
+  let mutationCalls = 0;
+  return { input: { ...prepared, observation: review.observation, remote: review.remote, ...f.reserve(input) }, observe,
+    mutationCalls: () => mutationCalls,
+    mutation(sessionId: string, turnId: string, path: string) {
+      mutationCalls++;
+      return hook("PreToolUse", sessionId, turnId, { tool_name: "apply_patch",
+        tool_input: { command: `*** Begin Patch\n*** Update File: ${path}\n@@\n-original\n+changed\n*** End Patch` } });
+    },
+    permission: (sessionId: string) => hook("PermissionRequest", sessionId, "hook-turn",
+      { tool_name: "Bash", tool_input: { command: `git push origin ${branch}` } }),
+    setRemote(sha: string | null) {
+      const gitRef = `refs/heads/${branch}`;
+      if (sha === null) git.run(git.checkout, "--git-dir", git.remote, "update-ref", "-d", gitRef);
+      else git.run(git.checkout, "push", git.remote, `${sha}:${gitRef}`);
+    },
+    remoteProbe: (remote = "origin") => spawnSync("git", ["ls-remote", "--exit-code", remote, `refs/heads/${branch}`], {
+      cwd: target, env: git.hookEnv, encoding: "utf8", timeout: 5000,
+    }),
+    stop: () => hook("Stop", worker, "hook-turn", { last_assistant_message: "TASK_STATUS: BLOCKED\nBLOCKER: disposable witness" }),
+  };
 }
 
 describe("GF-V03, GF-V04, GF-V07 and GF-V23: supervised lifecycle", () => {

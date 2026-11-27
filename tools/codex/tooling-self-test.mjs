@@ -2369,11 +2369,30 @@ const remoteFeatureHead = mustRun("git", ["-C", targetTwo, "rev-parse", "HEAD"])
   fs.writeFileSync(path.join(target, "untracked.txt"), "dirty");
   denied(strict("resume", published, receipt), "dirty checkpoint refuses");
   fs.unlinkSync(path.join(target, "untracked.txt"));
+  const drift = path.join(target, "changed-during-fetch.txt");
+  denied(fixture.strict(bytes, "resume", branch, target, published, receipt, main, drift),
+    "dirt created during fetch refuses before branch movement");
+  assert(fs.existsSync(drift) && git(target, "rev-parse", "HEAD") === main
+    && git(checkout, "rev-parse", `refs/remotes/origin/${branch}`) === published
+    && createHash("sha256").update(fs.readFileSync(receiptPath)).digest("hex") === receipt,
+  "fetch was observed but the target branch and receipt were preserved");
+  fs.unlinkSync(drift);
   ready(strict("resume", published, receipt), "resume", published, "closed");
   assert(createHash("sha256").update(fs.readFileSync(receiptPath)).digest("hex") === receipt, "fast-forward retains prior receipt");
+  const sibling = git(checkout, "commit-tree", `${main}^{tree}`, "-p", main, "-m", "unrelated published descendant");
+  git(checkout, "push", remote, `+${sibling}:${branchRef}`);
+  denied(strict("resume", sibling, receipt), "divergent local branch refuses");
+  assert(git(target, "rev-parse", "HEAD") === published, "divergent refusal preserves branch");
+  git(checkout, "push", remote, `+${published}:${branchRef}`);
+  git(target, "commit", "--allow-empty", "-m", "unpublished fixture commit");
+  const unpublished = git(target, "rev-parse", "HEAD");
+  denied(strict("resume", published, receipt), "locally ahead branch refuses");
+  assert(git(target, "rev-parse", "HEAD") === unpublished
+    && createHash("sha256").update(fs.readFileSync(receiptPath)).digest("hex") === receipt,
+  "resume preserves unpublished work and prior receipt");
   git(checkout, "worktree", "remove", target);
   denied(strict("resume", published), "existing unowned branch requires operator");
-  git(checkout, "branch", "-d", branch);
+  git(checkout, "branch", "-D", branch);
   ready(strict("resume", published), "resume", published);
 }
 

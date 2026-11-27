@@ -55,37 +55,49 @@ contains no production installation for those services.
    separate OS-backed journal lock in a private host directory. The intent
    consumes the exact request. A signed snapshot stores at most 100
    reference-only records, including tombstones. A synced staging file,
-   atomic replacement and directory sync precede dispatch. Preserve any
-   staging bytes after failure for operator diagnosis.
+   atomic replacement and directory sync precede advancement of the
+   independently authenticated generation and digest. Dispatch and readiness
+   require a matching current-state witness. Preserve staging or unconfirmed
+   visible state after failure for operator diagnosis.
 3. Re-fetch authority before effect. Pass reviewed helper bytes on stdin
    to pinned absolute Bash with fixed mode, branch and explicit absolute
    target arguments. Use `PFM_SUPERVISOR_BOOTSTRAP=1`,
    `PFM_RECOVERY_MAIN_SHA`, `PFM_SUPERVISOR_EXPECTED_HEAD` (empty for new),
    `PFM_SUPERVISOR_GIT`, `PFM_SUPERVISOR_PYTHON` and
+   `PFM_SUPERVISOR_LOCAL_HEAD` (absent or the exact observed local SHA), plus
    `PFM_SUPERVISOR_RECEIPT` (absent or exact closed receipt SHA-256). These
    are conditions supplied by the trusted host, not credentials. The port
    attests isolation and repo configuration, uses bounded output and a
    monotonic deadline, and proves terminal cleanup for the process group.
    The strict helper rejects stale refs, existing new targets, ambiguous
-   ownership and unsafe resume. Ordinary manual and recovery mode keep
+   ownership and unsafe resume. After fetch it rechecks the registered
+   owner, configuration, operation state, clean index and receipt before
+   advancing the branch. Ordinary manual and recovery mode keep
    their existing invocation.
 4. Independently re-fetch the issue and remote refs, match the three
    bootstrap stdout fields, and inspect the exact linked worktree, scoped
    paths, head/upstream, index and actual receipt. Treat printed shell text
    as data. Git readiness can have an absent receipt or a hash-bound closed
-   receipt with independently proven stopped owner. Revalidate again
-   before creating the manual handoff. A timeout, missing response or
+   receipt. Every resume also requires independent evidence of the previous
+   stopped owner and exact published checkpoint, including at a fresh target
+   with no local receipt. Revalidate again before creating the manual handoff.
+   A timeout, missing response or
    partial effect holds the intent until bounded read-only reconciliation
    proves nonstart or terminal cleanup. The journal allows up to four
-   reconciliation reads per intent. After that, resolution needs externally
+   reconciliation reads per intent, each capped at two seconds and within the
+   cleanup deadline. After that, resolution needs externally
    recorded evidence authenticated by the same capacity-release verifier.
    Never dispatch the same bootstrap
    again or switch to another executor because the response was lost.
-5. Only an independently verified nonwriting handshake can carry an actual
-   UserPromptSubmit receipt to runner admission. The offline fixture uses
-   the real hook and parser on disposable Git repositories. It exercises
-   GF-03 and GF-05 with synthetic acknowledgement and budget evidence.
-   Manual V3 remains available through the exact worktree and issue pointer.
+5. If authenticated inventory shows project or hook trust review pending,
+   return a manual approval-required disposition and preserve the prepared
+   worktree. Continue in that worktree after operator review where required.
+   The independently verified nonwriting handshake must still authenticate
+   SessionStart and the actual UserPromptSubmit receipt before runner admission.
+   The offline fixture uses the real hook and parser on disposable Git
+   repositories. It exercises GF-03 and GF-05 with synthetic native
+   acknowledgements and an external test barrier. Manual V3 remains
+   available through the exact worktree and issue pointer.
 
 ## Evidence and rollout
 

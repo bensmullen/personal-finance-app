@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { closeSync, constants, fsyncSync, lstatSync, openSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { canonicalJson, digest } from '../contracts.mjs';
@@ -10,39 +10,59 @@ const limit = 100;
 const maxBytes = 96 * 1024;
 const copy = (value) => JSON.parse(canonicalJson(value));
 const hash = /^[a-f0-9]{64}$/;
+const stateDigest = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
 // The installed supervisor owns the directory, key and OS-backed lock port.
 // The outer capacity gate also excludes native writers and other host effects.
 // Never rotate away tombstones or initialize over surviving staging evidence.
-export function openPreparationJournal({ directory, hostId, key, withLock, verify, initialize = false }) {
+export function openPreparationJournal({ directory, hostId, key, withLock, currentState, verify, initialize = false, fault }) {
   const info = lstatSync(directory);
   requireResource(info.isDirectory() && realpathSync(directory) === directory
     && info.uid === process.getuid?.() && (info.mode & 0o777) === 0o700
     && typeof hostId === 'string' && identifier.test(hostId)
-    && Buffer.isBuffer(key) && key.length === 32 && typeof withLock === 'function', 'PREPARATION_JOURNAL_HOST');
+    && Buffer.isBuffer(key) && key.length === 32 && typeof withLock === 'function'
+    && typeof currentState?.read === 'function' && typeof currentState?.commit === 'function', 'PREPARATION_JOURNAL_HOST');
   resourceAttest(verify, 'preparation_private_journal', { directory, hostId });
   const secret = Buffer.from(key);
   const path = join(directory, 'preparations.json');
   const staging = join(directory, 'preparations.next');
   const exists = (file) => lstatSync(file, { throwIfNoEntry: false }) !== undefined;
   const sign = (state) => createHmac('sha256', secret).update(canonicalJson(state, maxBytes)).digest();
+  const identity = { directory, host_id: hostId };
+  let lockProof;
 
-  function store(state) {
+  function witness() {
+    const current = currentState.read(identity, lockProof);
+    resourceAttest(verify, 'preparation_journal_current', { identity, lock: lockProof, current });
+    return current;
+  }
+
+  function store(state, previous) {
+    state.generation = (previous?.generation ?? 0) + 1;
     const data = canonicalJson({ state, mac: sign(state).toString('hex') }, maxBytes);
+    const next = { generation: state.generation, digest: stateDigest(data) };
     const folder = openSync(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
     try {
       const fd = openSync(staging, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
       try {
         writeFileSync(fd, data);
+        fault?.('after-write');
         fsyncSync(fd);
+        fault?.('after-file-sync');
       } finally {
         closeSync(fd);
       }
       renameSync(staging, path);
+      fault?.('after-rename');
       fsyncSync(folder);
+      fault?.('after-directory-sync');
     } finally {
       closeSync(folder);
     }
+    // The independent host advances its durable witness only after both syncs.
+    // A visible rename with an unadvanced witness is an unknown disposition.
+    currentState.commit(identity, previous, next, lockProof);
+    requireResource(digest(witness()) === digest(next), 'PREPARATION_JOURNAL_COMMIT_UNKNOWN');
   }
 
   function load() {
@@ -52,8 +72,12 @@ export function openPreparationJournal({ directory, hostId, key, withLock, verif
     requireResource(canonicalJson(record, maxBytes) === bytes && Object.keys(record).length === 2
       && typeof mac === 'string' && hash.test(mac) && timingSafeEqual(sign(state), Buffer.from(mac, 'hex'))
       && state.schema === schema && state.host_id === hostId && Array.isArray(state.records)
+      && Number.isSafeInteger(state.generation) && state.generation > 0
       && state.records.length <= limit, 'PREPARATION_JOURNAL_STATE');
-    return state;
+    const current = witness();
+    requireResource(current?.generation === state.generation && current.digest === stateDigest(bytes),
+      'PREPARATION_JOURNAL_COMMIT_UNKNOWN');
+    return { state, current };
   }
 
   function locked(operation) {
@@ -65,7 +89,12 @@ export function openPreparationJournal({ directory, hostId, key, withLock, verif
         invoked = true;
         resourceRef(lock);
         resourceAttest(verify, 'preparation_journal_lock', { directory, hostId, lock });
-        return operation();
+        lockProof = lock;
+        try {
+          return operation();
+        } finally {
+          lockProof = undefined;
+        }
       });
       requireResource(invoked, 'PREPARATION_JOURNAL_LOCK');
       return result;
@@ -76,8 +105,8 @@ export function openPreparationJournal({ directory, hostId, key, withLock, verif
 
   locked(() => {
     if (initialize) {
-      requireResource(!exists(path) && !exists(staging), 'PREPARATION_JOURNAL_EXISTS');
-      store({ schema, host_id: hostId, records: [] });
+      requireResource(!exists(path) && !exists(staging) && witness() === null, 'PREPARATION_JOURNAL_EXISTS');
+      store({ schema, host_id: hostId, records: [] }, null);
     }
     load();
   });
@@ -97,14 +126,19 @@ export function openPreparationJournal({ directory, hostId, key, withLock, verif
 
   return Object.freeze({
     observe(binding) {
-      return locked(() => copy(find(load(), binding) ?? null));
+      return locked(() => {
+        const intent = find(load().state, binding);
+        requireResource(intent?.status !== 'git-ready' || !exists(staging), 'PREPARATION_JOURNAL_RECOVERY');
+        return copy(intent ?? null);
+      });
     },
     begin(binding, gate) {
       return locked(() => {
-        const state = load();
+        const { state, current } = load();
         const previous = find(state, binding);
-        if (previous) return { created: false, intent: copy(previous) };
+        if (previous && previous.status !== 'git-ready') return { created: false, intent: copy(previous) };
         requireResource(!exists(staging), 'PREPARATION_JOURNAL_RECOVERY');
+        if (previous) return { created: false, intent: copy(previous) };
         requireResource(state.records.length < limit && !state.records.some((entry) => entry.status === 'unresolved'),
           'PREPARATION_CAPACITY_UNAVAILABLE');
         const intent = { schema: 'PFM_PREPARATION_INTENT_V1', id: binding.id, nonce_digest: binding.nonce_digest,
@@ -114,24 +148,24 @@ export function openPreparationJournal({ directory, hostId, key, withLock, verif
           status: 'unresolved', evidence: null, reconciliation_reads: 0 };
         resourceAttest(verify, 'preparation_begin_fenced', { intent, gate });
         state.records.push(intent);
-        store(state);
+        store(state, current);
         return { created: true, intent: copy(intent) };
       });
     },
     reserveRead(binding, gate) {
       return locked(() => {
-        const state = load();
+        const { state, current } = load();
         const intent = find(state, binding);
         if (intent?.status !== 'unresolved' || intent.reconciliation_reads >= 4 || exists(staging)) return false;
         resourceAttest(verify, 'preparation_reconciliation_read', { intent, gate });
         intent.reconciliation_reads++;
-        store(state);
+        store(state, current);
         return true;
       });
     },
     finish(binding, status, evidence, gate) {
       return locked(() => {
-        const state = load();
+        const { state, current } = load();
         const intent = find(state, binding);
         requireResource(!exists(staging), 'PREPARATION_JOURNAL_RECOVERY');
         requireResource(intent?.status === 'unresolved' && ['nonstart', 'cleaned', 'git-ready'].includes(status),
@@ -139,7 +173,7 @@ export function openPreparationJournal({ directory, hostId, key, withLock, verif
         resourceRef(evidence);
         resourceAttest(verify, 'preparation_capacity_release', { intent, status, evidence, gate });
         Object.assign(intent, { status, evidence });
-        store(state);
+        store(state, current);
         return copy(intent);
       });
     },

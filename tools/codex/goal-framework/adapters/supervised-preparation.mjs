@@ -1,3 +1,4 @@
+import { performance } from 'node:perf_hooks';
 import { goalControlDigest, digest, planAlignedTask, validateGoal, validateScopeCensus } from '../contracts.mjs';
 import { pinnedV3Parser, savedAuthorization, sha256 } from '../authorization.mjs';
 import { requireResource, resourceAttest, resourceRef, resourceTime } from '../resources.mjs';
@@ -105,6 +106,8 @@ function result(intent) {
     effect_id: intent.effect_id, status: intent.status, evidence: intent.evidence };
 }
 
+const workspaceGitDigest = ({ receipt: _receipt, ...git }) => digest(git);
+
 // Synchronous trusted host ports. The same external gate excludes native
 // writers, serializes admission and accounts for unresolved preparation.
 export function createSupervisedPreparation({ journal, bootstrap, host }) {
@@ -129,9 +132,10 @@ export function createSupervisedPreparation({ journal, bootstrap, host }) {
   }
 
   function review(envelope, gate) {
-    return reviewSupervisedPreparation(envelope, host.loadLive(envelope.request), {
-      verify, now: clock(), consumedNonces: host.consumedNonces,
-    }, gate);
+    const live = host.loadLive(envelope.request);
+    const now = clock();
+    return { ...reviewSupervisedPreparation(envelope, live, { verify, now, consumedNonces: host.consumedNonces }, gate),
+      live, now };
   }
 
   return Object.freeze({
@@ -153,12 +157,16 @@ export function createSupervisedPreparation({ journal, bootstrap, host }) {
           const observed = bootstrap.inspect(request, after.paths, after.taskKind, 'after', gate);
           const receipt = observed.workspace.receipt;
           requireResource(receipt.status === (before.workspace?.receipt.status ?? 'absent')
-            && receipt.digest === before.workspace?.receipt.digest, 'PREPARATION_RECEIPT_CHANGED');
+            && receipt.digest === before.workspace?.receipt.digest
+            && digest(before.priorOwner) === digest(observed.priorOwner), 'PREPARATION_RECEIPT_CHANGED');
           const output_digest = parseBootstrapOutput(execution.stdout, request, receipt.status);
           const readiness = { intent, terminal: execution.terminal, output_digest,
-            invocation_digest: execution.invocation_digest, observation: observed.snapshot.evidence, workspace: digest(observed.workspace) };
+            invocation_digest: execution.invocation_digest, observation: observed.snapshot.evidence,
+            workspace: workspaceGitDigest(observed.workspace), git_identity: observed.git_identity,
+            receipt: digest(receipt), prior_owner: digest(observed.priorOwner) };
           const evidence = host.recordGitReady(readiness);
           resourceRef(evidence);
+          requireResource(evidence.digest === digest(readiness), 'PREPARATION_GIT_READY_BINDING');
           resourceAttest(verify, 'preparation_git_ready_evidence', { readiness, evidence, gate });
           return result(journal.finish(binding, 'git-ready', evidence, gate));
         } catch {
@@ -168,31 +176,69 @@ export function createSupervisedPreparation({ journal, bootstrap, host }) {
         }
       });
     },
-    reconcile(raw, recordedOutcome) {
+    async reconcile(raw, recordedOutcome) {
       const { request, binding } = readPreparationRequest(raw);
-      return underGate(request, 'reconcile', (gate) => {
-        const intent = journal.observe(binding);
-        requireResource(intent, 'PREPARATION_INTENT_MISSING');
-        if (intent.status !== 'unresolved') return result(intent);
-        if (recordedOutcome === undefined && !journal.reserveRead(binding, gate)) return result(intent);
-        const outcome = recordedOutcome ?? host.reconcileReadOnly(intent, gate, { timeout_ms: 2000, max_observations: 4 });
+      const reconcile = (gate, intent, outcome) => {
         if (!outcome) return result(intent);
         const { status, evidence } = exactFields(outcome, ['status', 'evidence'], 'PREPARATION_RECONCILIATION_FIELDS');
         requireResource(['nonstart', 'cleaned'].includes(status), 'PREPARATION_RECONCILIATION_STATUS');
         return result(journal.finish(binding, status, evidence, gate));
+      };
+      const read = underGate(request, 'reconcile', (gate) => {
+        const intent = journal.observe(binding);
+        requireResource(intent, 'PREPARATION_INTENT_MISSING');
+        if (intent.status !== 'unresolved' || recordedOutcome !== undefined) {
+          return { result: intent.status === 'unresolved' ? reconcile(gate, intent, recordedOutcome) : result(intent) };
+        }
+        const timeout = Math.min(2000, resourceTime(request.cleanup_deadline) - resourceTime(clock()));
+        if (timeout <= 0 || !journal.reserveRead(binding, gate)) return { result: result(intent) };
+        resourceAttest(verify, 'preparation_bounded_read_port', { request, intent, gate, timeout });
+        return { intent, gate, timeout };
       });
+      if ('result' in read) return read.result;
+      const controller = new AbortController();
+      const deadline = performance.now() + read.timeout;
+      let timer;
+      try {
+        const outcome = await Promise.race([
+          new Promise((resolve) => {
+            timer = setTimeout(() => { resolve(undefined); controller.abort(); }, read.timeout);
+          }),
+          Promise.resolve().then(() => host.reconcileReadOnly(read.intent, read.gate, {
+            timeout_ms: read.timeout, max_observations: 4, signal: controller.signal,
+          })).catch(() => undefined),
+        ]);
+        return underGate(request, 'reconcile', (gate) => {
+          const intent = journal.observe(binding);
+          const inTime = performance.now() <= deadline && resourceTime(clock()) < resourceTime(request.cleanup_deadline);
+          return intent.status === 'unresolved' ? reconcile(gate, intent, inTime ? outcome : undefined) : result(intent);
+        });
+      } finally {
+        clearTimeout(timer);
+        controller.abort();
+      }
     },
-    withFreshHandoff(raw, consume) {
+    withFreshHandoff(raw, phase, consume) {
       const envelope = readPreparationRequest(raw);
       const { request, binding } = envelope;
-      return underGate(request, 'handoff', (gate) => {
+      requireResource(['handoff', 'prepared'].includes(phase), 'PREPARATION_HANDOFF_PHASE');
+      return underGate(request, phase, (gate) => {
         const intent = journal.observe(binding);
         requireResource(intent?.status === 'git-ready', 'PREPARATION_GIT_NOT_READY');
         const current = review(envelope, gate);
-        const observed = bootstrap.inspect(request, current.paths, current.taskKind, 'handoff', gate);
-        resourceAttest(verify, 'preparation_git_ready_current', { request, intent,
-          observation: observed.snapshot.evidence, workspace: digest(observed.workspace), gate });
-        return consume({ request, intent, observed });
+        const readiness = host.loadGitReady(intent.evidence);
+        requireResource(readiness && intent.evidence.digest === digest(readiness)
+          && readiness.intent.effect_id === intent.effect_id && readiness.intent.request_digest === intent.request_digest,
+        'PREPARATION_GIT_READY_BINDING');
+        const observed = bootstrap.inspect(request, current.paths, current.taskKind, phase, gate);
+        requireResource(readiness.workspace === workspaceGitDigest(observed.workspace)
+          && readiness.git_identity === observed.git_identity
+          && readiness.prior_owner === digest(observed.priorOwner)
+          && (phase === 'prepared' || readiness.receipt === digest(observed.workspace.receipt)),
+        'PREPARATION_GIT_READY_CHANGED');
+        resourceAttest(verify, 'preparation_git_ready_current', { request, intent, readiness, observed, gate });
+        return consume({ request, intent, observed, readiness, gate, verify, now: current.now, live: current.live,
+          consumedNonces: host.consumedNonces });
       });
     },
   });
