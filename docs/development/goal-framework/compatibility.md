@@ -73,16 +73,20 @@ checked. Current Desktop build, executable version and digest, schema
 support, account entitlement, and Remote visibility are unknown. The
 2026-11-25 version and build in the earlier inventory are historical.
 
-| Capability | Evidence available from a recognized static export | Evidence needed on the actual host |
-| --- | --- | --- |
-| Thread identity and working directory | `thread/start` cwd and the turn request's thread ID field | Authenticated new and resumed session identity, exact branch and path, and phone selection of that same session |
-| Exact prompt and model/effort | `turn/start` typed text input and optional model and effort fields | Exact issue-pointer delivery to the correct hook and independently verified effective model and effort |
-| Permissions, project and hook trust | Thread-level permission request fields | Actual installed policy and user review, exact SessionStart root, and immutable hook configuration for the selected session |
-| Pre-write and pre-charge barrier | Unobserved | A trusted external boundary that can surface the real PREPARED receipt and withhold writes and chargeable execution pending admission |
-| Start, interrupt and terminal events | Typed turn start/interrupt requests and completion notification shape | Authenticated admission, safe revocation and stop, plus terminal proof and writer-fence release even after disconnect |
-| Quota and hard ceiling | Unobserved | GF-05 reservation, native hard ceiling and watchdog, independent capacity and kill switch |
-| Usage and late billing | Token usage notification shape when present | Authenticated actual usage, quota coverage and late settlement against the same reservation after termination |
-| Artifacts, ownership and phone visibility | Unobserved | Exact phone/workspace/session binding, durable output, stopped-writer ownership, and expected-head publication |
+The repository fixtures are synthetic. An installed observation and a
+separately approved canary provide different evidence.
+
+| Capability | Recognized static declarations | Installed host or UI observation | Enforcement evidence for certification |
+| --- | --- | --- | --- |
+| Thread identity and working directory | `thread/start` request ID and cwd, plus the turn request's thread ID field | Exact workspace, branch, path and environment selection | Authenticated returned identity and exact new or resumed session binding |
+| Exact prompt and model/effort | `turn/start` typed text input and model and effort declarations | Available prompt, model and effort controls | Exact issue-pointer delivery to the correct hook and independently verified effective model and effort |
+| Permissions, project and hook trust | Recognized thread-level permission request fields | Installed permission modes and human project or hook review | Current policy, exact SessionStart root and authenticated hook configuration for the selected session |
+| Pre-write and pre-charge barrier | Unobserved | Setup and prompt submission order | Trusted external boundary that exposes the real PREPARED receipt and withholds writes and chargeable execution pending admission |
+| Start, interrupt and terminal events | Typed turn start and interrupt requests and known completion statuses | Available start, stop and status controls | Authenticated admission, effective revocation and stop, terminal proof and writer-fence release after disconnect |
+| Quota and hard ceiling | Unobserved | Displayed limits and availability | GF-05 reservation, native hard ceiling and watchdog, independent capacity and kill switch |
+| Usage and late billing | Token usage notification with typed last and total counts | Available usage information | Authenticated usage, quota coverage and late settlement against the same reservation after termination |
+| Artifacts and ownership | Unobserved | Visible output and workspace ownership | Durable output, stopped-writer ownership and expected-head publication |
+| Phone visibility | Unobserved | First-party Remote offers the exact workspace and session on the phone | Authenticated binding to the same host, workspace and session used for admission |
 
 First-party Remote is the preferred candidate. Its documented host/workspace
 selection, new worktree and environment setup warrant checking whether a

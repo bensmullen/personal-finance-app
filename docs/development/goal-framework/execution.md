@@ -125,80 +125,30 @@ thin Mach-O or ELF executable and two 1 MiB JSON schemas. It applies a
 Unsupported binary headers or layouts remain unobserved. Capture the
 finite failure reason without broadening the path search.
 
-Run the optional export only after independently confirming that the exact
-local executable supports the documented offline
-`app-server generate-json-schema --out` command. Review version-specific
-help or release metadata and match the executable's full version and SHA-256
-against the selected binary. Set `PFM_PINNED_CODEX`, `PFM_PINNED_VERSION`
-and `PFM_PINNED_SHA256` to those reviewed values. Use a canonical local
-temp parent such as `/private/tmp` on macOS, or set
-`PFM_LOCAL_TMP` to another reviewed canonical local temp directory.
-If version, digest, or static export support cannot be safely confirmed,
-use the default static inventory and record the protocol as unverified.
-The recognized shape is a self-contained Draft 7 Schemars union in
-`ClientRequest.json` and `ServerNotification.json`. Other filenames,
-combined bundles, unresolved references, and unknown dialects yield
-unobserved coverage. The documented TypeScript export is outside this
-diagnostic's input. [App-server documentation](https://learn.chatgpt.com/docs/app-server)
+An optional export requires independent confirmation of the installed
+executable, version, SHA-256 and version-specific support for offline
+`app-server generate-json-schema --out`. Verify the canonical path and trusted
+ownership through the full path. Establish that the verified executable is
+the same one selected for execution and that the path remains stable throughout.
+Exclude concurrent installers, updates and other writers to the executable
+or its ancestors. [App-server documentation](https://learn.chatgpt.com/docs/app-server)
 
-```bash
-cd -- "${PFM_REVIEWED_CHECKOUT:?set the verified absolute checkout path}" &&
-pfm_reviewed_head="$(git rev-parse --verify HEAD)" &&
-(
-  set -eu
-  umask 077
-  pfm_schema_dir="$(mktemp -d "${PFM_LOCAL_TMP:-/private/tmp}/pfm-codex-schema.XXXXXXXX")"
-  trap 'rm -rf -- "$pfm_schema_dir"' EXIT
-  python3 - "${PFM_PINNED_CODEX:?set the reviewed absolute executable}" \
-    "${PFM_PINNED_SHA256:?set the reviewed SHA-256}" "$pfm_schema_dir" <<'PY'
-import hashlib
-import os
-import re
-import resource
-import stat
-import subprocess
-import sys
+Use an independently established offline boundary that confines all writes to
+a fresh private scratch directory and enforces a file count, per-file size,
+total byte and wall-time limit for the entire export, including any descendants.
+The boundary must exclude network and credential access, login, listeners,
+sessions, threads, turns and command RPC. If executable identity or any output
+limit cannot be established, omit the export and record the protocol as
+unobserved. The default static inventory remains available.
 
-tool, expected, target = sys.argv[1:]
-try:
-    if not (os.path.isabs(tool) and os.path.realpath(tool) == tool
-            and os.path.basename(tool) == "codex" and re.fullmatch("[a-f0-9]{64}", expected)):
-        raise ValueError()
-    descriptor = os.open(tool, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    with os.fdopen(descriptor, "rb") as selected:
-        info = os.fstat(selected.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > 256 * 1024 * 1024:
-            raise ValueError()
-        checksum = hashlib.sha256()
-        remaining = info.st_size
-        while remaining:
-            chunk = selected.read(min(remaining, 65536))
-            if not chunk:
-                raise ValueError()
-            checksum.update(chunk)
-            remaining -= len(chunk)
-        if checksum.hexdigest() != expected:
-            raise ValueError()
-    resource.setrlimit(resource.RLIMIT_FSIZE, (2 * 1024 * 1024, 2 * 1024 * 1024))
-    subprocess.run([tool, "app-server", "generate-json-schema", "--out", target],
-                   check=True, timeout=10, cwd=target, env={}, stdin=subprocess.DEVNULL,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-except (OSError, ValueError, subprocess.SubprocessError):
-    sys.exit("static-export-unverified")
-PY
-  python3 tools/codex/goal-framework/local-capability-probe.py \
-    --head "$pfm_reviewed_head" --control-revision "${PFM_REVIEWED_CONTROL:?set the reviewed control SHA}" \
-    --cli-path "$PFM_PINNED_CODEX" --cli-version "${PFM_PINNED_VERSION:?set the reviewed CLI version}" \
-    --cli-sha256 "$PFM_PINNED_SHA256" --schema-root "$pfm_schema_dir"
-)
-```
-
-Keep the output private and share only the sanitized inventory or its
-reference. Run the export in a fresh private directory on a reviewed host
-with adequate bounded scratch space and no concurrent installer or update
-touching the selected path. The reviewed command is an offline schema
-export. Do not start app-server, a thread, a turn or a listener. Do not log
-in, access auth tokens, download schemas or fall back to a paid operation.
+For an eligible bounded export, pass the selected canonical executable,
+exact version, SHA-256 and private export directory to `--cli-path`,
+`--cli-version`, `--cli-sha256` and `--schema-root`. The probe recognizes
+only the bounded `ClientRequest.json` and `ServerNotification.json` Draft 7
+Schemars unions and specific declaration shapes. Unknown layouts and
+unresolved or contradictory shapes leave the affected evidence unobserved.
+Keep only the sanitized summary and references. Clean up only the verified
+private directory created for that export.
 
 Use one compact reviewer entry per actual observation.
 

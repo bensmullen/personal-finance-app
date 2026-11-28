@@ -39,9 +39,26 @@
       "required": ["id", "status"],
       "properties": {
         "id": { "type": "string" },
-        "status": { "type": "string", "enum": ["completed", "interrupted", "failed"] }
+        "status": { "$ref": "#/definitions/TurnStatus" }
       }
     },
-    "ThreadTokenUsage": { "type": "object" }
+    "TurnStatus": { "type": "string", "enum": ["completed", "interrupted", "failed", "inProgress"] },
+    "ThreadTokenUsage": {
+      "type": "object",
+      "required": ["last", "total"],
+      "properties": {
+        "last": { "$ref": "#/definitions/TokenUsageBreakdown" },
+        "total": { "$ref": "#/definitions/TokenUsageBreakdown" }
+      }
+    },
+    "TokenUsageBreakdown": {
+      "type": "object",
+      "required": ["inputTokens", "outputTokens", "totalTokens"],
+      "properties": {
+        "inputTokens": { "type": "integer", "format": "uint64", "minimum": 0 },
+        "outputTokens": { "type": "integer", "format": "uint64", "minimum": 0 },
+        "totalTokens": { "type": "integer", "format": "uint64", "minimum": 0 }
+      }
+    }
   }
 }

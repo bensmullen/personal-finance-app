@@ -137,14 +137,16 @@ and null value. Input syntax errors emit `PFM_LOCAL_CAPABILITY_ERROR_V1`
 with `invalid-input` and exit 2. SHA-256 references describe the exact bytes
 of the selected artifacts. The CLI version and export provenance are operator
 declarations. No path, raw schema, config, account or session identifiers
-are included. A false protocol feature means the exact recognized shape
-was unobserved in that export.
+are included. A false protocol feature means the probe could not establish
+the recognized declaration in that export. Request IDs, working-directory
+fields and turn thread IDs describe input fields. Returned thread identity,
+resume, entitlement and session binding require independent evidence.
 
 `readLocalCapability(raw)` checks closed canonical JSON. Give it the
 original UTF-8 producer text for imports so it can reject duplicate keys.
 It also accepts bounded JSON values already decoded by trusted code.
-`localCapabilityInventory(raw, context)` requires an independently supplied
-supervisor envelope and returns one report reference, an advisory reason,
+`localCapabilityInventory(raw, readSupervisor)` requires a synchronous
+supervisor-supplied reader and returns one report reference, an advisory reason,
 a runner inventory and the narrow handoff inventory function. Refer to the
 report by its canonical digest in subsequent records. Do not attach a raw
 schema or duplicate report bodies per operation or handoff.
@@ -155,13 +157,17 @@ binary and app digests, and CLI version. Where observation evidence exists,
 `local_capability_host_observation` independently authenticates that binding
 and the exact report digest against an external evidence reference. The
 report must be at most ten minutes old and the evidence time must fall
-between collection and the supervisor clock. Re-evaluate on each fresh
-handoff. Missing proof leaves the inventory unverified. Stale and mismatched
-bindings have an explicit advisory refusal. Invalid attestations fail closed.
+between collection and the supervisor clock. The function reads the current
+supervisor context and reauthenticates host evidence every time the handoff
+inventory is evaluated, including calls with no selection. Missing, stale
+or mismatched evidence produces unverified handoff inventory. Invalid
+attestations fail closed. Inputs for each attestation and returned references
+are detached. The supervisor verifier owns current validity and revocation.
 
 For a specific Remote selection, `local_capability_hook_trust` authenticates
 the exact request digest, host binding, selection reference, UI status, time
-and separate proof. The handoff still verifies `handoff_readonly_inventory`
+and separate proof. Selection time must fall between the host observation and
+the current supervisor clock. The handoff still verifies `handoff_readonly_inventory`
 under its current gate and consumes the exact `{status, trust, evidence}`
 shape. Pending trust yields `HANDOFF_APPROVAL_REQUIRED` when authenticated.
 Unknown or completed trust yields `HANDOFF_UNVERIFIED`. The runner remains

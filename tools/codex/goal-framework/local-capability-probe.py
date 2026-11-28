@@ -24,16 +24,15 @@ SHA = re.compile(r"[a-f0-9]{40}")
 HASH = re.compile(r"[a-f0-9]{64}")
 SCHEMA_FILES = ("ClientRequest.json", "ServerNotification.json")
 METHODS = {
-    "thread_identity_cwd": (0, "thread/start", "ThreadStartParams", {"cwd": "string"}),
-    "exact_prompt": (0, "turn/start", "TurnStartParams", {"threadId": "string", "input": "array"}),
-    "model_effort": (0, "turn/start", "TurnStartParams", {"model": "string", "effort": "#/definitions/ReasoningEffort"}),
-    "permissions": (0, "thread/start", "ThreadStartParams",
-                    {"approvalPolicy": "#/definitions/AskForApproval", "sandbox": "#/definitions/SandboxMode"}),
-    "turn_start": (0, "turn/start", "TurnStartParams", {"threadId": "string", "input": "array"}),
-    "turn_interrupt": (0, "turn/interrupt", "TurnInterruptParams", {"threadId": "string", "turnId": "string"}),
-    "terminal": (1, "turn/completed", "TurnCompletedNotification", {"threadId": "string", "turn": "#/definitions/Turn"}),
+    "thread_identity_cwd": (0, "thread/start", "ThreadStartParams", (), ("cwd",)),
+    "exact_prompt": (0, "turn/start", "TurnStartParams", ("threadId", "input"), ()),
+    "model_effort": (0, "turn/start", "TurnStartParams", ("threadId", "input"), ("model", "effort")),
+    "permissions": (0, "thread/start", "ThreadStartParams", (), ("approvalPolicy", "sandbox")),
+    "turn_start": (0, "turn/start", "TurnStartParams", ("threadId", "input"), ()),
+    "turn_interrupt": (0, "turn/interrupt", "TurnInterruptParams", ("threadId", "turnId"), ()),
+    "terminal": (1, "turn/completed", "TurnCompletedNotification", ("threadId", "turn"), ()),
     "usage": (1, "thread/tokenUsage/updated", "ThreadTokenUsageUpdatedNotification",
-              {"threadId": "string", "turnId": "string", "tokenUsage": "#/definitions/ThreadTokenUsage"}),
+              ("threadId", "turnId", "tokenUsage"), ()),
 }
 
 
@@ -152,12 +151,34 @@ def open_component(parent, name, path, directory):
     fd = os.open(name, flags | (os.O_DIRECTORY if directory else 0), dir_fd=parent)
     try:
         after = os.fstat(fd)
-        if before != after or descriptor_path(fd) != path:
+        if file_identity(before) != file_identity(after) or descriptor_path(fd) != path:
             raise Refusal("unsafe-path")
     except BaseException:
         os.close(fd)
         raise
     return fd
+
+
+def file_identity(info):
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid,
+            info.st_size, info.st_ctime_ns, info.st_mtime_ns, info.st_nlink)
+
+
+@contextmanager
+def opened_file(parent, name, path):
+    fd = open_component(parent, name, path, False)
+    try:
+        original = os.fstat(fd)
+        safe_identity(original, path)
+        yield fd
+        try:
+            current = os.stat(name, dir_fd=parent, follow_symlinks=False)
+        except OSError:
+            raise Refusal("changed") from None
+        if file_identity(current) != file_identity(original) or descriptor_path(fd) != path:
+            raise Refusal("changed")
+    finally:
+        os.close(fd)
 
 
 @contextmanager
@@ -168,7 +189,11 @@ def opened(path, directory=False):
     try:
         for index, part in enumerate(parts):
             current += "/" + part
-            child = open_component(fd, part, current, directory or index < len(parts) - 1)
+            if not directory and index == len(parts) - 1:
+                with opened_file(fd, part, current) as child:
+                    yield child
+                return
+            child = open_component(fd, part, current, True)
             os.close(fd)
             fd = child
         yield fd
@@ -176,7 +201,7 @@ def opened(path, directory=False):
         os.close(fd)
 
 
-def read_content(fd, limit, retain=True):
+def read_content(fd, path, limit, retain_limit):
     before = os.fstat(fd)
     if before.st_size > limit:
         raise Refusal("oversized")
@@ -189,11 +214,12 @@ def read_content(fd, limit, retain=True):
             raise Refusal("changed")
         total += len(chunk)
         checksum.update(chunk)
-        if retain:
-            content.extend(chunk)
+        if len(content) < retain_limit:
+            content.extend(chunk[:retain_limit - len(content)])
     after = os.fstat(fd)
-    if (before.st_size, before.st_ctime_ns, before.st_mtime_ns, before.st_nlink) != (
-            after.st_size, after.st_ctime_ns, after.st_mtime_ns, after.st_nlink):
+    if file_identity(before) != file_identity(after) or after.st_nlink != 1:
+        raise Refusal("changed")
+    if descriptor_path(fd) != path:
         raise Refusal("changed")
     return bytes(content), checksum.hexdigest()
 
@@ -211,15 +237,16 @@ def observe(read: Callable[[], ObservationValue]) -> Observation:
     try:
         return {"status": "observed", "reason": None, "value": read()}
     except (Refusal, OSError, ValueError, TypeError, OverflowError, RecursionError,
-            SyntaxError, IndexError, ExpatError, plistlib.InvalidFileException) as error:
+            SyntaxError, LookupError, ExpatError, plistlib.InvalidFileException) as error:
         return {"status": "unobserved", "reason": reason(error), "value": None}
 
 
 def app_metadata(root) -> AppMetadata:
     if path_parts(root)[-1] != "Codex.app":
         raise Refusal("unsafe-path")
-    with opened(root + "/Contents/Info.plist") as fd:
-        content, checksum = read_content(fd, 128 * 1024)
+    path = root + "/Contents/Info.plist"
+    with opened(path) as fd:
+        content, checksum = read_content(fd, path, 128 * 1024, 128 * 1024)
     info = plistlib.loads(content, dict_type=UniqueDict)
     if not isinstance(info, dict) or info.get("CFBundleIdentifier") != "com.openai.codex":
         raise Refusal("unsupported")
@@ -249,10 +276,8 @@ def cli_metadata(path, declared_version, expected_digest) -> CliMetadata:
     with opened(path) as fd:
         if not os.fstat(fd).st_mode & 0o111:
             raise Refusal("unsupported")
-        platform, arch = binary_platform(os.pread(fd, 64, 0))
-        _, checksum = read_content(fd, 256 * 1024 * 1024, retain=False)
-        if binary_platform(os.pread(fd, 64, 0)) != (platform, arch):
-            raise Refusal("changed")
+        header, checksum = read_content(fd, path, 256 * 1024 * 1024, 64)
+        platform, arch = binary_platform(header)
     if expected_digest is not None and checksum != expected_digest:
         raise Refusal("binding-mismatch")
     return {"version": declared_version, "version_source": "operator-declared" if declared_version else "unobserved",
@@ -277,92 +302,165 @@ def read_schema(content):
     return data
 
 
+def shape(schema, keys):
+    # Only these annotations and explicitly recognized assertion forms are
+    # evaluated. Additional keywords can contradict the apparent shape.
+    return (isinstance(schema, dict) and schema.keys() <= set(keys) | {"title", "description", "default"}
+            and all(isinstance(schema[key], str) for key in ("title", "description") if key in schema))
+
+
+def object_fields(schema):
+    if (not shape(schema, ("type", "properties", "required", "additionalProperties"))
+            or schema.get("type") != "object" or not isinstance(schema.get("properties"), dict)
+            or type(schema.get("additionalProperties", True)) is not bool):
+        return None
+    fields, required = schema["properties"], schema.get("required", [])
+    if (not isinstance(required, list) or not all(isinstance(key, str) and key in fields for key in required)
+            or len(set(required)) != len(required)
+            or not all(isinstance(value, (dict, bool)) for value in fields.values())):
+        return None
+    return fields, set(required)
+
+
+def tagged_variants(variants, tag):
+    if not isinstance(variants, list) or not variants:
+        return None
+    result = {}
+    for variant in variants:
+        obj = object_fields(variant)
+        if obj is None:
+            return None
+        fields, required = obj
+        discriminator = fields.get(tag)
+        if (tag not in required or not shape(discriminator, ("type", "enum"))
+                or discriminator.get("type") != "string"):
+            return None
+        tags = discriminator.get("enum")
+        if not isinstance(tags, list) or len(tags) != 1 or not isinstance(tags[0], str) or tags[0] in result:
+            return None
+        result[tags[0]] = obj
+    return result
+
+
 def union_variants(root, filename):
-    if (not isinstance(root, dict) or root.get("title") != filename[:-5]
+    if (not shape(root, ("$schema", "oneOf", "definitions")) or root.get("title") != filename[:-5]
             or root.get("$schema") != "http://json-schema.org/draft-07/schema#"
-            or not isinstance(root.get("definitions"), dict) or not isinstance(root.get("oneOf"), list)
-            or not root["oneOf"]):
+            or not isinstance(root.get("definitions"), dict)):
         raise Refusal("unsupported")
-    variants = {}
-    for variant in root["oneOf"]:
-        if not isinstance(variant, dict) or variant.get("type") != "object":
-            raise Refusal("unsupported")
-        fields = variant.get("properties")
-        required = variant.get("required")
-        method = fields.get("method") if isinstance(fields, dict) else None
-        tags = method.get("enum") if isinstance(method, dict) and method.get("type") == "string" else None
-        if (not isinstance(tags, list) or len(tags) != 1 or not isinstance(tags[0], str)
-                or not isinstance(required, list) or "method" not in required or tags[0] in variants):
-            raise Refusal("unsupported")
-        variants[tags[0]] = (fields, required)
+    variants = tagged_variants(root.get("oneOf"), "method")
+    if variants is None:
+        raise Refusal("unsupported")
     return variants
 
 
-def field_shape(value, expected, definitions):
-    if not isinstance(value, dict):
+def string_field(value, nullable=False):
+    return (shape(value, ("type",))
+            and (value.get("type") == "string" or nullable and value.get("type") == ["string", "null"]))
+
+
+def reference(value, name, definitions, nullable=False):
+    pointer = {"$ref": "#/definitions/" + name}
+    if nullable and shape(value, ("anyOf",)):
+        options = value.get("anyOf")
+        if not isinstance(options, list) or len(options) != 2 or {"type": "null"} not in options:
+            return None
+        value = options[1] if options[0] == {"type": "null"} else options[0]
+    if (shape(value, ("$ref",)) and value.get("$ref") == pointer["$ref"]
+            or shape(value, ("allOf",)) and value.get("allOf") == [pointer]):
+        return definitions.get(name)
+    return None
+
+
+def integer_field(value, formats, minimum=None):
+    return (shape(value, ("type", "format", "minimum"))
+            and value.get("type") == "integer" and value.get("format") in formats
+            and (type(value.get("minimum")) is int and value["minimum"] == minimum
+                 if minimum is not None else "minimum" not in value))
+
+
+def request_id(value):
+    if string_field(value):
+        return True
+    if not shape(value, ("anyOf",)) or not isinstance(value.get("anyOf"), list) or len(value["anyOf"]) != 2:
         return False
-    if expected.startswith("#/"):
-        name = expected.rsplit("/", 1)[-1]
-        target = definitions.get(name)
-        if (value.get("$ref") == expected or value.get("allOf") == [{"$ref": expected}]):
-            if not isinstance(target, dict):
-                return False
-            if name in ("ReasoningEffort", "AskForApproval", "SandboxMode", "TurnStatus"):
-                return (target.get("type") == "string" and isinstance(target.get("enum"), list)
-                        and bool(target["enum"]) and all(isinstance(item, str) for item in target["enum"]))
-            return any(key in target for key in ("type", "oneOf", "anyOf"))
+    first, second = value["anyOf"]
+    return any(string_field(text) and integer_field(number, (None, "int64")) for text, number in
+               ((first, second), (second, first)))
+
+
+def named_enum(value, known, needed=()):
+    if not shape(value, ("type", "enum")) or value.get("type") != "string":
         return False
-    return value.get("type") in (expected, [expected, "null"])
+    choices = value.get("enum")
+    return (isinstance(choices, list) and bool(choices) and all(isinstance(item, str) for item in choices)
+            and len(set(choices)) == len(choices) and set(needed) <= set(choices) <= set(known))
 
 
-def typed_object(schema, expected, definitions):
-    if not isinstance(schema, dict) or schema.get("type") != "object":
+def required_fields(value, checks):
+    obj = object_fields(value)
+    if obj is None:
         return False
-    properties, required = schema.get("properties"), schema.get("required")
-    return (isinstance(properties, dict) and isinstance(required, list)
-            and all(key in required and field_shape(properties.get(key), shape, definitions)
-                    for key, shape in expected.items()))
+    fields, required = obj
+    return required == checks.keys() and all(check(fields[key]) for key, check in checks.items())
 
 
-def text_input(schema):
-    if not isinstance(schema, dict):
+def text_input(value, definitions):
+    if not shape(value, ("type", "items")) or value.get("type") != "array":
         return False
-    variants = schema.get("oneOf", [schema])
-    if not isinstance(variants, list):
-        return False
-    return any(typed_object(variant, {"type": "string", "text": "string"}, {})
-               and variant["properties"]["type"].get("enum") == ["text"] for variant in variants)
+    schema = reference(value.get("items"), "UserInput", definitions)
+    variants = tagged_variants(schema.get("oneOf") if shape(schema, ("oneOf",)) and "oneOf" in schema
+                               else [schema], "type")
+    fields, required = variants.get("text", ({}, set())) if variants is not None else ({}, set())
+    return required == {"type", "text"} and string_field(fields.get("text"))
 
 
-def has_method(root, variants, method, params, properties, request):
-    fields, required = variants.get(method, ({}, []))
+def feature_field(name, value, definitions):
+    if name in ("threadId", "turnId"):
+        return string_field(value)
+    if name in ("cwd", "model"):
+        return string_field(value, nullable=True)
+    if name == "input":
+        return text_input(value, definitions)
+    if name == "approvalPolicy":
+        return named_enum(reference(value, "AskForApproval", definitions, nullable=True),
+                          ("never", "on-request", "on-failure", "untrusted"))
+    if name == "sandbox":
+        return named_enum(reference(value, "SandboxMode", definitions, nullable=True),
+                          ("read-only", "workspace-write", "danger-full-access"))
+    if name == "effort":
+        return named_enum(reference(value, "ReasoningEffort", definitions, nullable=True),
+                          ("none", "minimal", "low", "medium", "high", "xhigh"))
+    if name == "turn":
+        def terminal(status):
+            if not shape(status, ("type", "enum")):
+                status = reference(status, "TurnStatus", definitions)
+            return named_enum(status, ("completed", "interrupted", "failed", "inProgress"),
+                              ("completed", "interrupted", "failed"))
+        return required_fields(reference(value, "Turn", definitions), {"id": string_field, "status": terminal})
+    if name == "tokenUsage":
+        def breakdown(value):
+            def count(value):
+                return integer_field(value, (None, "uint32", "uint64"), minimum=0)
+            return required_fields(reference(value, "TokenUsageBreakdown", definitions),
+                                   {key: count for key in ("inputTokens", "outputTokens", "totalTokens")})
+        return required_fields(reference(value, "ThreadTokenUsage", definitions),
+                               {"last": breakdown, "total": breakdown})
+    return False
+
+
+def has_method(root, variants, method, params, needed, declarations, request):
+    fields, required = variants.get(method, ({}, set()))
     definitions = root["definitions"]
-    if "params" not in required or (request and ("id" not in required
-            or not field_shape(fields.get("id"), "#/definitions/RequestId", definitions))):
+    if required != ({"method", "id", "params"} if request else {"method", "params"}):
         return False
-    ref = fields.get("params")
-    definition = definitions.get(params)
-    if (not isinstance(ref, dict) or ref.get("$ref") != "#/definitions/" + params
-            or not isinstance(definition, dict) or definition.get("type") != "object"):
+    if request and not request_id(reference(fields.get("id"), "RequestId", definitions)):
         return False
-    fields = definition.get("properties")
-    if not isinstance(fields, dict):
+    obj = object_fields(reference(fields.get("params"), params, definitions))
+    if obj is None:
         return False
-    required = definition.get("required", [])
-    for key in ("threadId", "turnId", "input", "turn", "tokenUsage"):
-        if key in properties and (not isinstance(required, list) or key not in required):
-            return False
-    if "input" in properties and (not isinstance(fields.get("input"), dict)
-                                  or not field_shape(fields["input"].get("items"),
-                                                     "#/definitions/UserInput", definitions)
-                                  or not text_input(definitions.get("UserInput"))):
-        return False
-    if "turn" in properties:
-        turn = definitions.get("Turn")
-        if not any(typed_object(turn, {"id": "string", "status": shape}, definitions)
-                   for shape in ("string", "#/definitions/TurnStatus")):
-            return False
-    return all(field_shape(fields.get(key), shape, definitions) for key, shape in properties.items())
+    fields, required = obj
+    return (set(needed) <= required <= set(needed + declarations)
+            and all(feature_field(key, fields.get(key), definitions) for key in needed + declarations))
 
 
 def static_schema(root, cli: Optional[CliMetadata]) -> ProtocolMetadata:
@@ -374,19 +472,16 @@ def static_schema(root, cli: Optional[CliMetadata]) -> ProtocolMetadata:
         if info.st_uid != os.getuid() or info.st_mode & 0o077:
             raise Refusal("unsafe-path")
         for name in SCHEMA_FILES:
-            fd = open_component(parent, name, root + "/" + name, False)
-            try:
-                content, checksum = read_content(fd, 1024 * 1024)
-            finally:
-                os.close(fd)
+            with opened_file(parent, name, root + "/" + name) as fd:
+                content, checksum = read_content(fd, root + "/" + name, 1024 * 1024, 1024 * 1024)
             document = read_schema(content)
             documents.append(document)
             variants.append(union_variants(document, name))
             refs.append({"id": name, "digest": checksum})
     return {"layout": "schemars-draft7-unions-v1", "source": "operator-declared-static-export",
             "binary": cli["ref"], "version": cli["version"], "files": refs,
-            "features": {name: has_method(documents[index], variants[index], method, params, fields, index == 0)
-                         for name, (index, method, params, fields) in METHODS.items()}}
+            "features": {name: has_method(documents[index], variants[index], method, params, needed, declarations, index == 0)
+                         for name, (index, method, params, needed, declarations) in METHODS.items()}}
 
 
 def timeout(_signum, _frame):

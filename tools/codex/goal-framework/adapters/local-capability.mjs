@@ -9,6 +9,7 @@ const freshnessMs = 10 * 60_000;
 const sha = /^[a-f0-9]{40}$/;
 const hash = /^[a-f0-9]{64}$/;
 const id = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}$/;
+const repositoryName = /^[a-z0-9][a-z0-9-]{0,63}\/[a-z0-9][a-z0-9_.-]{0,95}$/;
 const version = /^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}(?:-[a-z0-9]+(?:\.[a-z0-9]+){0,4})?$/;
 const reasons = ['missing', 'denied', 'unobserved', 'unsupported', 'malformed', 'oversized', 'unsafe-path',
   'changed', 'binding-mismatch', 'deadline', 'not-selected'];
@@ -17,15 +18,19 @@ const features = ['thread_identity_cwd', 'exact_prompt', 'model_effort', 'permis
   'terminal', 'usage'];
 const nativeControls = ['hard_ceiling', 'deadline_watchdog', 'host_isolation', 'foreground_capacity', 'kill_switch',
   'publication_fence', 'late_usage', 'artifact_retention', 'credential_separation', 'native_identity'];
-const unknownHandoff = Object.freeze({ status: 'unverified', trust: 'unknown', evidence: null });
+const unknownHandoff = { status: 'unverified', trust: 'unknown', evidence: null };
 
 const matches = (pattern, value) => typeof value === 'string' && pattern.exec(value)?.[0] === value;
 const pinVersion = (value) => matches(version, value) && value.length <= 64;
-const fields = (value, keys) => exactFields(value, keys, 'LOCAL_CAPABILITY_FIELDS');
+const copy = (value) => JSON.parse(canonicalJson(value, reportBytes));
+const fields = (value, keys) => exactFields(copy(value), keys, 'LOCAL_CAPABILITY_FIELDS');
 
-function checkRef(ref, expected) {
+function checkRef(raw, expected) {
+  const ref = fields(raw, ['id', 'digest']);
   resourceRef(ref);
-  requireResource(ref.id === expected && matches(hash, ref.digest), 'LOCAL_CAPABILITY_REFERENCE');
+  requireResource(matches(id, ref.id) && matches(hash, ref.digest)
+    && (expected === undefined || ref.id === expected), 'LOCAL_CAPABILITY_REFERENCE');
+  return ref;
 }
 
 function observation(raw, check) {
@@ -95,11 +100,12 @@ function unverified(names) {
   return Object.fromEntries(names.map((name) => [name, { status: 'unverified', evidence: [] }]));
 }
 
+function fresh(observed, now) {
+  return observed <= now && now - observed <= freshnessMs;
+}
+
 function matchesHost(report, context) {
-  const now = resourceTime(context.now);
-  const observed = resourceTime(report.observed_at);
-  return observed <= now && now - observed <= freshnessMs
-    && report.head === context.head && report.control_revision === context.control_revision
+  return report.head === context.head && report.control_revision === context.control_revision
     && matches(id, context.host_id) && matches(id, context.environment) && matches(id, context.worker)
     && matches(hash, context.config_digest) && matches(hash, context.permissions_digest)
     && matches(hash, context.binary_digest) && context.binary_digest === report.cli.value?.ref.digest
@@ -107,34 +113,38 @@ function matchesHost(report, context) {
     && context.app_digest === (report.app.value?.ref.digest ?? null);
 }
 
-// Context, clock, envelope, verifier and external proof must come from the
-// supervisor. The producer report is only data. No observation installs a port.
-export function localCapabilityInventory(raw, context) {
+function evaluateHost(report, reportRef, readSupervisor) {
+  const { verify, envelope: rawEnvelope, now: rawNow, observation, ...rawIdentity } = readSupervisor();
+  const envelope = fields(rawEnvelope, ['repository', 'id', 'revision', 'created_at', 'producer']);
+  requireResource(envelope.producer?.role === 'supervisor' && matches(repositoryName, envelope.repository),
+    'LOCAL_CAPABILITY_SUPERVISOR');
+  const now = resourceTime(rawNow);
+  if (report.schema !== reportSchema || observation == null) {
+    return { envelope, now, verify, binding: null,
+      reason: report.schema === reportSchema ? 'external-observation-required' : 'invalid-input' };
+  }
+  const identity = fields(rawIdentity, ['head', 'control_revision', 'host_id', 'environment', 'worker',
+    'config_digest', 'permissions_digest', 'binary_digest', 'tool_version', 'app_digest']);
+  const proof = fields(observation, ['evidence', 'observed_at']);
+  const evidence = checkRef(proof.evidence);
+  const observed = resourceTime(report.observed_at);
+  const proofTime = resourceTime(proof.observed_at);
+  if (!fresh(observed, now) || proofTime < observed || !fresh(proofTime, now)
+      || !matchesHost(report, identity) || evidence.id === reportRef.id || evidence.digest === reportRef.digest) {
+    return { envelope, now, verify, binding: null, reason: 'stale-or-mismatched-observation' };
+  }
+  const binding = { ...identity, repository: envelope.repository, report: reportRef, evidence, observed_at: proof.observed_at };
+  resourceAttest(verify, 'local_capability_host_observation', binding);
+  return { envelope, now, verify, binding, reason: 'native-enforcement-unverified' };
+}
+
+// The supervisor supplies current time, expected identity and external proof
+// on every evaluation. The report is only data and never installs a port.
+export function localCapabilityInventory(raw, readSupervisor) {
+  requireResource(typeof readSupervisor === 'function', 'LOCAL_CAPABILITY_SUPERVISOR');
   const report = readLocalCapability(raw);
   const reportRef = { id: 'local-capability-observation', digest: digest(report) };
-  resourceRef(reportRef);
-  const envelope = fields(context.envelope, ['repository', 'id', 'revision', 'created_at', 'producer']);
-  requireResource(envelope.producer?.role === 'supervisor', 'LOCAL_CAPABILITY_SUPERVISOR');
-  const proof = context.observation ?? null;
-  let binding = null;
-  let reason = report.schema === reportSchema ? 'external-observation-required' : 'invalid-input';
-  if (report.schema === reportSchema && proof !== null) {
-    fields(proof, ['evidence', 'observed_at']);
-    resourceRef(proof.evidence);
-    const proofTime = resourceTime(proof.observed_at);
-    if (matchesHost(report, context) && proofTime >= resourceTime(report.observed_at)
-        && proofTime <= resourceTime(context.now) && proof.evidence.digest !== reportRef.digest) {
-      binding = { report: reportRef, evidence: proof.evidence, observed_at: proof.observed_at,
-        repository: envelope.repository, head: context.head, control_revision: context.control_revision,
-        host_id: context.host_id, environment: context.environment, worker: context.worker,
-        config_digest: context.config_digest, permissions_digest: context.permissions_digest,
-        binary_digest: context.binary_digest, tool_version: context.tool_version, app_digest: context.app_digest };
-      resourceAttest(context.verify, 'local_capability_host_observation', binding);
-      reason = 'native-enforcement-unverified';
-    } else {
-      reason = 'stale-or-mismatched-observation';
-    }
-  }
+  const { envelope, binding, reason } = evaluateHost(report, reportRef, readSupervisor);
 
   const runner = validateRecord({ ...envelope, schema: 'RUNNER_CAPABILITIES_V1', surface: 'local', product: 'codex',
     runtime_version: binding ? report.app.value?.version ?? null : null,
@@ -148,23 +158,26 @@ export function localCapabilityInventory(raw, context) {
   // The existing handoff also authenticates the returned inventory under its
   // current gate. This earlier review pins UI trust to a specific request and
   // selection, before the narrow {status, trust, evidence} port is populated.
-  function handoffInventory(request, selection = null) {
-    if (binding === null || request.repository !== binding.repository || request.host_id !== binding.host_id
+  function handoffInventory(rawRequest, rawSelection = null) {
+    const request = copy(rawRequest);
+    const selection = rawSelection === null ? null : fields(rawSelection, ['evidence', 'session', 'trust', 'observed_at']);
+    const { binding, now, verify } = evaluateHost(report, reportRef, readSupervisor);
+    if (binding === null || request?.schema !== 'PFM_PREPARATION_REQUEST_V1'
+        || !['new', 'resume'].includes(request.mode) || request.repository !== binding.repository || request.host_id !== binding.host_id
         || request.environment !== binding.environment || request.worker !== binding.worker
         || request.parser_revision !== binding.control_revision || preparationHead(request) !== binding.head) {
-      return unknownHandoff;
+      return { ...unknownHandoff };
     }
-    if (selection === null) return { status: 'observed', trust: 'unknown', evidence: binding.evidence };
-    fields(selection, ['evidence', 'session', 'trust', 'observed_at']);
-    resourceRef(selection.evidence);
-    resourceRef(selection.session);
+    if (selection === null) return { status: 'observed', trust: 'unknown', evidence: { ...binding.evidence } };
+    checkRef(selection.evidence);
+    checkRef(selection.session);
     const time = resourceTime(selection.observed_at);
     requireResource(['pending', 'observed'].includes(selection.trust) && time >= resourceTime(binding.observed_at)
-      && time <= resourceTime(context.now) && selection.evidence.digest !== reportRef.digest
+      && fresh(time, now) && selection.evidence.digest !== reportRef.digest
       && selection.evidence.digest !== binding.evidence.digest, 'LOCAL_CAPABILITY_TRUST');
-    resourceAttest(context.verify, 'local_capability_hook_trust', { host: binding, request_digest: digest(request), selection });
+    resourceAttest(verify, 'local_capability_hook_trust', { host: binding, request_digest: digest(request), selection });
     return { status: 'observed', trust: selection.trust, evidence: selection.evidence };
   }
 
-  return { reason, report: reportRef, runtime, handoffInventory };
+  return { reason, report: { ...reportRef }, runtime, handoffInventory };
 }

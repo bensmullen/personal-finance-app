@@ -31,7 +31,7 @@
     }
   ],
   "definitions": {
-    "RequestId": { "type": "string" },
+    "RequestId": { "anyOf": [{ "type": "string" }, { "type": "integer", "format": "int64" }] },
     "ThreadStartParams": {
       "type": "object",
       "properties": {
@@ -47,7 +47,7 @@
         "threadId": { "type": "string" },
         "input": { "type": "array", "items": { "$ref": "#/definitions/UserInput" } },
         "model": { "type": ["string", "null"] },
-        "effort": { "$ref": "#/definitions/ReasoningEffort" }
+        "effort": { "anyOf": [{ "$ref": "#/definitions/ReasoningEffort" }, { "type": "null" }] }
       }
     },
     "TurnInterruptParams": {
@@ -55,11 +55,18 @@
       "required": ["threadId", "turnId"],
       "properties": { "threadId": { "type": "string" }, "turnId": { "type": "string" } }
     },
-    "UserInput": {
-      "type": "object",
-      "required": ["type", "text"],
-      "properties": { "type": { "enum": ["text"], "type": "string" }, "text": { "type": "string" } }
-    },
+    "UserInput": { "oneOf": [
+      {
+        "type": "object",
+        "required": ["type", "text"],
+        "properties": { "type": { "enum": ["text"], "type": "string" }, "text": { "type": "string" } }
+      },
+      {
+        "type": "object",
+        "required": ["type", "url"],
+        "properties": { "type": { "enum": ["image"], "type": "string" }, "url": { "type": "string" } }
+      }
+    ] },
     "AskForApproval": { "type": "string", "enum": ["never", "on-request"] },
     "SandboxMode": { "type": "string", "enum": ["read-only", "workspace-write"] },
     "ReasoningEffort": { "type": "string", "enum": ["low", "medium", "high"] }
