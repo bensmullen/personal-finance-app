@@ -23,6 +23,9 @@ VERSION = re.compile(r"[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}(?:-[a-z0-9]+(?:\.[a-z0
 SHA = re.compile(r"[a-f0-9]{40}")
 HASH = re.compile(r"[a-f0-9]{64}")
 SCHEMA_FILES = ("ClientRequest.json", "ServerNotification.json")
+DEFAULT_APP = "/Applications/Codex.app"
+DEFAULT_PLIST = DEFAULT_APP + "/Contents/Info.plist"
+DEFAULT_CLI = DEFAULT_APP + "/Contents/Resources/codex"
 METHODS = {
     "thread_identity_cwd": (0, "thread/start", "ThreadStartParams", (), ("cwd",)),
     "exact_prompt": (0, "turn/start", "TurnStartParams", ("threadId", "input"), ()),
@@ -73,7 +76,7 @@ class Observation(TypedDict):
     value: Optional[ObservationValue]
 
 
-class Report(TypedDict):
+class StrictReport(TypedDict):
     schema: Literal["PFM_LOCAL_CAPABILITY_OBSERVATION_V1"]
     surface: Literal["local"]
     observed_at: str
@@ -82,6 +85,10 @@ class Report(TypedDict):
     app: Observation
     cli: Observation
     protocol: Observation
+
+
+class Report(StrictReport, total=False):
+    path_policy: Literal["macos-applications-advisory"]
 
 
 class InputError(TypedDict):
@@ -115,12 +122,34 @@ def matches(pattern, value, limit=64):
     return isinstance(value, str) and len(value) <= limit and pattern.fullmatch(value) is not None
 
 
+def primitive(call, *args, **kwargs):
+    try:
+        return call(*args, **kwargs)
+    except (AttributeError, NotImplementedError):
+        raise Refusal("unsupported") from None
+    except OSError as error:
+        if error.errno in (errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP):
+            raise Refusal("unsupported") from None
+        raise
+
+
 def descriptor_path(fd):
     if sys.platform == "darwin":
-        import fcntl
-        return os.fsdecode(fcntl.fcntl(fd, 50, bytes(1024)).split(b"\0", 1)[0])  # F_GETPATH
+        try:
+            import fcntl
+            result = primitive(lambda: fcntl.fcntl(fd, 50, bytes(1024)))  # F_GETPATH
+        except ImportError:
+            raise Refusal("unsupported") from None
+        except OSError as error:
+            if error.errno == errno.EINVAL:
+                raise Refusal("unsupported") from None
+            raise
+        return os.fsdecode(result.split(b"\0", 1)[0])
     if sys.platform == "linux":
-        return os.readlink("/proc/self/fd/" + str(fd))
+        try:
+            return primitive(os.readlink, "/proc/self/fd/" + str(fd))
+        except FileNotFoundError:
+            raise Refusal("unsupported") from None
     raise Refusal("unsupported")
 
 
@@ -134,89 +163,121 @@ def path_parts(path):
     return parts
 
 
-def safe_identity(info, path):
+def safe_identity(info, path, advisory=False):
     shared_temp = (path in ("/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp")
                    and info.st_uid == 0 and info.st_mode & stat.S_ISVTX)
-    if info.st_uid not in (0, os.getuid()) or (info.st_mode & 0o022 and not shared_temp):
+    applications = (advisory and sys.platform == "darwin" and path == "/Applications"
+                    and stat.S_ISDIR(info.st_mode) and info.st_uid == 0 and info.st_gid == 80
+                    and not info.st_mode & 0o002)
+    if info.st_uid not in (0, os.getuid()) or (info.st_mode & 0o022 and not (shared_temp or applications)):
         raise Refusal("unsafe-path")
 
 
-def open_component(parent, name, path, directory):
-    before = os.stat(name, dir_fd=parent, follow_symlinks=False)
+def open_component(parent, name, path, directory, advisory=False):
+    before = primitive(os.stat, name, dir_fd=parent, follow_symlinks=False)
     expected_type = stat.S_ISDIR if directory else stat.S_ISREG
     if not expected_type(before.st_mode) or (not directory and before.st_nlink != 1):
         raise Refusal("unsafe-path")
-    safe_identity(before, path)
-    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
-    fd = os.open(name, flags | (os.O_DIRECTORY if directory else 0), dir_fd=parent)
+    safe_identity(before, path, advisory)
+    flags = primitive(lambda: os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | (os.O_DIRECTORY if directory else 0))
+    fd = primitive(os.open, name, flags, dir_fd=parent)
     try:
-        after = os.fstat(fd)
-        if file_identity(before) != file_identity(after) or descriptor_path(fd) != path:
+        identity = descriptor_identity(fd)
+        if file_identity(before) != identity or descriptor_path(fd) != path:
             raise Refusal("unsafe-path")
     except BaseException:
-        os.close(fd)
+        primitive(os.close, fd)
         raise
-    return fd
+    return fd, identity
 
 
 def file_identity(info):
-    return (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid,
-            info.st_size, info.st_ctime_ns, info.st_mtime_ns, info.st_nlink)
+    return primitive(lambda: (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid,
+                              info.st_size, info.st_ctime_ns, info.st_mtime_ns, info.st_nlink))
+
+
+def descriptor_identity(fd):
+    return file_identity(primitive(os.fstat, fd))
 
 
 @contextmanager
 def opened_file(parent, name, path):
-    fd = open_component(parent, name, path, False)
+    fd, original = open_component(parent, name, path, False)
     try:
-        original = os.fstat(fd)
-        safe_identity(original, path)
         yield fd
         try:
-            current = os.stat(name, dir_fd=parent, follow_symlinks=False)
-        except OSError:
+            current = primitive(os.stat, name, dir_fd=parent, follow_symlinks=False)
+        except (FileNotFoundError, NotADirectoryError):
             raise Refusal("changed") from None
-        if file_identity(current) != file_identity(original) or descriptor_path(fd) != path:
+        if (file_identity(current) != original or descriptor_identity(fd) != original
+                or descriptor_path(fd) != path):
             raise Refusal("changed")
     finally:
-        os.close(fd)
+        primitive(os.close, fd)
 
 
 @contextmanager
-def opened(path, directory=False):
+def opened_path(path, directory, ancestry=None):
     parts = path_parts(path)
-    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+    fd = primitive(lambda: os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW))
     current = ""
     try:
+        if ancestry is not None:
+            root = primitive(os.fstat, fd)
+            if not stat.S_ISDIR(root.st_mode) or descriptor_path(fd) != "/":
+                raise Refusal("unsafe-path")
+            safe_identity(root, "/")
+            ancestry.append(file_identity(root))
         for index, part in enumerate(parts):
             current += "/" + part
             if not directory and index == len(parts) - 1:
                 with opened_file(fd, part, current) as child:
                     yield child
                 return
-            child = open_component(fd, part, current, True)
-            os.close(fd)
-            fd = child
+            child, identity = open_component(fd, part, current, True, ancestry is not None)
+            parent, fd = fd, child
+            primitive(os.close, parent)
+            if ancestry is not None:
+                ancestry.append(identity)
         yield fd
     finally:
-        os.close(fd)
+        primitive(os.close, fd)
+
+
+@contextmanager
+def opened(path, directory=False, advisory=False):
+    if advisory and (directory or path not in (DEFAULT_PLIST, DEFAULT_CLI)):
+        raise Refusal("unsafe-path")
+    ancestry = [] if advisory else None
+    with opened_path(path, directory, ancestry) as fd:
+        if ancestry is None:
+            yield fd
+            return
+        original = descriptor_identity(fd)
+        yield fd
+        # Rewalk the selected path from root while the original file is still open.
+        current = []
+        with opened_path(path, False, current) as rebound:
+            if current != ancestry or descriptor_identity(rebound) != original:
+                raise Refusal("changed")
 
 
 def read_content(fd, path, limit, retain_limit):
-    before = os.fstat(fd)
+    before = primitive(os.fstat, fd)
     if before.st_size > limit:
         raise Refusal("oversized")
     total = 0
     content = bytearray()
     checksum = hashlib.sha256()
     while total < before.st_size:
-        chunk = os.read(fd, min(64 * 1024, before.st_size - total))
+        chunk = primitive(os.read, fd, min(64 * 1024, before.st_size - total))
         if not chunk:
             raise Refusal("changed")
         total += len(chunk)
         checksum.update(chunk)
         if len(content) < retain_limit:
             content.extend(chunk[:retain_limit - len(content)])
-    after = os.fstat(fd)
+    after = primitive(os.fstat, fd)
     if file_identity(before) != file_identity(after) or after.st_nlink != 1:
         raise Refusal("changed")
     if descriptor_path(fd) != path:
@@ -241,11 +302,11 @@ def observe(read: Callable[[], ObservationValue]) -> Observation:
         return {"status": "unobserved", "reason": reason(error), "value": None}
 
 
-def app_metadata(root) -> AppMetadata:
+def app_metadata(root, advisory=False) -> AppMetadata:
     if path_parts(root)[-1] != "Codex.app":
         raise Refusal("unsafe-path")
     path = root + "/Contents/Info.plist"
-    with opened(path) as fd:
+    with opened(path, advisory=advisory) as fd:
         content, checksum = read_content(fd, path, 128 * 1024, 128 * 1024)
     info = plistlib.loads(content, dict_type=UniqueDict)
     if not isinstance(info, dict) or info.get("CFBundleIdentifier") != "com.openai.codex":
@@ -270,11 +331,11 @@ def binary_platform(header):
     raise Refusal("unsupported")
 
 
-def cli_metadata(path, declared_version, expected_digest) -> CliMetadata:
+def cli_metadata(path, declared_version, expected_digest, advisory=False) -> CliMetadata:
     if path_parts(path)[-1] != "codex":
         raise Refusal("unsafe-path")
-    with opened(path) as fd:
-        if not os.fstat(fd).st_mode & 0o111:
+    with opened(path, advisory=advisory) as fd:
+        if not primitive(os.fstat, fd).st_mode & 0o111:
             raise Refusal("unsupported")
         header, checksum = read_content(fd, path, 256 * 1024 * 1024, 64)
         platform, arch = binary_platform(header)
@@ -468,7 +529,7 @@ def static_schema(root, cli: Optional[CliMetadata]) -> ProtocolMetadata:
         raise Refusal("binding-mismatch")
     documents, variants, refs = [], [], []
     with opened(root, directory=True) as parent:
-        info = os.fstat(parent)
+        info = primitive(os.fstat, parent)
         if info.st_uid != os.getuid() or info.st_mode & 0o077:
             raise Refusal("unsafe-path")
         for name in SCHEMA_FILES:
@@ -484,10 +545,6 @@ def static_schema(root, cli: Optional[CliMetadata]) -> ProtocolMetadata:
                          for name, (index, method, params, needed, declarations) in METHODS.items()}}
 
 
-def timeout(_signum, _frame):
-    raise Refusal("deadline")
-
-
 class Arguments(argparse.ArgumentParser):
     def error(self, _message):
         raise Refusal("invalid-input")
@@ -497,7 +554,9 @@ def options():
     parser = Arguments(allow_abbrev=False, add_help=False)
     parser.add_argument("--head", action="append", required=True)
     parser.add_argument("--control-revision", action="append", required=True)
-    for name in ("app-root", "cli-path", "cli-version", "cli-sha256", "schema-root"):
+    parser.add_argument("--allow-macos-applications-advisory", action="append_const", const=True)
+    overrides = ("app-root", "cli-path", "cli-version", "cli-sha256", "schema-root")
+    for name in overrides:
         parser.add_argument("--" + name, action="append")
     args = parser.parse_args()
     for name, values in vars(args).items():
@@ -505,6 +564,8 @@ def options():
             raise Refusal("invalid-input")
         setattr(args, name, values[0] if values else None)
     if (not matches(SHA, args.head) or not matches(SHA, args.control_revision)
+            or args.allow_macos_applications_advisory and any(
+                getattr(args, name.replace("-", "_")) is not None for name in overrides)
             or bool(args.cli_version) != bool(args.cli_sha256)
             or args.cli_sha256 is not None and not matches(HASH, args.cli_sha256)
             or args.cli_version is not None and not matches(VERSION, args.cli_version)
@@ -517,6 +578,19 @@ def emit(value: Union[Report, InputError]) -> None:
     print(json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False))
 
 
+def timer_primitive(call):
+    try:
+        return primitive(call)
+    except ValueError:
+        raise Refusal("unsupported") from None
+
+
+def start_clock(on_timeout):
+    deadline = primitive(lambda: time.monotonic()) + 7.5
+    timer_primitive(lambda: signal.signal(signal.SIGALRM, on_timeout))
+    return deadline
+
+
 def main() -> int:
     try:
         args = options()
@@ -524,34 +598,56 @@ def main() -> int:
         emit({"schema": "PFM_LOCAL_CAPABILITY_ERROR_V1", "reason": "invalid-input"})
         return 2
     observed_at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    deadline = time.monotonic() + 7.5
+    timer_active = False
+
+    def on_timeout(_signum, _frame):
+        if timer_active:
+            raise Refusal("deadline")
+
+    try:
+        deadline = start_clock(on_timeout)
+    except (Refusal, OSError) as error:
+        clock_error = reason(error)
+        deadline = None
 
     def bounded(read: Callable[[], ObservationValue]) -> Observation:
+        if deadline is None:
+            return {"status": "unobserved", "reason": clock_error, "value": None}
+
         def collect():
-            started = time.monotonic()
+            nonlocal timer_active
+            started = primitive(lambda: time.monotonic())
             end = min(started + 2.5, deadline)
             if started >= end:
                 raise Refusal("deadline")
+            armed = False
             try:
-                signal.setitimer(signal.ITIMER_REAL, end - started)
+                timer_primitive(lambda: signal.setitimer(signal.ITIMER_REAL, end - started))
+                armed = True
+                timer_active = True
                 result = read()
             finally:
-                signal.setitimer(signal.ITIMER_REAL, 0)
-            if time.monotonic() > end:
+                timer_active = False
+                if armed:
+                    timer_primitive(lambda: signal.setitimer(signal.ITIMER_REAL, 0))
+            if primitive(lambda: time.monotonic()) > end:
                 raise Refusal("deadline")
             return result
 
         return observe(collect)
 
-    signal.signal(signal.SIGALRM, timeout)
-    cli_path = "/Applications/Codex.app/Contents/Resources/codex" if args.cli_path is None else args.cli_path
-    app_root = "/Applications/Codex.app" if args.app_root is None else args.app_root
-    cli = bounded(lambda: cli_metadata(cli_path, args.cli_version, args.cli_sha256))
-    app = bounded(lambda: app_metadata(app_root))
-    schema = bounded(lambda: static_schema(args.schema_root, cast(Optional[CliMetadata], cli["value"]))
-                     if args.schema_root is not None else no_schema())
-    emit({"schema": "PFM_LOCAL_CAPABILITY_OBSERVATION_V1", "surface": "local", "observed_at": observed_at,
-          "head": args.head, "control_revision": args.control_revision, "app": app, "cli": cli, "protocol": schema})
+    advisory = args.allow_macos_applications_advisory is True
+    cli_path = DEFAULT_CLI if args.cli_path is None else args.cli_path
+    app_root = DEFAULT_APP if args.app_root is None else args.app_root
+    cli = bounded(lambda: cli_metadata(cli_path, args.cli_version, args.cli_sha256, advisory))
+    app = bounded(lambda: app_metadata(app_root, advisory))
+    schema = (observe(no_schema) if args.schema_root is None else
+              bounded(lambda: static_schema(args.schema_root, cast(Optional[CliMetadata], cli["value"]))))
+    report: Report = {"schema": "PFM_LOCAL_CAPABILITY_OBSERVATION_V1", "surface": "local", "observed_at": observed_at,
+                      "head": args.head, "control_revision": args.control_revision, "app": app, "cli": cli, "protocol": schema}
+    if advisory:
+        report["path_policy"] = "macos-applications-advisory"
+    emit(report)
     return 0
 
 

@@ -4,6 +4,7 @@ import { schemas } from '../schemas/v1.mjs';
 import { exactFields, preparationHead } from './bootstrap-host.mjs';
 
 const reportSchema = 'PFM_LOCAL_CAPABILITY_OBSERVATION_V1';
+const advisoryPolicy = 'macos-applications-advisory';
 const reportBytes = 4096;
 const freshnessMs = 10 * 60_000;
 const sha = /^[a-f0-9]{40}$/;
@@ -64,7 +65,10 @@ export function readLocalCapability(raw) {
     requireResource(report.reason === 'invalid-input', 'LOCAL_CAPABILITY_ERROR');
     return report;
   }
-  fields(report, ['schema', 'surface', 'observed_at', 'head', 'control_revision', 'app', 'cli', 'protocol']);
+  const keys = ['schema', 'surface', 'observed_at', 'head', 'control_revision', 'app', 'cli', 'protocol'];
+  const advisory = report != null && Object.hasOwn(report, 'path_policy');
+  fields(report, advisory ? [...keys, 'path_policy'] : keys);
+  requireResource(!advisory || report.path_policy === advisoryPolicy, 'LOCAL_CAPABILITY_PATH_POLICY');
   requireResource(report.schema === reportSchema && report.surface === 'local'
     && matches(sha, report.head) && matches(sha, report.control_revision)
     && matches(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/, report.observed_at), 'LOCAL_CAPABILITY_IDENTITY');
@@ -93,6 +97,9 @@ export function readLocalCapability(raw) {
     fields(protocol.features, features);
     requireResource(features.every((name) => typeof protocol.features[name] === 'boolean'), 'LOCAL_CAPABILITY_FEATURES');
   });
+  requireResource(!advisory || (report.protocol.status === 'unobserved' && report.protocol.reason === 'not-selected'
+    && (report.cli.status === 'unobserved' || report.cli.value.version_source === 'unobserved')),
+  'LOCAL_CAPABILITY_ADVISORY_FIELDS');
   return report;
 }
 
@@ -118,6 +125,9 @@ function evaluateHost(report, reportRef, readSupervisor) {
   const envelope = fields(rawEnvelope, ['repository', 'id', 'revision', 'created_at', 'producer']);
   requireResource(envelope.producer?.role === 'supervisor' && matches(repositoryName, envelope.repository),
     'LOCAL_CAPABILITY_SUPERVISOR');
+  if (report.path_policy === advisoryPolicy) {
+    return { envelope, binding: null, reason: 'macos-applications-advisory-only' };
+  }
   const now = resourceTime(rawNow);
   if (report.schema !== reportSchema || observation == null) {
     return { envelope, now, verify, binding: null,
@@ -159,6 +169,7 @@ export function localCapabilityInventory(raw, readSupervisor) {
   // current gate. This earlier review pins UI trust to a specific request and
   // selection, before the narrow {status, trust, evidence} port is populated.
   function handoffInventory(rawRequest, rawSelection = null) {
+    if (report.path_policy === advisoryPolicy) return { ...unknownHandoff };
     const request = copy(rawRequest);
     const selection = rawSelection === null ? null : fields(rawSelection, ['evidence', 'session', 'trust', 'observed_at']);
     const { binding, now, verify } = evaluateHost(report, reportRef, readSupervisor);

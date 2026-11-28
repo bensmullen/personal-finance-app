@@ -30,7 +30,7 @@ from the Git preparation result and the actual hook receipt.
 
 | Interface | Documented capability | Evidence still needed for this host |
 | --- | --- | --- |
-| Desktop Remote in the ChatGPT mobile app | Connect to a desktop running Codex, start or continue supported desktop work, and inspect progress. [Remote guide](https://developers.openai.com/blog/mastering-codex-remote-for-engineering) · [ChatGPT Work and Codex](https://help.openai.com/en/articles/20001275-chatgpt-work-and-codex) | A trusted exact-worktree/session binding visible on the phone, the installed version and permissions, and an independently authenticated pre-write barrier. Account entitlement and host configuration are unknown for the proposed deployment. |
+| Desktop Remote in the ChatGPT mobile app | Connect to a desktop running Codex, start or continue supported desktop work, and inspect progress. [Remote guide](https://developers.openai.com/blog/mastering-codex-remote-for-engineering) · [ChatGPT Work and Codex](https://help.openai.com/en/articles/20001275-chatgpt-work-and-codex) | The operator observed manual project/workspace selection. Authenticated exact-worktree/session binding, installed permissions and a pre-write/pre-charge barrier still require evidence. |
 | Codex app-server and SDK | Programmatic local thread and turn operations. [Codex as a platform](https://developers.openai.com/blog/codex-as-a-platform) | A versioned, installed and permissioned bridge that exposes a matching prepared receipt before a charged turn or any possible write, along with separate credentials, hard resource limits, stop and terminal proof. Programmatic thread support alone establishes none of these. |
 | Repository hook | Actual policy source creates a non-owning PREPARED receipt in `UserPromptSubmit` and claims it at the first allowed mutation in `PreToolUse`. [Hooks documentation](https://developers.openai.com/docs/hooks) | Synthetic CI composition can exercise these two events. The installed transport still needs authenticated delivery, fencing and enforcement across every mutation entry point. |
 | Cloud | A separate documented execution surface. [Using Codex Cloud](https://help.openai.com/en/articles/20001545-using-codex-cloud) | Separate certification after local certification. |
@@ -66,12 +66,15 @@ retain preparation-only status. Local then cloud certification still gates
 
 ## Installed local capability qualification
 
-The 2026-11-27 implementation inspection found no Codex plist or bundled CLI
-at the default `/Applications/Codex.app` paths, no plist at the checked user
-Applications path, and no CLI at the two standard Homebrew binary paths
-checked. Current Desktop build, executable version and digest, schema
-support, account entitlement, and Remote visibility are unknown. The
-2026-11-25 version and build in the earlier inventory are historical.
+On the reviewed Mac, PATH Python 3.8.5 raised `NotImplementedError` on
+descriptor-relative `os.stat`. The already installed Apple Command Line Tools
+Python 3.9.6 supported the descriptor-relative stat, open and path checks.
+Under that interpreter the reviewed strict diagnostic returned app and CLI
+`unsafe-path` at the `/Applications` ancestor (mode `0o775`) and protocol
+`not-selected`. The focused owner check passed, with exact UID and GID
+undisclosed. The current installed build, executable version and digest are
+unknown and the schema is unobserved. The earlier version and build are
+historical. [Host observation](https://github.com/bensmullen/personal-finance-app/issues/368#issuecomment-7241760412)
 
 The repository fixtures are synthetic. An installed observation and a
 separately approved canary provide different evidence.
@@ -86,17 +89,17 @@ separately approved canary provide different evidence.
 | Quota and hard ceiling | Unobserved | Displayed limits and availability | GF-05 reservation, native hard ceiling and watchdog, independent capacity and kill switch |
 | Usage and late billing | Token usage notification with typed last and total counts | Available usage information | Authenticated usage, quota coverage and late settlement against the same reservation after termination |
 | Artifacts and ownership | Unobserved | Visible output and workspace ownership | Durable output, stopped-writer ownership and expected-head publication |
-| Phone visibility | Unobserved | First-party Remote offers the exact workspace and session on the phone | Authenticated binding to the same host, workspace and session used for admission |
+| Phone visibility | Unobserved | First-party Remote shows the selected workspace, branch, thread and approval controls | Authenticated binding to the same host, workspace and session used for admission |
 
-First-party Remote is the preferred candidate. Its documented host/workspace
-selection, new worktree and environment setup warrant checking whether a
-reviewed, operator-owned pre-turn setup can preserve deterministic bootstrap
-and genuine human project or hook approval. A setup script must be reviewed
-and independently bound to the expected branch, absolute path and approved
-head before prompting the worker. Static app-server export cannot establish
-Remote visibility or this setup order. Check the installed phone UI without
-submitting a prompt or running unreviewed setup. Approve genuine hook trust
-in the existing prepared worktree if required. [Remote guide](https://developers.openai.com/blog/mastering-codex-remote-for-engineering)
+First-party Remote is preferred for human-supervised manual V3 handoff. The
+phone UI allowed creating a project and new folder/worktree or selecting an
+existing folder/worktree, choosing an existing or new thread, and seeing
+branch/workspace and approval controls. The operator did not observe an actual
+config or hook-trust view. This establishes manual registration and selection.
+Automated registration, deterministic bootstrap from a UI-created folder,
+pre-turn setup ordering, hook trust and phone-only execution remain unproven.
+Use the reviewed manual sequence in [execution](execution.md).
+[Phone observation](https://github.com/bensmullen/personal-finance-app/issues/368#issuecomment-7241505267)
 
 A pinned app-server CLI or SDK is a separate candidate. The documented
 `turn/start` starts generation. A read-only turn followed by tool approval
@@ -117,7 +120,10 @@ pre-writing and pre-charge admission handshake. Any finite staged no-write
 alternative requires separate design review and PM approval. A separately
 approved actual local canary must establish enforcement before local profile
 certification. Cloud certification is separate and follows local. GF-06/P3
-and GF-07 dispatch remain gated.
+and GF-07 dispatch remain gated. After this increment merges, collect one
+actual static advisory observation and select the smallest supported supervised
+local approach or record an explicit refusal. The synthetic Darwin fixtures
+exercise the policy and cannot establish installed behavior or native certification.
 
 ## Supervisor contract
 

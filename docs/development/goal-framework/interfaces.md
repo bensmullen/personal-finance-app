@@ -142,6 +142,17 @@ the recognized declaration in that export. Request IDs, working-directory
 fields and turn thread IDs describe input fields. Returned thread identity,
 resume, entitlement and session binding require independent evidence.
 
+Strict V1 reports retain the original field set. Reports collected with
+`--allow-macos-applications-advisory` have exactly one extra top-level field,
+`path_policy: "macos-applications-advisory"`. The reader requires protocol
+`unobserved/not-selected` and an undeclared version for any observed CLI.
+Alternate paths, CLI declarations and schema inputs are incompatible with the
+flag. The probe checks exact paths and file identity, and revalidates the
+selected ancestry from root around advisory reads. Unsupported OS primitives
+produce a finite `unsupported` observation. A stable read and SHA-256 digest
+identify the bytes observed and supply no code-signing, selected endpoint,
+hook permission, Remote visibility or certification evidence.
+
 `readLocalCapability(raw)` checks closed canonical JSON. Give it the
 original UTF-8 producer text for imports so it can reject duplicate keys.
 It also accepts bounded JSON values already decoded by trusted code.
@@ -150,6 +161,14 @@ supervisor-supplied reader and returns one report reference, an advisory reason,
 a runner inventory and the narrow handoff inventory function. Refer to the
 report by its canonical digest in subsequent records. Do not attach a raw
 schema or duplicate report bodies per operation or handoff.
+
+For a marked report the inventory returns `macos-applications-advisory-only`,
+null tool and runtime versions, null authentication and resource profile, and
+19 unverified operations and 10 unverified native controls. Handoff inventory
+is always `{status: "unverified", trust: "unknown", evidence: null}`. The
+consumer never calls the host observation or hook trust verifier for a marked
+report. Its digest remains referenceable as data. Removing the marker changes
+the digest and makes the original report attestation inapplicable.
 
 The supervisor supplies its current clock, expected host, environment,
 worker, repository, head, control revision, config and permissions digests,

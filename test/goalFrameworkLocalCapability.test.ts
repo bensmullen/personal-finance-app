@@ -30,6 +30,7 @@ type Report = {
   cli: Entry<{ version: string | null; version_source: "operator-declared" | "unobserved";
     platform: "linux" | "darwin"; arch: "x86_64" | "arm64"; ref: Ref }>;
   protocol: Entry<Protocol>;
+  path_policy?: "macos-applications-advisory";
 };
 type InputError = { schema: "PFM_LOCAL_CAPABILITY_ERROR_V1"; reason: "invalid-input" };
 type Verify = (boundary: string, binding: unknown) => boolean;
@@ -117,8 +118,11 @@ const { supervisedHandoff, reviewHookPreparedForAdmission }: {
 
 const probe = fileURLToPath(new URL("../tools/codex/goal-framework/local-capability-probe.py", import.meta.url));
 const schemaFiles = ["ClientRequest.json", "ServerNotification.json"] as const;
-const schemaFixture = (name: typeof schemaFiles[number]) =>
+const fixturePath = (name: typeof schemaFiles[number] | "probe-host.py") =>
   fileURLToPath(new URL(`./fixtures/goalFramework/localCapability/${name}`, import.meta.url));
+const policy = "macos-applications-advisory";
+const advisoryFlag = `--allow-${policy}`;
+const machHeader = Buffer.from("cffaedfe0c0000010000000002000000" + "00".repeat(16), "hex");
 const head = "a".repeat(40);
 const control = "b".repeat(40);
 const tool = "0.169.0-alpha.11.1";
@@ -174,7 +178,7 @@ beforeEach(() => {
   binaryDigest = hashBytes(header);
   schema = join(dir, "schema");
   mkdirSync(schema, { mode: 0o700 });
-  for (const file of schemaFiles) copyFileSync(schemaFixture(file), join(schema, file));
+  for (const file of schemaFiles) copyFileSync(fixturePath(file), join(schema, file));
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -200,25 +204,39 @@ function reportOf(raw: string): Report {
   return report;
 }
 
+function collectHost(scenario: string, options = [advisoryFlag], exit = 0): string {
+  const result = spawnSync("python3", ["-B", fixturePath("probe-host.py"), probe, scenario, plistPath,
+    "--head", head, "--control-revision", control, ...options], { encoding: "utf8", timeout: 10_000, maxBuffer: 8192 });
+  expect(result.error).toBeUndefined();
+  expect(result.stderr).toBe("");
+  expect(result.status).toBe(exit);
+  expect(result.stdout).not.toContain("fixture-secret");
+  expect(result.stdout).not.toContain("/Applications");
+  expect(result.stdout.length).toBeLessThan(4096);
+  expect(result.stdout).toBe(canonicalJson(readLocalCapability(result.stdout)) + "\n");
+  return result.stdout;
+}
+
 type AuthorityFixture = {
   context: Context; selection: Selection; verify: Verify;
   accepted: Map<string, string>; hostBinding: object; proof: NonNullable<Context["observation"]>;
 };
 
-function authority(report: Report, payload: Request = request): AuthorityFixture {
+function authority(report: Report, payload: Request = request, expectedBinary = binaryDigest): AuthorityFixture {
   const time = report.observed_at;
   const context: Context = {
     envelope: { repository, id: "fixture-runner", revision: 1, created_at: time,
       producer: { role: "supervisor", actor: "fixture-supervisor", session: "fixture-authority" } },
     head, control_revision: control, host_id: request.host_id, environment: request.environment, worker: request.worker,
-    config_digest: digest("reviewed-config"), permissions_digest: digest("permissions"), binary_digest: binaryDigest,
+    config_digest: digest("reviewed-config"), permissions_digest: digest("permissions"),
+    binary_digest: expectedBinary,
     tool_version: tool, app_digest: hashBytes(Buffer.from(plist)), now: time, verify: () => false,
   };
   const evidence = ref("external-host-evidence");
   const hostBinding = { repository, head, control_revision: control, host_id: request.host_id,
-    environment: request.environment, worker: request.worker, config_digest: digest("reviewed-config"),
-    permissions_digest: digest("permissions"), binary_digest: binaryDigest, tool_version: tool,
-    app_digest: hashBytes(Buffer.from(plist)), observed_at: time, evidence,
+    environment: request.environment, worker: request.worker, config_digest: context.config_digest,
+    permissions_digest: context.permissions_digest, binary_digest: context.binary_digest, tool_version: tool,
+    app_digest: context.app_digest, observed_at: time, evidence,
     report: { id: "local-capability-observation", digest: digest(report) } };
   const selection: Selection = { evidence: ref("external-ui-proof"), session: ref("exact-ui-selection"),
     trust: "pending", observed_at: time };
@@ -232,6 +250,151 @@ function authority(report: Report, payload: Request = request): AuthorityFixture
 }
 
 describe("bounded local capability producer and advisory adapter", () => {
+  it("allows only the reviewed synthetic Darwin installation ancestor in advisory mode", () => {
+    const report = reportOf(collectHost("stable"));
+    expect(report).toMatchObject({ path_policy: policy,
+      app: { status: "observed", reason: null, value: { version: app, build: "27194",
+        ref: { id: "desktop-plist", digest: hashBytes(Buffer.from(plist)) } } },
+      cli: { status: "observed", reason: null, value: { version: null, version_source: "unobserved", platform: "darwin",
+        arch: "arm64", ref: { id: "cli-binary", digest: hashBytes(machHeader) } } },
+      protocol: { status: "unobserved", reason: "not-selected", value: null },
+    });
+    const strict = reportOf(collectHost("stable", []));
+    expect(strict).not.toHaveProperty("path_policy");
+    expect(strict.app.reason).toBe("unsafe-path");
+    expect(strict.cli.reason).toBe("unsafe-path");
+    expect(reportOf(collectHost("already-strict", [])).app.status).toBe("observed");
+    expect(reportOf(collectHost("already-strict"))).toMatchObject({ path_policy: policy, app: { status: "observed" } });
+    for (const scenario of ["wrong-os", "wrong-owner", "wrong-gid", "world-write", "ancestor-alias"]) {
+      const refusal = reportOf(collectHost(scenario));
+      expect(refusal.path_policy, scenario).toBe(policy);
+      expect(refusal.app.reason, scenario).toBe("unsafe-path");
+      expect(refusal.cli.reason, scenario).toBe("unsafe-path");
+    }
+    const lookalike = ["--app-root", "/Applications-lookalike/Codex.app"];
+    expect(reportOf(collectHost("stable", lookalike)).app.status).toBe("observed");
+    expect(reportOf(collectHost("lookalike", lookalike)).app.reason).toBe("unsafe-path");
+  });
+
+  it.each([
+    ["writable-descendant", "unsafe-path"], ["writable-file", "unsafe-path"],
+    ["symlink", "unsafe-path"], ["hardlink", "unsafe-path"],
+    ["fifo", "unsafe-path"], ["changed-root", "changed"], ["changed-ancestor", "changed"],
+    ["changed-file", "changed"], ["changed-open-file", "changed"], ["descriptor-alias", "changed"],
+    ["open", "unsupported"], ["post-stat", "unsupported"], ["fstat", "unsupported"],
+    ["descriptor-path", "unsupported"], ["descriptor-after-read", "unsupported"],
+    ["read", "unsupported"], ["post-stat-io", "unobserved"],
+  ])("bounds a failure at the selected CLI path (%s)", (scenario, reason) => {
+    const report = reportOf(collectHost(scenario));
+    expect(report.app.status).toBe("observed");
+    expect(report.cli).toEqual({ status: "unobserved", reason, value: null });
+  });
+
+  it.each(["stat", "root-open", "timer-arm", "timer-clear", "timer-signal", "clock", "clock-after-read", "proc-unavailable"])
+    ("reports unsupported OS capabilities without losing the protocol refusal (%s)", (scenario) => {
+      const entry = { status: "unobserved", reason: "unsupported", value: null };
+      expect(reportOf(collectHost(scenario))).toMatchObject({ path_policy: policy, app: entry, cli: entry,
+        protocol: { status: "unobserved", reason: "not-selected", value: null } });
+    });
+
+  it("keeps an unsupported descriptor-relative stat finite under strict defaults", () => {
+    const report = reportOf(collectHost("stat", []));
+    expect(report).not.toHaveProperty("path_policy");
+    expect(report.app.reason).toBe("unsupported");
+    expect(report.cli.reason).toBe("unsupported");
+    expect(report.protocol.reason).toBe("not-selected");
+  });
+
+  it.each(["schema-stat", "schema-post-stat"])("keeps strict schema primitive failures finite (%s)", (scenario) => {
+    const raw = collectHost(scenario, ["--cli-path", "/Applications/Codex.app/Contents/Resources/codex",
+      "--cli-version", tool, "--cli-sha256", hashBytes(machHeader), "--schema-root", "/fixture-schema"]);
+    const report = reportOf(raw);
+    expect(report).not.toHaveProperty("path_policy");
+    expect(report.cli.status).toBe("observed");
+    expect(report.protocol).toEqual({ status: "unobserved", reason: "unsupported", value: null });
+  });
+
+  it("rejects every advisory override, duplicate flag and invalid flag value", () => {
+    for (const options of [[advisoryFlag], ["--app-root", "/Applications/Codex.app"], ["--cli-path", "/fixture-secret/codex"],
+      ["--schema-root", "/fixture-secret"], ["--cli-version", tool], ["--cli-sha256", hashBytes(machHeader)],
+      ["--cli-version", tool, "--cli-sha256", hashBytes(machHeader)], ["--app-root="],
+      ["fixture-secret"], [`${advisoryFlag}=fixture-secret`]]) {
+      expect(readLocalCapability(collectHost("stable", [advisoryFlag, ...options], 2)))
+        .toEqual({ schema: "PFM_LOCAL_CAPABILITY_ERROR_V1", reason: "invalid-input" });
+    }
+  });
+
+  it.each([request, resumeRequest])("refuses marked host proof at actual runner and $mode handoff ports", (payload) => {
+    const raw = collectHost("stable");
+    const report = reportOf(raw);
+    const { context, proof, selection, accepted, hostBinding, verify } = authority(report, payload, hashBytes(machHeader));
+    const observed: Selection = { ...selection, trust: "observed" };
+    const hookBinding = { host: hostBinding, request_digest: digest(payload), selection: observed };
+    accepted.set("local_capability_hook_trust", digest(hookBinding));
+    expect(accepted.get("local_capability_host_observation")).toBe(digest(hostBinding));
+
+    const supervisorContext = () => ({ ...context, observation: proof });
+    const advisory = localCapabilityInventory(raw, supervisorContext);
+    expect(advisory.reason).toBe("macos-applications-advisory-only");
+    expect(advisory.report.digest).toBe(digest(report));
+    const outside = vi.fn((): never => { throw new Error("native, reservation or preparation called"); });
+    const runner = createRunnerAdapter({ surface: "local", repository, host: {
+      inventory: () => advisory.runtime, verify, clock: () => context.now,
+      commitEffect: outside, resources: { lookup: outside }, preparation: outside,
+    } });
+    const inspected = runner.probe();
+    expect(inspected.mode).toBe("manual-v3");
+    expect(inspected.runtime).toMatchObject({ runner: { runtime_version: null, tool_version: null,
+      authentication_ref: null, references: [] }, resource_profile: null });
+    for (const [controls, count] of [[inspected.runtime.runner.operations, 19], [inspected.runtime.native, 10]] as const) {
+      expect(Object.values(controls)).toEqual(Array.from({ length: count }, () => ({ status: "unverified", evidence: [] })));
+    }
+    expect(runner.prepare({ task_issue: payload.task_issue })).toMatchObject({ status: "unavailable", reason: "native-profile-uncertified" });
+    expect(runner.launch({ task_issue: payload.task_issue, grant: ref("unadmitted-grant") }))
+      .toMatchObject({ status: "unavailable", reason: "native-profile-uncertified" });
+    expect(outside).not.toHaveBeenCalled();
+
+    const serialized = preparation(payload);
+    const normalized = readPreparationRequest(serialized);
+    const gate = ref("gate");
+    const evidence = ref("git-ready");
+    const supervisor: Supervisor = {
+      withFreshHandoff(rawRequest, _phase, consume) {
+        const { request, binding } = readPreparationRequest(rawRequest);
+        expect(binding.request_digest).toBe(normalized.binding.request_digest);
+        return consume({ request, gate, verify: outside, intent: { request_digest: binding.request_digest, evidence } });
+      },
+    };
+    const host: HandoffHost = { inventory: (input) => advisory.handoffInventory(input, observed) };
+    expect(host.inventory(normalized.request)).toEqual(unknownInventory);
+    expect(advisory.handoffInventory(normalized.request)).toEqual(unknownInventory);
+    const handoff = supervisedHandoff(serialized, supervisor, host);
+    expect(handoff).toEqual({ schema: "PFM_SUPERVISED_HANDOFF_V1", request_digest: digest(payload), git_ready: evidence,
+      status: "PREPARATION_ONLY", trust: "unknown", native: "HANDOFF_UNVERIFIED", session: null,
+      prompt: "PFM_TASK_ISSUE: 368", directory: payload.target, head });
+    expect(() => reviewHookPreparedForAdmission(serialized, supervisor, handoff,
+      { session: "fixture-selection", turn: "fixture-turn", barrier: ref("unproven") }, {}, host))
+      .toThrow("HANDOFF_NATIVE_TRUST");
+    expect(verify).not.toHaveBeenCalled();
+    expect(outside).not.toHaveBeenCalled();
+    expect(verify("local_capability_host_observation", hostBinding)).toBe(true);
+    expect(verify("local_capability_hook_trust", hookBinding)).toBe(true);
+
+    const stripped = { ...report };
+    delete stripped.path_policy;
+    expect(digest(stripped)).not.toBe(advisory.report.digest);
+    expect(localCapabilityInventory(stripped, supervisorContext).handoffInventory(normalized.request, observed))
+      .toEqual(unknownInventory);
+    if (stripped.cli.status !== "observed") throw new Error("expected fixture CLI");
+    const declared: Report = { ...stripped, cli: { ...stripped.cli, value: { ...stripped.cli.value,
+      version: tool, version_source: "operator-declared" } } };
+    expect(() => localCapabilityInventory(declared, supervisorContext)).toThrow("UNAUTHENTICATED local_capability_host_observation");
+    expect(() => readLocalCapability({ ...declared, path_policy: policy })).toThrow("LOCAL_CAPABILITY_ADVISORY_FIELDS");
+    expect(() => readLocalCapability({ ...report, path_policy: "strict" })).toThrow("LOCAL_CAPABILITY_PATH_POLICY");
+    expect(() => readLocalCapability({ ...report, protocol: { ...report.protocol, reason: "unsupported" } }))
+      .toThrow("LOCAL_CAPABILITY_ADVISORY_FIELDS");
+  });
+
   it("passes actual canonical producer bytes to runner probe/prepare/launch without reserving or executing", () => {
     const raw = collect();
     const report = reportOf(raw);
@@ -245,7 +408,7 @@ describe("bounded local capability producer and advisory adapter", () => {
     expect(report.protocol).toMatchObject({ status: "observed", reason: null, value: {
       features: { thread_identity_cwd: true, exact_prompt: true, model_effort: true, permissions: true,
         turn_start: true, turn_interrupt: true, terminal: true, usage: true },
-      files: schemaFiles.map((id) => ({ id, digest: hashBytes(readFileSync(schemaFixture(id))) })),
+      files: schemaFiles.map((id) => ({ id, digest: hashBytes(readFileSync(fixturePath(id))) })),
     } });
     const { context, proof } = authority(report);
     const advisory = localCapabilityInventory(raw, () => ({ ...context, observation: proof }));
@@ -493,7 +656,7 @@ describe("bounded local capability producer and advisory adapter", () => {
     [1, '"format": "uint64", "minimum": 0', '"format": "uint64", "minimum": 0, "maximum": -1', ["usage"]],
   ] satisfies [0 | 1, string, string, string[]][])("refuses forged declarations in schema %s for %s", (index, before, after, unobserved) => {
     const name = schemaFiles[index];
-    const source = readFileSync(schemaFixture(name), "utf8");
+    const source = readFileSync(fixturePath(name), "utf8");
     expect(source).toContain(before);
     writeFileSync(join(schema, name), source.replace(before, after));
     const raw = collect();
@@ -513,11 +676,11 @@ describe("bounded local capability producer and advisory adapter", () => {
     chmodSync(file, 0o666);
     expect(reportOf(collect()).protocol.reason).toBe("unsafe-path");
     rmSync(file);
-    symlinkSync(schemaFixture(schemaFiles[0]), file);
+    symlinkSync(fixturePath(schemaFiles[0]), file);
     expect(reportOf(collect()).protocol.reason).toBe("unsafe-path");
     rmSync(file);
     const other = join(dir, "duplicate.json");
-    copyFileSync(schemaFixture(schemaFiles[0]), other);
+    copyFileSync(fixturePath(schemaFiles[0]), other);
     linkSync(other, file);
     expect(reportOf(collect()).protocol.reason).toBe("unsafe-path");
     rmSync(file);
@@ -528,7 +691,7 @@ describe("bounded local capability producer and advisory adapter", () => {
     for (const [content, reason] of [
       ['{"x":0,"x":"fixture-secret"}', "malformed"], ['{"broken":', "malformed"],
       ["[".repeat(40) + "0" + "]".repeat(40), "oversized"], ["X".repeat(1_048_577), "oversized"],
-      [readFileSync(schemaFixture(schemaFiles[0]), "utf8").replace('"oneOf":', '"not": {}, "oneOf":'), "unsupported"],
+      [readFileSync(fixturePath(schemaFiles[0]), "utf8").replace('"oneOf":', '"not": {}, "oneOf":'), "unsupported"],
     ] as const) {
       writeFileSync(file, content);
       const raw = collect();
