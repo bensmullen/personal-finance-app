@@ -99,23 +99,58 @@ contains no production installation for those services.
    acknowledgements and an external test barrier. Manual V3 remains
    available through the exact worktree and issue pointer.
 
+## Manual V3 handoff through Remote
+
+1. Run the already reviewed, merged Git bootstrap outside Codex for the exact
+   authorized branch. Select the path printed by `PR_WORKTREE_READY`, verify
+   the branch, head and expected state reported by `PR_TASK_RECEIPT`, and
+   run the printed preflight to obtain `PREFLIGHT_OK`.
+2. Register or select that exact prepared folder in the existing Desktop or
+   first-party Remote project UI. Check the selected workspace, branch and
+   thread. Complete genuine human review of the hook definitions and config
+   in Codex if prompted. The observed phone UI exposed approval controls.
+   Actual hook trust and pre-turn setup order still require direct evidence.
+3. Submit the exact issue pointer for manual V3 and confirm a fresh accepted
+   `UserPromptSubmit` in the prepared worktree before implementation. Git
+   readiness and manual V3 handoff do not establish native certification.
+   Keep the supervised result `PREPARATION_ONLY` while the independent
+   pre-write and pre-charge handshake is unresolved.
+
 ## Post-merge local capability observation
 
-Use Python 3.8 or later on macOS or Linux. Work from a reviewed merged
-checkout and independently verify the exact checkout and control commit.
-Set `PFM_REVIEWED_CHECKOUT` to its verified absolute path and
-`PFM_REVIEWED_CONTROL` to the independently reviewed full control SHA.
-The following collection reads only the default Codex desktop bundle plist
-and bundled executable. It launches no child process.
+Collect one static advisory observation after merge with the reviewed probe.
+Independently verify the merged checkout, full head and reviewed control
+commit, then set `PFM_REVIEWED_CHECKOUT`, `PFM_REVIEWED_HEAD` and
+`PFM_REVIEWED_CONTROL` to those values. On the reviewed Mac, the already
+installed Apple CLT Python 3.9.6 provided descriptor-relative stat/open and
+descriptor path checks. PATH Python 3.8.5 raised `NotImplementedError` for
+descriptor-relative stat. The probe uses Python 3.8-compatible syntax and
+requires working OS primitives and timers. Use the exact CLT interpreter
+when it is already present and compatible. The command runs only the
+default bundle plist and bundled executable metadata reads, with no child
+process from the probe.
 
 ```bash
 cd -- "${PFM_REVIEWED_CHECKOUT:?set the verified absolute checkout path}" &&
-pfm_reviewed_head="$(git rev-parse --verify HEAD)" &&
-python3 tools/codex/goal-framework/local-capability-probe.py \
-  --head "$pfm_reviewed_head" --control-revision "${PFM_REVIEWED_CONTROL:?set the reviewed control SHA}"
+test "$(git rev-parse --verify HEAD)" = "${PFM_REVIEWED_HEAD:?set the reviewed merged head}" &&
+/Library/Developer/CommandLineTools/usr/bin/python3 tools/codex/goal-framework/local-capability-probe.py \
+  --head "$PFM_REVIEWED_HEAD" --control-revision "${PFM_REVIEWED_CONTROL:?set the reviewed control SHA}" \
+  --allow-macos-applications-advisory
 ```
 
-For a nondefault installation add an operator-approved `--app-root` ending
+On Darwin this opt-in accepts group write at the exact real `/Applications`
+directory for these two paths when UID is 0, GID is the built-in local admin
+group (80), and world write is absent. Those ownership conditions have yet to
+be confirmed on the reviewed host. Record the finite result and stop if the
+interpreter or any path gate fails. Leave installation permissions and
+ownership untouched. The report is marked advisory even when the path would
+pass strict checks. Its metadata and digest carry no execution or hook trust.
+Protocol is always unobserved with `not-selected` in this mode. After the
+observation, select the smallest supported supervised local approach or
+record an explicit refusal. Any live canary or staged admission design
+requires separate review and PM approval.
+
+Omit the flag for strict collection. For a strict nondefault installation add an operator-approved `--app-root` ending
 in `Codex.app` or `--cli-path` ending in `codex`. Use their exact canonical
 absolute paths on a local disk. The probe rejects symlinks, aliases,
 nonregular files, shared-writable locations outside standard sticky temp
@@ -125,7 +160,7 @@ thin Mach-O or ELF executable and two 1 MiB JSON schemas. It applies a
 Unsupported binary headers or layouts remain unobserved. Capture the
 finite failure reason without broadening the path search.
 
-An optional export requires independent confirmation of the installed
+An optional strict-mode export requires independent confirmation of the installed
 executable, version, SHA-256 and version-specific support for offline
 `app-server generate-json-schema --out`. Verify the canonical path and trusted
 ownership through the full path. Establish that the verified executable is
