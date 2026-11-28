@@ -99,6 +99,125 @@ contains no production installation for those services.
    acknowledgements and an external test barrier. Manual V3 remains
    available through the exact worktree and issue pointer.
 
+## Post-merge local capability observation
+
+Use Python 3.8 or later on macOS or Linux. Work from a reviewed merged
+checkout and independently verify the exact checkout and control commit.
+Set `PFM_REVIEWED_CHECKOUT` to its verified absolute path and
+`PFM_REVIEWED_CONTROL` to the independently reviewed full control SHA.
+The following collection reads only the default Codex desktop bundle plist
+and bundled executable. It launches no child process.
+
+```bash
+cd -- "${PFM_REVIEWED_CHECKOUT:?set the verified absolute checkout path}" &&
+pfm_reviewed_head="$(git rev-parse --verify HEAD)" &&
+python3 tools/codex/goal-framework/local-capability-probe.py \
+  --head "$pfm_reviewed_head" --control-revision "${PFM_REVIEWED_CONTROL:?set the reviewed control SHA}"
+```
+
+For a nondefault installation add an operator-approved `--app-root` ending
+in `Codex.app` or `--cli-path` ending in `codex`. Use their exact canonical
+absolute paths on a local disk. The probe rejects symlinks, aliases,
+nonregular files, shared-writable locations outside standard sticky temp
+ancestors, and unsafe owners. It reads at most one 128 KiB plist, one 256 MiB
+thin Mach-O or ELF executable and two 1 MiB JSON schemas. It applies a
+7.5-second collection deadline and a ceiling of 2.5 seconds per observation.
+Unsupported binary headers or layouts remain unobserved. Capture the
+finite failure reason without broadening the path search.
+
+Run the optional export only after independently confirming that the exact
+local executable supports the documented offline
+`app-server generate-json-schema --out` command. Review version-specific
+help or release metadata and match the executable's full version and SHA-256
+against the selected binary. Set `PFM_PINNED_CODEX`, `PFM_PINNED_VERSION`
+and `PFM_PINNED_SHA256` to those reviewed values. Use a canonical local
+temp parent such as `/private/tmp` on macOS, or set
+`PFM_LOCAL_TMP` to another reviewed canonical local temp directory.
+If version, digest, or static export support cannot be safely confirmed,
+use the default static inventory and record the protocol as unverified.
+The recognized shape is a self-contained Draft 7 Schemars union in
+`ClientRequest.json` and `ServerNotification.json`. Other filenames,
+combined bundles, unresolved references, and unknown dialects yield
+unobserved coverage. The documented TypeScript export is outside this
+diagnostic's input. [App-server documentation](https://learn.chatgpt.com/docs/app-server)
+
+```bash
+cd -- "${PFM_REVIEWED_CHECKOUT:?set the verified absolute checkout path}" &&
+pfm_reviewed_head="$(git rev-parse --verify HEAD)" &&
+(
+  set -eu
+  umask 077
+  pfm_schema_dir="$(mktemp -d "${PFM_LOCAL_TMP:-/private/tmp}/pfm-codex-schema.XXXXXXXX")"
+  trap 'rm -rf -- "$pfm_schema_dir"' EXIT
+  python3 - "${PFM_PINNED_CODEX:?set the reviewed absolute executable}" \
+    "${PFM_PINNED_SHA256:?set the reviewed SHA-256}" "$pfm_schema_dir" <<'PY'
+import hashlib
+import os
+import re
+import resource
+import stat
+import subprocess
+import sys
+
+tool, expected, target = sys.argv[1:]
+try:
+    if not (os.path.isabs(tool) and os.path.realpath(tool) == tool
+            and os.path.basename(tool) == "codex" and re.fullmatch("[a-f0-9]{64}", expected)):
+        raise ValueError()
+    descriptor = os.open(tool, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, "rb") as selected:
+        info = os.fstat(selected.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > 256 * 1024 * 1024:
+            raise ValueError()
+        checksum = hashlib.sha256()
+        remaining = info.st_size
+        while remaining:
+            chunk = selected.read(min(remaining, 65536))
+            if not chunk:
+                raise ValueError()
+            checksum.update(chunk)
+            remaining -= len(chunk)
+        if checksum.hexdigest() != expected:
+            raise ValueError()
+    resource.setrlimit(resource.RLIMIT_FSIZE, (2 * 1024 * 1024, 2 * 1024 * 1024))
+    subprocess.run([tool, "app-server", "generate-json-schema", "--out", target],
+                   check=True, timeout=10, cwd=target, env={}, stdin=subprocess.DEVNULL,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+except (OSError, ValueError, subprocess.SubprocessError):
+    sys.exit("static-export-unverified")
+PY
+  python3 tools/codex/goal-framework/local-capability-probe.py \
+    --head "$pfm_reviewed_head" --control-revision "${PFM_REVIEWED_CONTROL:?set the reviewed control SHA}" \
+    --cli-path "$PFM_PINNED_CODEX" --cli-version "${PFM_PINNED_VERSION:?set the reviewed CLI version}" \
+    --cli-sha256 "$PFM_PINNED_SHA256" --schema-root "$pfm_schema_dir"
+)
+```
+
+Keep the output private and share only the sanitized inventory or its
+reference. Run the export in a fresh private directory on a reviewed host
+with adequate bounded scratch space and no concurrent installer or update
+touching the selected path. The reviewed command is an offline schema
+export. Do not start app-server, a thread, a turn or a listener. Do not log
+in, access auth tokens, download schemas or fall back to a paid operation.
+
+Use one compact reviewer entry per actual observation.
+
+| Report field | Record |
+| --- | --- |
+| Checked scope | UTC time, reviewed head/control SHA, and sanitized report reference |
+| Installed facts | Desktop version/build and metadata ref, CLI version source and binary ref, binary platform/architecture, or each finite unknown reason |
+| Static protocol | Layout, compact file refs and observed features, or the bounded export/recognition refusal |
+| Phone and trust | Whether the phone offers exact workspace/environment setup without submission, independently reviewed branch/path identity, and pending/observed/unknown project or hook trust |
+| Admission and follow-up | Prepared receipt/session evidence, pre-write and pre-charge barrier, enforceable stop and late accounting, or explicit unknowns and manual V3 refusal disposition |
+
+After that entry, select the smallest evidenced native control option or
+keep preparation-only. Before a separately scoped PM-approved local canary,
+prove external authority, exact new/resumed receipt and session binding,
+safe refusal and replay, one writer, GF-03 prepared lifecycle, GF-05
+admission and cleanup budget, and real host isolation. Verify stop,
+terminal ownership and publication, artifact survival, and late usage and
+settlement during actual certification. Cloud needs its own later canary.
+
 ## Evidence and rollout
 
 Use the offline witnesses in `goalFrameworkLifecycle.test.ts` and the existing tooling self-test for GF-V03, GF-V04, GF-V05, GF-V07, GF-V14 and GF-V23. The tests exercise the pinned parser, a temporary linked worktree and fake remote, prospective review slots, and a temporary GF-05 ledger driven by synthetic supervisor and provider evidence. Live rollout requirements and safety controls are defined in [interfaces](interfaces.md), [requirements](requirements.md), [verification and metrics](verification-and-metrics.md) and [safety and rollout](safety-and-rollout.md).
