@@ -64,6 +64,61 @@ surface requires manual workspace selection, report that intervention and
 retain preparation-only status. Local then cloud certification still gates
 #368 acceptance and #369 dispatch.
 
+## Installed local capability qualification
+
+The 2026-11-27 implementation inspection found no Codex plist or bundled CLI
+at the default `/Applications/Codex.app` paths, no plist at the checked user
+Applications path, and no CLI at the two standard Homebrew binary paths
+checked. Current Desktop build, executable version and digest, schema
+support, account entitlement, and Remote visibility are unknown. The
+2026-11-25 version and build in the earlier inventory are historical.
+
+The repository fixtures are synthetic. An installed observation and a
+separately approved canary provide different evidence.
+
+| Capability | Recognized static declarations | Installed host or UI observation | Enforcement evidence for certification |
+| --- | --- | --- | --- |
+| Thread identity and working directory | `thread/start` request ID and cwd, plus the turn request's thread ID field | Exact workspace, branch, path and environment selection | Authenticated returned identity and exact new or resumed session binding |
+| Exact prompt and model/effort | `turn/start` typed text input and model and effort declarations | Available prompt, model and effort controls | Exact issue-pointer delivery to the correct hook and independently verified effective model and effort |
+| Permissions, project and hook trust | Recognized thread-level permission request fields | Installed permission modes and human project or hook review | Current policy, exact SessionStart root and authenticated hook configuration for the selected session |
+| Pre-write and pre-charge barrier | Unobserved | Setup and prompt submission order | Trusted external boundary that exposes the real PREPARED receipt and withholds writes and chargeable execution pending admission |
+| Start, interrupt and terminal events | Typed turn start and interrupt requests and known completion statuses | Available start, stop and status controls | Authenticated admission, effective revocation and stop, terminal proof and writer-fence release after disconnect |
+| Quota and hard ceiling | Unobserved | Displayed limits and availability | GF-05 reservation, native hard ceiling and watchdog, independent capacity and kill switch |
+| Usage and late billing | Token usage notification with typed last and total counts | Available usage information | Authenticated usage, quota coverage and late settlement against the same reservation after termination |
+| Artifacts and ownership | Unobserved | Visible output and workspace ownership | Durable output, stopped-writer ownership and expected-head publication |
+| Phone visibility | Unobserved | First-party Remote offers the exact workspace and session on the phone | Authenticated binding to the same host, workspace and session used for admission |
+
+First-party Remote is the preferred candidate. Its documented host/workspace
+selection, new worktree and environment setup warrant checking whether a
+reviewed, operator-owned pre-turn setup can preserve deterministic bootstrap
+and genuine human project or hook approval. A setup script must be reviewed
+and independently bound to the expected branch, absolute path and approved
+head before prompting the worker. Static app-server export cannot establish
+Remote visibility or this setup order. Check the installed phone UI without
+submitting a prompt or running unreviewed setup. Approve genuine hook trust
+in the existing prepared worktree if required. [Remote guide](https://developers.openai.com/blog/mastering-codex-remote-for-engineering)
+
+A pinned app-server CLI or SDK is a separate candidate. The documented
+`turn/start` starts generation. A read-only turn followed by tool approval
+or a sandbox change supplies no proof of the required pre-admission writer
+barrier or bounded paid call. The current runner needs the actual prepared
+hook receipt, canonical grant, GF-03 prepared state, GF-05 reservation,
+verified profile binding, all 19 operation capabilities and all 10 native
+controls before dispatch. A surface that only produces PREPARED inside an
+already generating turn leaves this ordering unresolved. Static declarations
+and human UI observations leave every native control unverified. Do not
+expose `thread/shellCommand` (documented outside the sandbox), general
+command RPC, a TCP/WebSocket listener, third-party routine access or
+credentials. Account entitlements and cross-client visibility require their
+own evidence. [App-server documentation](https://learn.chatgpt.com/docs/app-server) · [Codex as a platform](https://developers.openai.com/blog/codex-as-a-platform)
+
+Keep manual V3 and preparation-only handoff if neither surface proves the
+pre-writing and pre-charge admission handshake. Any finite staged no-write
+alternative requires separate design review and PM approval. A separately
+approved actual local canary must establish enforcement before local profile
+certification. Cloud certification is separate and follows local. GF-06/P3
+and GF-07 dispatch remain gated.
+
 ## Supervisor contract
 
 `createRunnerAdapter` returns versioned probe, prepare, launch, observe,

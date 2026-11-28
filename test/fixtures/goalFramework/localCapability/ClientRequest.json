@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ClientRequest",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["id", "method", "params"],
+      "properties": {
+        "id": { "$ref": "#/definitions/RequestId" },
+        "method": { "type": "string", "enum": ["thread/start"] },
+        "params": { "$ref": "#/definitions/ThreadStartParams" }
+      }
+    },
+    {
+      "type": "object",
+      "required": ["id", "method", "params"],
+      "properties": {
+        "id": { "$ref": "#/definitions/RequestId" },
+        "method": { "type": "string", "enum": ["turn/start"] },
+        "params": { "$ref": "#/definitions/TurnStartParams" }
+      }
+    },
+    {
+      "type": "object",
+      "required": ["id", "method", "params"],
+      "properties": {
+        "id": { "$ref": "#/definitions/RequestId" },
+        "method": { "type": "string", "enum": ["turn/interrupt"] },
+        "params": { "$ref": "#/definitions/TurnInterruptParams" }
+      }
+    }
+  ],
+  "definitions": {
+    "RequestId": { "anyOf": [{ "type": "string" }, { "type": "integer", "format": "int64" }] },
+    "ThreadStartParams": {
+      "type": "object",
+      "properties": {
+        "cwd": { "type": ["string", "null"] },
+        "approvalPolicy": { "allOf": [{ "$ref": "#/definitions/AskForApproval" }] },
+        "sandbox": { "$ref": "#/definitions/SandboxMode" }
+      }
+    },
+    "TurnStartParams": {
+      "type": "object",
+      "required": ["threadId", "input"],
+      "properties": {
+        "threadId": { "type": "string" },
+        "input": { "type": "array", "items": { "$ref": "#/definitions/UserInput" } },
+        "model": { "type": ["string", "null"] },
+        "effort": { "anyOf": [{ "$ref": "#/definitions/ReasoningEffort" }, { "type": "null" }] }
+      }
+    },
+    "TurnInterruptParams": {
+      "type": "object",
+      "required": ["threadId", "turnId"],
+      "properties": { "threadId": { "type": "string" }, "turnId": { "type": "string" } }
+    },
+    "UserInput": { "oneOf": [
+      {
+        "type": "object",
+        "required": ["type", "text"],
+        "properties": { "type": { "enum": ["text"], "type": "string" }, "text": { "type": "string" } }
+      },
+      {
+        "type": "object",
+        "required": ["type", "url"],
+        "properties": { "type": { "enum": ["image"], "type": "string" }, "url": { "type": "string" } }
+      }
+    ] },
+    "AskForApproval": { "type": "string", "enum": ["never", "on-request"] },
+    "SandboxMode": { "type": "string", "enum": ["read-only", "workspace-write"] },
+    "ReasoningEffort": { "type": "string", "enum": ["low", "medium", "high"] }
+  }
+}

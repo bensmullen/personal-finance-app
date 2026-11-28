@@ -99,6 +99,75 @@ contains no production installation for those services.
    acknowledgements and an external test barrier. Manual V3 remains
    available through the exact worktree and issue pointer.
 
+## Post-merge local capability observation
+
+Use Python 3.8 or later on macOS or Linux. Work from a reviewed merged
+checkout and independently verify the exact checkout and control commit.
+Set `PFM_REVIEWED_CHECKOUT` to its verified absolute path and
+`PFM_REVIEWED_CONTROL` to the independently reviewed full control SHA.
+The following collection reads only the default Codex desktop bundle plist
+and bundled executable. It launches no child process.
+
+```bash
+cd -- "${PFM_REVIEWED_CHECKOUT:?set the verified absolute checkout path}" &&
+pfm_reviewed_head="$(git rev-parse --verify HEAD)" &&
+python3 tools/codex/goal-framework/local-capability-probe.py \
+  --head "$pfm_reviewed_head" --control-revision "${PFM_REVIEWED_CONTROL:?set the reviewed control SHA}"
+```
+
+For a nondefault installation add an operator-approved `--app-root` ending
+in `Codex.app` or `--cli-path` ending in `codex`. Use their exact canonical
+absolute paths on a local disk. The probe rejects symlinks, aliases,
+nonregular files, shared-writable locations outside standard sticky temp
+ancestors, and unsafe owners. It reads at most one 128 KiB plist, one 256 MiB
+thin Mach-O or ELF executable and two 1 MiB JSON schemas. It applies a
+7.5-second collection deadline and a ceiling of 2.5 seconds per observation.
+Unsupported binary headers or layouts remain unobserved. Capture the
+finite failure reason without broadening the path search.
+
+An optional export requires independent confirmation of the installed
+executable, version, SHA-256 and version-specific support for offline
+`app-server generate-json-schema --out`. Verify the canonical path and trusted
+ownership through the full path. Establish that the verified executable is
+the same one selected for execution and that the path remains stable throughout.
+Exclude concurrent installers, updates and other writers to the executable
+or its ancestors. [App-server documentation](https://learn.chatgpt.com/docs/app-server)
+
+Use an independently established offline boundary that confines all writes to
+a fresh private scratch directory and enforces a file count, per-file size,
+total byte and wall-time limit for the entire export, including any descendants.
+The boundary must exclude network and credential access, login, listeners,
+sessions, threads, turns and command RPC. If executable identity or any output
+limit cannot be established, omit the export and record the protocol as
+unobserved. The default static inventory remains available.
+
+For an eligible bounded export, pass the selected canonical executable,
+exact version, SHA-256 and private export directory to `--cli-path`,
+`--cli-version`, `--cli-sha256` and `--schema-root`. The probe recognizes
+only the bounded `ClientRequest.json` and `ServerNotification.json` Draft 7
+Schemars unions and specific declaration shapes. Unknown layouts and
+unresolved or contradictory shapes leave the affected evidence unobserved.
+Keep only the sanitized summary and references. Clean up only the verified
+private directory created for that export.
+
+Use one compact reviewer entry per actual observation.
+
+| Report field | Record |
+| --- | --- |
+| Checked scope | UTC time, reviewed head/control SHA, and sanitized report reference |
+| Installed facts | Desktop version/build and metadata ref, CLI version source and binary ref, binary platform/architecture, or each finite unknown reason |
+| Static protocol | Layout, compact file refs and observed features, or the bounded export/recognition refusal |
+| Phone and trust | Whether the phone offers exact workspace/environment setup without submission, independently reviewed branch/path identity, and pending/observed/unknown project or hook trust |
+| Admission and follow-up | Prepared receipt/session evidence, pre-write and pre-charge barrier, enforceable stop and late accounting, or explicit unknowns and manual V3 refusal disposition |
+
+After that entry, select the smallest evidenced native control option or
+keep preparation-only. Before a separately scoped PM-approved local canary,
+prove external authority, exact new/resumed receipt and session binding,
+safe refusal and replay, one writer, GF-03 prepared lifecycle, GF-05
+admission and cleanup budget, and real host isolation. Verify stop,
+terminal ownership and publication, artifact survival, and late usage and
+settlement during actual certification. Cloud needs its own later canary.
+
 ## Evidence and rollout
 
 Use the offline witnesses in `goalFrameworkLifecycle.test.ts` and the existing tooling self-test for GF-V03, GF-V04, GF-V05, GF-V07, GF-V14 and GF-V23. The tests exercise the pinned parser, a temporary linked worktree and fake remote, prospective review slots, and a temporary GF-05 ledger driven by synthetic supervisor and provider evidence. Live rollout requirements and safety controls are defined in [interfaces](interfaces.md), [requirements](requirements.md), [verification and metrics](verification-and-metrics.md) and [safety and rollout](safety-and-rollout.md).
